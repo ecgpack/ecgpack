@@ -1,0 +1,36 @@
+{
+    "folders": [
+        { "path": "CG_0S" },
+        { "path": "RG_0S" },
+        { "path": "RG_1P" },
+        { "path": "RG_2D" },
+        { "path": "RG_2P" },
+        { "path": "RG_0S-1P" },
+        { "path": "RG_0S-2D" },
+        { "path": "RG_0S-2P" },
+        { "path": "RG_1P-1P" },
+        { "path": "RG_1P-2D" },
+        { "path": "RG_1P-2P" },
+        { "path": "RG_2D-2D" },
+        { "path": "RG_2P-2D" },
+        { "path": "RG_2P-2P" },
+        { "path": "utilities" },
+        { "name": "ecg (root directory)", "path": "." }
+    ],
+    "settings": {
+        "fortran.linter.compiler": "gfortran",
+        "fortran.fortls.path": "fortls",
+        "[fortran]": {
+            "editor.defaultFormatter": "fortran-lang.linter-gfortran"
+        },
+        "files.associations": {
+            "*.f90": "FortranFreeForm",
+            "*.f": "FortranFixedForm"
+        },
+        "search.exclude": {
+            "**/release": true,
+            "**/debug": true,
+            "**/bin": true
+        }
+    }
+}

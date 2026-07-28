@@ -1,0 +1,393 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build_RG_2P_debug_gfortran_8_netlib",
+            "type": "shell",
+            "command": "make debug COMPILER=gfortran MACHINE=ubuntu-generic PREC=8 LINALG=netlib EXEFILE=RG_2P_debug_gfortran_8_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_release_gfortran_8_netlib",
+            "type": "shell",
+            "command": "make release COMPILER=gfortran MACHINE=ubuntu-generic PREC=8 LINALG=netlib EXEFILE=RG_2P_release_gfortran_8_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_debug_gfortran_8_lblas",
+            "type": "shell",
+            "command": "make debug COMPILER=gfortran MACHINE=ubuntu-generic PREC=8 LINALG=lblas EXEFILE=RG_2P_debug_gfortran_8_lblas",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_release_gfortran_8_lblas",
+            "type": "shell",
+            "command": "make release COMPILER=gfortran MACHINE=ubuntu-generic PREC=8 LINALG=lblas EXEFILE=RG_2P_release_gfortran_8_lblas",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_debug_gfortran_10_netlib",
+            "type": "shell",
+            "command": "make debug COMPILER=gfortran MACHINE=ubuntu-generic PREC=10 LINALG=netlib EXEFILE=RG_2P_debug_gfortran_10_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_release_gfortran_10_netlib",
+            "type": "shell",
+            "command": "make release COMPILER=gfortran MACHINE=ubuntu-generic PREC=10 LINALG=netlib EXEFILE=RG_2P_release_gfortran_10_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_debug_gfortran_16_netlib",
+            "type": "shell",
+            "command": "make debug COMPILER=gfortran MACHINE=ubuntu-generic PREC=16 LINALG=netlib EXEFILE=RG_2P_debug_gfortran_16_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_release_gfortran_16_netlib",
+            "type": "shell",
+            "command": "make release COMPILER=gfortran MACHINE=ubuntu-generic PREC=16 LINALG=netlib EXEFILE=RG_2P_release_gfortran_16_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_debug_ifort_8_netlib",
+            "type": "shell",
+            "command": "make debug COMPILER=ifort MACHINE=ubuntu-generic PREC=8 LINALG=netlib EXEFILE=RG_2P_debug_ifort_8_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_release_ifort_8_netlib",
+            "type": "shell",
+            "command": "make release COMPILER=ifort MACHINE=ubuntu-generic PREC=8 LINALG=netlib EXEFILE=RG_2P_release_ifort_8_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_debug_ifort_8_mkl",
+            "type": "shell",
+            "command": "make debug COMPILER=ifort MACHINE=ubuntu-generic PREC=8 LINALG=mkl EXEFILE=RG_2P_debug_ifort_8_mkl",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_release_ifort_8_mkl",
+            "type": "shell",
+            "command": "make release COMPILER=ifort MACHINE=ubuntu-generic PREC=8 LINALG=mkl EXEFILE=RG_2P_release_ifort_8_mkl",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_debug_ifort_16_netlib",
+            "type": "shell",
+            "command": "make debug COMPILER=ifort MACHINE=ubuntu-generic PREC=16 LINALG=netlib EXEFILE=RG_2P_debug_ifort_16_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_release_ifort_16_netlib",
+            "type": "shell",
+            "command": "make release COMPILER=ifort MACHINE=ubuntu-generic PREC=16 LINALG=netlib EXEFILE=RG_2P_release_ifort_16_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_debug_ifx_8_netlib",
+            "type": "shell",
+            "command": "make debug COMPILER=ifx MACHINE=ubuntu-generic PREC=8 LINALG=netlib EXEFILE=RG_2P_debug_ifx_8_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_release_ifx_8_netlib",
+            "type": "shell",
+            "command": "make release COMPILER=ifx MACHINE=ubuntu-generic PREC=8 LINALG=netlib EXEFILE=RG_2P_release_ifx_8_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_debug_ifx_8_mkl",
+            "type": "shell",
+            "command": "make debug COMPILER=ifx MACHINE=ubuntu-generic PREC=8 LINALG=mkl EXEFILE=RG_2P_debug_ifx_8_mkl",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_release_ifx_8_mkl",
+            "type": "shell",
+            "command": "make release COMPILER=ifx MACHINE=ubuntu-generic PREC=8 LINALG=mkl EXEFILE=RG_2P_release_ifx_8_mkl",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_debug_ifx_16_netlib",
+            "type": "shell",
+            "command": "make debug COMPILER=ifx MACHINE=ubuntu-generic PREC=16 LINALG=netlib EXEFILE=RG_2P_debug_ifx_16_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_release_ifx_16_netlib",
+            "type": "shell",
+            "command": "make release COMPILER=ifx MACHINE=ubuntu-generic PREC=16 LINALG=netlib EXEFILE=RG_2P_release_ifx_16_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_debug_nvfortran_8_netlib",
+            "type": "shell",
+            "command": "make debug COMPILER=nvfortran MACHINE=ubuntu-generic PREC=8 LINALG=netlib EXEFILE=RG_2P_debug_nvfortran_8_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_release_nvfortran_8_netlib",
+            "type": "shell",
+            "command": "make release COMPILER=nvfortran MACHINE=ubuntu-generic PREC=8 LINALG=netlib EXEFILE=RG_2P_release_nvfortran_8_netlib",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_debug_nvfortran_8_lblas",
+            "type": "shell",
+            "command": "make debug COMPILER=nvfortran MACHINE=ubuntu-generic PREC=8 LINALG=lblas EXEFILE=RG_2P_debug_nvfortran_8_lblas",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "build_RG_2P_release_nvfortran_8_lblas",
+            "type": "shell",
+            "command": "make release COMPILER=nvfortran MACHINE=ubuntu-generic PREC=8 LINALG=lblas EXEFILE=RG_2P_release_nvfortran_8_lblas",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "clean_debug",
+            "type": "shell",
+            "command": "make cleandebug",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "clean_release",
+            "type": "shell",
+            "command": "make cleanrelease",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "label": "clean_everything",
+            "type": "shell",
+            "command": "make cleanest",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build"
+        },
+        {
+            "//": "---- Composite clean -> build tasks (use as preLaunchTask when switching precision) ----",
+            "label": "rebuild_RG_2P_debug_gfortran_8_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_debug", "build_RG_2P_debug_gfortran_8_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_debug_gfortran_8_lblas",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_debug", "build_RG_2P_debug_gfortran_8_lblas"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_debug_gfortran_10_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_debug", "build_RG_2P_debug_gfortran_10_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_debug_gfortran_16_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_debug", "build_RG_2P_debug_gfortran_16_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_debug_ifort_8_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_debug", "build_RG_2P_debug_ifort_8_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_debug_ifort_8_mkl",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_debug", "build_RG_2P_debug_ifort_8_mkl"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_debug_ifort_16_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_debug", "build_RG_2P_debug_ifort_16_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_debug_ifx_8_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_debug", "build_RG_2P_debug_ifx_8_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_debug_ifx_8_mkl",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_debug", "build_RG_2P_debug_ifx_8_mkl"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_debug_ifx_16_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_debug", "build_RG_2P_debug_ifx_16_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_debug_nvfortran_8_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_debug", "build_RG_2P_debug_nvfortran_8_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_debug_nvfortran_8_lblas",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_debug", "build_RG_2P_debug_nvfortran_8_lblas"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_release_gfortran_8_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_release", "build_RG_2P_release_gfortran_8_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_release_gfortran_8_lblas",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_release", "build_RG_2P_release_gfortran_8_lblas"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_release_gfortran_10_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_release", "build_RG_2P_release_gfortran_10_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_release_gfortran_16_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_release", "build_RG_2P_release_gfortran_16_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_release_ifort_8_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_release", "build_RG_2P_release_ifort_8_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_release_ifort_8_mkl",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_release", "build_RG_2P_release_ifort_8_mkl"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_release_ifort_16_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_release", "build_RG_2P_release_ifort_16_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_release_ifx_8_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_release", "build_RG_2P_release_ifx_8_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_release_ifx_8_mkl",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_release", "build_RG_2P_release_ifx_8_mkl"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_release_ifx_16_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_release", "build_RG_2P_release_ifx_16_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_release_nvfortran_8_netlib",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_release", "build_RG_2P_release_nvfortran_8_netlib"],
+            "group": "build"
+        },
+        {
+            "label": "rebuild_RG_2P_release_nvfortran_8_lblas",
+            "dependsOrder": "sequence",
+            "dependsOn": ["clean_release", "build_RG_2P_release_nvfortran_8_lblas"],
+            "group": "build"
+        }
+    ]
+}

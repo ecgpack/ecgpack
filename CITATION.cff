@@ -1,0 +1,79 @@
+cff-version: 1.2.0
+message: "If you use ECGPACK in your research, please cite it as below."
+title: ECGPACK
+abstract: >-
+  ECGPACK is a collection of closely related parallel computer codes for
+  performing high accuracy variational calculations of quantum few-body
+  systems such as few-electron atoms, molecules, ions, and systems
+  containing exotic particles, using all-particle explicitly correlated
+  Gaussian (ECG) basis sets. ECGPACK is written in Fortran and uses MPI
+  for parallelism.
+type: software
+license: BSD-3-Clause
+
+authors:
+  - family-names: Bubin
+    given-names: Sergiy
+    orcid: "https://orcid.org/0000-0002-2783-078X"
+    affiliation: "Department of Physics, Nazarbayev University"
+  - family-names: Bralin
+    given-names: Amir
+    orcid: "https://orcid.org/0009-0008-0675-2824"
+  - family-names: Hornyak
+    given-names: Istvan
+    orcid: "https://orcid.org/0000-0002-4718-9387"
+  - family-names: Nasiri
+    given-names: Saeed
+    orcid: "https://orcid.org/0000-0001-8501-9859"
+  - family-names: Rzhevskii
+    given-names: Pavel
+    orcid: "https://orcid.org/0009-0005-5996-3981"
+  - family-names: Shomenov
+    given-names: Toreniyaz
+    orcid: "https://orcid.org/0000-0003-1153-4238"
+  - family-names: Tumakov
+    given-names: Dmitry
+    orcid: "https://orcid.org/0000-0003-0708-2427"
+  - family-names: Tussipzhan
+    given-names: Aidynbek
+    orcid: "https://orcid.org/0009-0000-3751-0053"    
+
+keywords:
+  - explicitly correlated Gaussians
+  - few-body systems
+  - variational method
+  - high accuracy quantum-mechanical calculations
+  - atomic and molecular structure
+  - non-Born-Oppenheimer calculations
+  - quantum chemistry
+  - Fortran
+  - MPI
+
+# TODO before the first public release: replace with the real repository URL.
+repository-code: "https://github.com/CHANGEME/ecgpack"
+
+# TODO once a tagged release exists, uncomment and fill in:
+# version: "1.0.0"
+# date-released: "YYYY-MM-DD"
+
+# TODO once the repository is archived on Zenodo, uncomment and fill in
+# the concept DOI (the one that always resolves to the latest version):
+# doi: "10.5281/zenodo.XXXXXXX"
+# identifiers:
+#   - type: doi
+#     value: "10.5281/zenodo.XXXXXXX"
+#     description: "Concept DOI for all versions of ECGPACK"
+
+# TODO if you would rather have users cite a journal article than the
+# software itself, add a preferred-citation block, for example:
+# preferred-citation:
+#   type: article
+#   title: "..."
+#   authors:
+#     - family-names: Bubin
+#       given-names: Sergiy
+#   journal: "..."
+#   year: 20XX
+#   volume: XX
+#   start: XXX
+#   doi: "10.XXXX/..."

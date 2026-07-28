@@ -1,0 +1,27 @@
+ BASIS_TYPE RG_2D
+ PARTICLES    3
+ MASSES    7294.29954170 1.0 1.0
+ CHARGES   2.0 -1.0 -1.0
+ SYMMETRY  (1+P23)
+ BASIS_SIZE  0
+ CURRENT_ENERGY    1.0E30
+ WHICH_EIGENVALUE  1    
+ EIGVAL_TOLERANCE  1.0E-12
+ INVITPARAMETER    1.000001000E0
+ LAST_EIGVAL_TOL   1.0E0
+ BEST_EIGVAL_TOL   1.0E0
+ WORST_EIGVAL_TOL  1.0E-30
+ GENERATOR_PARAM   0.7E0  1.0E0  3.0E0
+ ==============================
+    0  1.0E30      0      0      0
+ ==============================
+ BASIS_ENL  G        1      5      1    500    200   0.95    3.0
+ FULL_OPT1  G        5      1      5 999999   0.95    3.0     60     60      none
+ FULL_OPT1  G        5      1      5 999999   0.95    3.0     60     60      none
+ OPT_CYCLE  G        5      1      5      1      1     10    130   0.95    3.0     10
+ SAVE_FILE  5      inout_He_1De-01-00005.txt
+ BASIS_ENL  I        6     10      1    500    200   0.95    3.0
+ FULL_OPT1  I       10      1     10 999999   0.95    3.0     60     60      none
+ OPT_CYCLE  I       10      1     10      1      1     10    130   0.95    3.0     10
+ SAVE_FILE  10     inout_He_1De-01-00010.txt
+ ==============================

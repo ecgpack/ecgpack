@@ -1,0 +1,15 @@
+1) Use non-normalized gaussians in CGL0
+
+2) Modify loop for trace evaluations in all RGLX/CGLX codes:
+
+Old:
+tr=ZERO
+do i=1,n
+  tr=tr+...
+  
+New:  
+tr=...
+do i=2,n
+  tr=tr+...
+  
+3) Replace calling function ScaledChargeProd with some sort of ChargeMatrix
