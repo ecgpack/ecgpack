@@ -49,8 +49,7 @@ keywords:
   - Fortran
   - MPI
 
-# TODO before the first public release: replace with the real repository URL.
-repository-code: "https://github.com/CHANGEME/ecgpack"
+repository-code: "https://github.com/ecgpack/ecgpack"
 
 # TODO once a tagged release exists, uncomment and fill in:
 # version: "1.0.0"
