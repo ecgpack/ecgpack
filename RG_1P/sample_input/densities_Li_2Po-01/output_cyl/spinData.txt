@@ -1,0 +1,10 @@
+Se from Young string =  0.500
+===========================================
+chi = 1/sqrt(6) * (-aab+2aba-baa)
+S calculated         =  0.500
+C_SO_J, C_SS_J:
+C_SO_1/2 = -2.000
+C_SO_3/2 =  1.000
+
+C_SS_1/2 =  0.000
+C_SS_3/2 =  0.000

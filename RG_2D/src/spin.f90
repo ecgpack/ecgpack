@@ -508,7 +508,7 @@ contains
           endif
         enddo
 
-        write(io,*) ''
+        write(io,'()')
 
         do k = nint(TWO * abs(TWO - test)), nint(TWO * abs(TWO + test)), 2
           if (mod(k, 2) == 0) then

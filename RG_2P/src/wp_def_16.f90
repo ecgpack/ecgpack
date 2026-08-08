@@ -13,7 +13,7 @@ module wp_def
 
 !This is the number of particles in the system that should be set by the user.
 !For reasons related to performance, it is made a fixed (compile time) parameter.
-  integer,parameter :: Glob_AllowedNumOfParticles=3
+  integer,parameter :: Glob_AllowedNumOfParticles=5
 
 contains
 

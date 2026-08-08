@@ -478,7 +478,7 @@ contains
                                        Hkl, Skl, Tkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
                              MVkl, drach_MVkl1, drach_MVkl2, drach_MVkl3, Darwinkl, drach_Darwinkl, OOkl, rmrmkl, del2kl, prvalkl, &
                                        wf2originkl, NumCFGridPoints, CFGrid, CFkl, NumDensGridPoints, DensGrid, Denskl, &
-                                       AreCorrFuncNeeded, ArePartDensNeeded, AreMCorrFuncNeeded, AreMPartDensNeeded)
+                                       AreCorrFuncNeeded, ArePartDensNeeded, AreMCorrFuncNeeded, AreMomDensNeeded)
 !This subroutine computes symmetry adapted matrix elements
 !with two real L=0 correlated Gaussians. These matrix elements
 !are used in calculations of expectation values.
@@ -511,14 +511,18 @@ contains
 !NumCFGridPoints   :: Number of grid points for correlation function calculations
 !CFGrid            :: Array containing grid points where matrix elements of
 !                     correlation functions should be computed
-!CFkl              :: Matrix elements of correlation functions
+!CFkl              :: Matrix elements of coordinate or momentum-space correlation functions
 !NumDensGridPoints :: Number of grid points for particle density calculations
 !DensGrid          :: Array containing grid points where matrix elements of
 !                     particle densities should be computed
-!Denskl            :: Matrix elements of particle densities
+!Denskl            :: Matrix elements of coordinate or momentum-space particle densities
 !AreCorrFuncNeeded :: flag indicating whether matrix elements of correlation
 !                     functions need to be computed
 !ArePartDensNeeded :: flag indicating whether matrix elements of particle
+!                     densities need to be computed
+!AreMCorrFuncNeeded :: flag indicating whether matrix elements of momentum correlation
+!                     functions need to be computed
+!AreMomDensNeeded :: flag indicating whether matrix elements of momentum
 !                     densities need to be computed
 
 !Arguments
@@ -537,7 +541,8 @@ contains
     real(wp),intent(in)   :: CFGrid(NumCFGridPoints),DensGrid(NumDensGridPoints)
     real(wp),intent(out)  :: CFkl(Glob_n*(Glob_n+1)/2,NumCFGridPoints)
     real(wp),intent(out)  :: Denskl(Glob_n+1,NumDensGridPoints)
-    logical,intent(in)       :: AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded, AreMPartDensNeeded
+    logical,intent(in)       :: AreCorrFuncNeeded,ArePartDensNeeded
+    logical,intent(in)       :: AreMCorrFuncNeeded,AreMomDensNeeded
 
 !Parameters (These are needed to declare static arrays. Using static
 !arrays makes the function call a little faster in comparison with
@@ -560,9 +565,10 @@ contains
     real(wp)       trMtAl, trUMtAl, trXAl, trAXs, trYAk, trAYs, trAYsAXs
     real(wp)       det_tAkl, det_tAk, det_tAl, det_invtAkinvtAl
     integer           i,j,k,indx,p,q
-    real(wp)       TrAJ(nn,nn),sqrtTrAJ(nn,nn),TrAJAJ(nn,nn,nn,nn),MTrAJ(nn,nn),sqrtMTrAJ(nn,nn)
+    real(wp)       TrAJ(nn,nn),sqrtTrAJ(nn,nn),TrAJAJ(nn,nn,nn,nn)
+    real(wp)       Eta(nn+1,nn+1)
     real(wp)       Mass_For_Darwin(0:nn)
-    real(wp)       V2kl, MSkl
+    real(wp)       V2kl
 
     n=Glob_n
     np=Glob_np
@@ -685,106 +691,6 @@ contains
       enddo
     enddo
 
-!Do Cholesky factorization of tAk and tAk and then invert
-    if (AreMCorrFuncNeeded.or.AreMPartDensNeeded) then
-      det_tAk=ONE
-      det_tAl=ONE
-      do i=1,n
-        do j=i,n
-          temp1=tAk(i,j)
-          temp2=tAl(i,j)
-          do k=i-1,1,-1
-            temp1=temp1-W1(i,k)*W1(j,k)
-            temp2=temp2-W2(i,k)*W2(j,k)
-          enddo
-          if (i==j) then
-            W1(i,i)=sqrt(temp1)
-            det_tAk=det_tAk*temp1
-            W2(i,i)=sqrt(temp2)
-            det_tAl=det_tAl*temp2
-          else
-            W1(j,i)=temp1/W1(i,i)
-            W1(i,j)=ZERO
-            W2(j,i)=temp2/W2(i,i)
-            W2(i,j)=ZERO
-          endif
-        enddo
-      enddo
-
-!Inverting tAk and tAl using its Cholesky factors (stored in W1, W2)
-!and placing the result into inv_tAk, inv_tAl
-      do i=1,n
-        W1(i,i)=ONE/W1(i,i)
-        W2(i,i)=ONE/W2(i,i)
-        do j=i+1,n
-          temp1=ZERO
-          temp2=ZERO
-          do k=i,j-1
-            temp1=temp1-W1(j,k)*W1(k,i)
-            temp2=temp2-W2(j,k)*W2(k,i)
-          enddo
-          W1(j,i)=temp1/W1(j,j)
-          W2(j,i)=temp2/W2(j,j)
-        enddo
-      enddo
-
-      do i=1,n
-        do j=i,n
-          temp1=ZERO
-          temp2=ZERO
-          do k=j,n
-            temp1=temp1+W1(k,i)*W1(k,j)
-            temp2=temp2+W2(k,i)*W2(k,j)
-          enddo
-          inv_tAk(i,j)=temp1
-          inv_tAl(i,j)=temp2
-          inv_tAk(j,i)=temp1
-          inv_tAl(j,i)=temp2
-        enddo
-      enddo
-
-!Now calculate inv_invtAkinvtAl
-      det_invtAkinvtAl=ONE
-      do i=1,n
-        do j=i,n
-          temp1=inv_tAk(i,j)+inv_tAl(i,j)
-          do k=i-1,1,-1
-            temp1=temp1-W1(i,k)*W1(j,k)
-          enddo
-          if (i==j) then
-            W1(i,i)=sqrt(temp1)
-            det_invtAkinvtAl=det_invtAkinvtAl*temp1
-          else
-            W1(j,i)=temp1/W1(i,i)
-            W1(i,j)=ZERO
-          endif
-        enddo
-      enddo
-
-!Inverting invtAk+invtAl
-      do i=1,n
-        W1(i,i)=ONE/W1(i,i)
-        do j=i+1,n
-          temp1=ZERO
-          do k=i,j-1
-            temp1=temp1-W1(j,k)*W1(k,i)
-          enddo
-          W1(j,i)=temp1/W1(j,j)
-        enddo
-      enddo
-
-      do i=1,n
-        do j=i,n
-          temp1=ZERO
-          do k=j,n
-            temp1=temp1+W1(k,i)*W1(k,j)
-          enddo
-          inv_invtAkinvtAl(i,j)=temp1
-          inv_invtAkinvtAl(j,i)=temp1
-        enddo
-      enddo
-    endif
-
 !Evaluating overlap
 !temp2=abs(det_Ll*det_Lk)
 !temp1=temp2/det_tAkl
@@ -792,11 +698,6 @@ contains
 !wf2originkl=Glob_2Raised3n2*(temp2*sqrt(temp2))/(PI**(THREE*n/TWO))
     wf2originkl=ONE
     Skl=Glob_PiRaised3n2/(det_tAkl*sqrt(det_tAkl))  !new line
-
-    if(AreMCorrFuncNeeded.or.AreMPartDensNeeded) then
-      temp1=1/det_tAk/det_tAl/det_invtAkinvtAl
-      MSkl=Glob_PiRaised3n2*temp1*sqrt(temp1)
-    endif
 
 !Doing multiplication AtAl=inv_tAkl*tAl (kept: several sections below
 !rely on it and on the identity inv_tAkl*tAk = I - AtAl)
@@ -887,21 +788,6 @@ contains
       enddo
     enddo
     Hkl=Tkl+Vkl
-
-    if (AreMCorrFuncNeeded) then
-      do i=1,n
-        MTrAJ(i,i)=inv_invtAkinvtAl(i,i)*4
-        sqrtMTrAJ(i,i)=sqrt(MTrAJ(i,i))
-      enddo
-      do i=1,n
-        do j=i+1,n
-          MTrAJ(i,j)=(inv_invtAkinvtAl(i,i)+inv_invtAkinvtAl(j,j)-inv_invtAkinvtAl(j,i)-inv_invtAkinvtAl(j,i))*4
-          MTrAJ(j,i)=MTrAJ(i,j)
-          sqrtMTrAJ(j,i)=sqrt(MTrAJ(j,i))
-          sqrtMTrAJ(i,j)=sqrtMTrAJ(j,i)
-        enddo
-      enddo
-    end if
 
 !Evaluating tr[inv_tAkl Jij inv_tAkl Jpq]
     do i=1,n
@@ -1494,41 +1380,95 @@ contains
       enddo
     endif
 
-    if (AreMCorrFuncNeeded) then
-      temp1=MSkl/(Glob_Pi*Glob_SqrtPi)
-      p=0
+    if (AreMCorrFuncNeeded .or. AreMomDensNeeded) then
+      !GAl = tAl*inv_tAkl*tAl
+      !inv_invtAkinvtAl = tAl - GAl
       do i=1,n
         do j=i,n
-          p=p+1
-          temp3=temp1/(sqrtMTrAJ(j,i)*MTrAJ(j,i))
-          do k=1,NumCFGridPoints
-            temp2=CFGrid(k)*CFGrid(k)
-            CFkl(p,k)=temp3*exp(-temp2/MTrAJ(j,i))
-            !CFkl(p,k)=temp2*temp3*exp(-temp2/TrAJ(j,i))  !Multiplied by \xi^2
-          enddo
+          if (i==j) then
+            inv_invtAkinvtAl(i,i) = tAl(i,i) - GAl(i,i)
+          else
+            inv_invtAkinvtAl(i,j) = tAl(i,j) - GAl(i,j)
+            inv_invtAkinvtAl(j,i) = inv_invtAkinvtAl(i,j)
+          endif
         enddo
+      enddo
+      ! Construct
+      !   Eta(I,J) = 4*a_I^T R_KL a_J
+      ! where
+      !   a_1  = -(1,1,...,1)^T,
+      !   a_I  = e_(I-1),  I = 2,...,n+1.
+      ! Eta has dimensions (n+1,n+1).
+      Eta(1,1) = ZERO
+      do i = 1, n
+        temp1 = ZERO
+        do j = 1, n
+          temp2 = inv_invtAkinvtAl(j,i)
+          ! Eta(j+1,i+1) = R_KL(j,i)
+          Eta(j+1,i+1) = temp2
+          ! Required for Eta(1,i+1)
+          temp1 = temp1 + temp2
+        enddo
+        ! Eta(1,i+1) = -1^T R_KL e_i
+        Eta(1,i+1) = -temp1
+        ! R_KL is symmetric, so Eta(i+1,1) is identical.
+        Eta(i+1,1) = -temp1
+        ! Eta(1,1) = sum over all elements of R_KL.
+        Eta(1,1) = Eta(1,1) + temp1
+      enddo
+    endif
+
+
+    if (AreMCorrFuncNeeded) then
+      temp1= ONEFOURTH * ONEHALF * Skl/(Glob_Pi*Glob_SqrtPi)
+      p = 0
+      do i = 1, n
+          do j = i, n
+              p = p + 1
+              if (i == j) then
+                  temp2 = Eta(1,1) + Eta(i+1,i+1) &
+                        - TWO*Eta(1,i+1)
+              else
+                  temp2 = Eta(i+1,i+1) + Eta(j+1,j+1) &
+                        - TWO*Eta(i+1,j+1)
+              endif
+
+              if (temp2 <= ZERO) then
+                write(*,'(1x,a,1x,i0)') 'Non-positive momentum correlation width on MPI rank',Glob_ProcID
+                call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+              endif
+
+              temp3 = temp1/(temp2*sqrt(temp2))
+              do k = 1, NumCFGridPoints
+                  temp4 = CFGrid(k)**2
+                  CFkl(p,k) = temp3*exp(- ONEFOURTH * temp4/temp2)
+              enddo
+          enddo
       enddo
     end if
 
-    if (AreMPartDensNeeded) then
-      temp1=MSkl/(Glob_Pi*Glob_SqrtPi)
-      do i=1,n+1
-        temp3=ZERO
-        do p=1,n
-          temp3=temp3+Glob_bvc(p,i)*Glob_bvc(p,i)*inv_invtAkinvtAl(p,p)
-          do q=p+1,n
-            temp3=temp3+2*Glob_bvc(q,i)*Glob_bvc(p,i)*inv_invtAkinvtAl(q,p)
-          enddo
-        enddo
-        temp3=temp3*4
-        temp4=temp1/(sqrt(temp3)*temp3)
-        do k=1,NumDensGridPoints
-          temp2=DensGrid(k)*DensGrid(k)
-          Denskl(i,k)=temp4*exp(-temp2/temp3)
-          !Denskl(i,k)=temp2*temp4*exp(-temp2/temp3) !Multiplied by \xi^2
+    if (AreMomDensNeeded) then
+      temp1= ONEFOURTH * ONEHALF * Skl/(Glob_Pi*Glob_SqrtPi)
+      !cycle through all particles
+      do i = 1, n+1
+        temp2 = Eta(i,i)
+
+        if (temp2 <= ZERO) then
+          write(*,'(1x,a,1x,i0)') 'Non-positive momentum density width on MPI rank',Glob_ProcID
+          call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+        endif
+        
+        !prefactor: Skl * (1/(4*pi*eta))^(3/2)
+        temp3 = temp1 / (temp2 * sqrt(temp2))
+        !compute the matrix element value at all density grid points
+        do k = 1, NumDensGridPoints
+          !value of xi^2 at a specific point
+          temp4 = DensGrid(k)**2
+          Denskl(i,k) = temp3 * exp(- ONEFOURTH * temp4 / temp2)
         enddo
       enddo
-    end if
+    endif
+
   end subroutine MatrixElementsAll_RG_0S
 
   function trace(k,M)

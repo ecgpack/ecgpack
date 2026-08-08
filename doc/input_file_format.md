@@ -253,7 +253,7 @@ Computes expectation values for the current basis.
 
 #### 5. `DENSITIES`
 
-Computes densities of particles in the center-of-mass frame as well as pair correlation functions. Currently this is implemented only for the case of `RG_0S`, `RG_1P`, and `CG_0S` basis types. This command is an extension of `EXPC_VALS`: it does everything `EXPC_VALS` does and, in addition, evaluates densities and correlation functions on user-supplied grids. The grid files contain one grid point per line with no blank lines; for $L=0$ each point is a single radius $r\ge 0$, while for $L=1$ each point is two cylindrical coordinates (distance to the $z$-axis $\rho\ge 0$ and the $z$-coordinate). The output files begin with a `#` header line and reproduce the grid columns followed by the computed quantities; only inequivalent functions are written, e.g. for an $S$-state of beryllium that has four identical electrons, $g_1$ and $g_{12}$ for correlation functions, $\rho_1$ and $\rho_2$ for densities are computed.
+Computes coordinate-space densities of particles in the center-of-mass frame as well as coordinate-space pair correlation functions. Currently this is implemented for the `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, and `CG_0S` basis types. This command is an extension of `EXPC_VALS`: it does everything `EXPC_VALS` does and, in addition, evaluates densities and correlation functions on user-supplied grids. The grid files contain one grid point per line with no blank lines; for $L=0$ each point is a single radius $r\ge 0$, while for $L>0$ each point is two cylindrical coordinates (distance to the $z$-axis $\rho\ge 0$ and the $z$-coordinate). The output files begin with a `#` header line and reproduce the grid columns followed by the computed quantities; only inequivalent functions are written, e.g. for an $S$-state of beryllium that has four identical electrons, $g_1$ and $g_{12}$ for correlation functions, $\rho_1$ and $\rho_2$ for densities are computed.
 
 *Example* :
 
@@ -272,7 +272,7 @@ Computes densities of particles in the center-of-mass frame as well as pair corr
 
 #### 6. `MOMT_DENS`
 
-Computes momentum densities of particles in the center-of-mass frame as well as momentum pair correlation functions. Currently this is implemented only for the case of `RG_0S` basis type. Like `DENSITIES`, it is an extension of `EXPC_VALS`. The grid file format and output file conventions are the same as for `DENSITIES`, but the computed quantities are evaluated in momentum space.
+Computes momentum densities $\varrho$ of particles in the center-of-mass frame as well as momentum pair correlation functions $f$. Currently this is implemented for the `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P` basis types. Like `DENSITIES`, it is an extension of `EXPC_VALS`. The grid file format and output file conventions are the same as for `DENSITIES`, but the computed quantities are evaluated in momentum space. These values are obtained from analytic momentum-space matrix elements between ECG basis functions; the program does not numerically Fourier-transform a coordinate-space output table. For $L=0$ the grid coordinate is the momentum magnitude $\eta$, while for $L>0$ the two columns are $(\eta_\rho,\eta_z)$.
 
 *Example* :
 
@@ -288,6 +288,8 @@ Computes momentum densities of particles in the center-of-mass frame as well as 
 | `mom_cf.dat` | string | Output file with the computed momentum pair correlation functions. |
 | `mom_dens_grid.dat` | string | Input file with the grid of points at which the momentum densities are evaluated (same format as `cf_grid.dat`; the same file may be used for both). |
 | `mom_dens.dat` | string | Output file with the computed momentum densities in the center-of-mass frame. |
+
+The requested matrix elements are evaluated with the same permutation and spin-symmetry projection as the other expectation values. Grid data are broadcast to all MPI processes, basis-pair contributions are distributed among them, and the completed tables are formed by MPI summation. For a normalized state, each inequivalent three-dimensional density or correlation function is normalized to unity. Thus, for example, $\int \varrho_i(\boldsymbol{\eta})\,d^3\eta=1$, and $\int \eta^2\varrho_i(\boldsymbol{\eta})\,d^3\eta=\langle p_i^2\rangle$ provides a useful numerical check when a grid resolves both the origin and the tail.
 
 #### 7. `SAVE_FILE`
 

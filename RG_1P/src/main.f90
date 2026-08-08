@@ -229,8 +229,8 @@ program main
 
     case('EXPC_VALS')
       if (Glob_BBOP(i)%A==Glob_CurrBasisSize) then
-        call ExpectationValues(Glob_BBOP(i)%Action,1,Glob_FileNameNone,Glob_FileNameNone,Glob_FileNameNone, &
-                               Glob_FileNameNone,Glob_BBOP(i)%GSEPSolutionMethod)
+        call ExpectationValues(Glob_BBOP(i)%Action,1,Glob_FileNameNone,Glob_FileNameNone, &
+                               Glob_FileNameNone,Glob_FileNameNone,Glob_BBOP(i)%GSEPSolutionMethod)
       else
         if (Glob_ProcID==0) then
           write(*,'(1x,a,1x,i0)') 'Error EC0008 in main: incorrect BBOP step',i
@@ -248,6 +248,7 @@ program main
           write(*,*) 'Second parameter in DENSITIES is incorrect'
         endif
       endif
+
     case('MOMT_DENS')
       if (Glob_BBOP(i)%A==Glob_CurrBasisSize) then
         call ExpectationValues(Glob_BBOP(i)%Action,1,Glob_BBOP(i)%FileName1,Glob_BBOP(i)%FileName2, &
