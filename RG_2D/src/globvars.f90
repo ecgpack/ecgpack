@@ -183,6 +183,15 @@ module globvars
 !is stored in Glob_IndexFixedValue(i). Otherwise, Glob_IndexFixedValue is not used.
   integer :: Glob_IndexFixedValue(2)
 
+!Glob_VectorCouplingScheme defines the vector coupling scheme used in the process of basis generation. 
+!It can take values 1 (two particles in p-states counple to a D-state), 2 (one particle in a d-state), 
+!or 0 (any of the two previous scheme is allowed). The default value is 0.  
+  integer :: Glob_VectorCouplingScheme=0
+
+!Variable Glob_IsVectorCouplingSchemeProvided is .true. if the user has provided a specific vector 
+!coupling scheme. Otherwise, it is .false.
+   logical :: Glob_IsVectorCouplingSchemeProvided=.false.
+
 !Array Glob_FuncNum contains the basis function numbers
   integer,allocatable,dimension(:),save :: Glob_FuncNum
 

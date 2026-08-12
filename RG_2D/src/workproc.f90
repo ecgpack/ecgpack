@@ -93,6 +93,41 @@ contains
     Glob_2Raised3n2=TWO**((3*Glob_n)/TWO)
     Glob_PiRaised3n2=Glob_Pi**((3*Glob_n)/TWO)
 
+!Read the optional VECTOR_COUPLING_SCHEME line that may appear right after the
+!PARTICLES line. As with the other optional descriptors, the record is read into
+!a buffer first and parsed internally so that backspace 1 reliably pushes the
+!line back if it turns out not to be a VECTOR_COUPLING_SCHEME line.
+    if (Glob_ProcID==0) then
+      read(1,'(A)',iostat=ReadLineErr) ReadLine
+      if (ReadLineErr==0) then
+        read(ReadLine,*,iostat=ReadErr) ReadChar(1:22),ReadInt
+        if ((ReadErr==0).and.(ReadChar(1:22)=='VECTOR_COUPLING_SCHEME')) then
+          Glob_IsVectorCouplingSchemeProvided=.true.
+          Glob_VectorCouplingScheme=ReadInt
+          write(*,'(1x,a22,1x,i6)') ReadChar(1:22),Glob_VectorCouplingScheme
+          Line=Line+1
+          if ((Glob_VectorCouplingScheme<0).or.(Glob_VectorCouplingScheme>2)) then
+            write(*,*) 'Error EC0105 in data file, line ',Line
+            write(*,*) 'VECTOR_COUPLING_SCHEME value must be 0, 1, or 2'
+            ErrorInDataFile=.true.
+          endif
+          !Scheme 1 places two pseudoparticles in p-states, which requires the two
+          !indices to be different. This is impossible when there is only one pseudoparticle.
+          if ((Glob_VectorCouplingScheme==1).and.(Glob_n<2)) then
+            write(*,*) 'Error EC0107 in data file, line ',Line
+            write(*,*) 'VECTOR_COUPLING_SCHEME 1 requires at least two pseudoparticles'
+            ErrorInDataFile=.true.
+          endif
+        else
+          backspace 1
+        endif
+      endif
+    endif
+    call MPI_BCAST(ErrorInDataFile,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    if (ErrorInDataFile) call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
+    call MPI_BCAST(Glob_IsVectorCouplingSchemeProvided,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call MPI_BCAST(Glob_VectorCouplingScheme,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+
 !Read the optional FIXED_INDEX_1 and FIXED_INDEX_2 lines that may appear between
 !the PARTICLES and MASSES lines (in any order). As with the other optional
 !descriptors, each record is read into a buffer first and parsed internally so
@@ -128,6 +163,15 @@ contains
           exit
         endif
       enddo
+!When the vector coupling scheme is explicitly specified, only one of the two
+!indices of the basis functions may be fixed.
+      if (Glob_IsVectorCouplingSchemeProvided.and. &
+          Glob_IsIndexFixed(1).and.Glob_IsIndexFixed(2)) then
+        write(*,*) 'Error EC0106 in data file, line ',Line
+        write(*,*) 'FIXED_INDEX_1 and FIXED_INDEX_2 cannot both be present'
+        write(*,*) 'when VECTOR_COUPLING_SCHEME is specified'
+        ErrorInDataFile=.true.
+      endif
     endif
     call MPI_BCAST(ErrorInDataFile,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
     if (ErrorInDataFile) call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
@@ -624,6 +668,8 @@ contains
       endif
       if (Glob_BasisTypeSupplied) write(1,'(1x,a10,1x,a5)') 'BASIS_TYPE',Glob_BasisType
       write(1,'(1x,a9,1x,i6)') 'PARTICLES',Glob_n+1
+      if (Glob_IsVectorCouplingSchemeProvided) &
+        write(1,'(1x,a22,1x,i6)') 'VECTOR_COUPLING_SCHEME',Glob_VectorCouplingScheme
       if (Glob_IsIndexFixed(1)) write(1,'(1x,a13,1x,i6)') 'FIXED_INDEX_1',Glob_IndexFixedValue(1)
       if (Glob_IsIndexFixed(2)) write(1,'(1x,a13,1x,i6)') 'FIXED_INDEX_2',Glob_IndexFixedValue(2)
       write(1,'(1x,a6)',advance='no') 'MASSES'
@@ -1917,7 +1963,35 @@ contains
     endif
     if (Glob_IsIndexFixed(2)) then
       m(1:nfun,2)=Glob_IndexFixedValue(2)
-    endif   
+    endif
+
+    !If Glob_VectorCouplingScheme is nonzero then we need to make sure that the generated indices
+    !are compatible with the coupling scheme. Note that ReadIOFile does not allow both indices to
+    !be fixed when a coupling scheme is specified, so there is always at least one index that is
+    !free to be adjusted here. When neither index is fixed we adjust the first one.
+    !Glob_VectorCouplingScheme==1 : two particles in p-states, so the two indices must be different
+    if (Glob_VectorCouplingScheme==1) then
+      do i=1,nfun
+        do while (m(i,1)==m(i,2))
+          call random_number(r)
+          j=1+int(r*Glob_n)
+          if (j>Glob_n) j=Glob_n
+          if (Glob_IsIndexFixed(1)) then
+            m(i,2)=j
+          else
+            m(i,1)=j
+          endif
+        enddo
+      enddo
+    endif
+    !Glob_VectorCouplingScheme==2 : a single particle in a d-state, so the two indices must be the same
+    if (Glob_VectorCouplingScheme==2) then
+      if (Glob_IsIndexFixed(2)) then
+        m(1:nfun,1)=m(1:nfun,2)
+      else
+        m(1:nfun,2)=m(1:nfun,1)
+      endif
+    endif
 
   end subroutine GenerateTrialParam
 
@@ -4167,56 +4241,96 @@ contains
             j2=Glob_Index(nfru+ii,2)
             jbest=j
             jbest2=j2
-            if (.not.Glob_IsIndexFixed(1)) then
-              do jj=1,Glob_n
-                if (jj/=j) then !.and. jj/=j2
-                  Glob_Index(nfru+ii,1)=jj
-                  Evalue=EnergyGA(nfrup1,K,.true.,ErrCode)
-                  if (ErrCode/=0) then
-                    NumOfFailures=NumOfFailures+1
-                    Glob_Index(nfru+ii,1)=jbest
-                    if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
-                      if (Glob_ProcID==0) then
-                        write(*,*) 'Error EC0128 in BasisEnlG: number of failures in energy calculations'
-                        write(*,*) 'during the optimization of x-indicies exceeded limit'
+            if (Glob_VectorCouplingScheme==2) then
+              !Coupling scheme 2 requires the two indices to be equal. They therefore cannot
+              !be varied independently and are varied together here. Note that if either of
+              !the indices is fixed then both of them are effectively fixed, in which case
+              !there is nothing to optimize.
+              if (.not.(Glob_IsIndexFixed(1).or.Glob_IsIndexFixed(2))) then
+                do jj=1,Glob_n
+                  if (jj/=j) then
+                    Glob_Index(nfru+ii,1)=jj
+                    Glob_Index(nfru+ii,2)=jj
+                    Evalue=EnergyGA(nfrup1,K,.true.,ErrCode)
+                    if (ErrCode/=0) then
+                      NumOfFailures=NumOfFailures+1
+                      Glob_Index(nfru+ii,1)=jbest
+                      Glob_Index(nfru+ii,2)=jbest
+                      if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
+                        if (Glob_ProcID==0) then
+                          write(*,*) 'Error EC0128 in BasisEnlG: number of failures in energy calculations'
+                          write(*,*) 'during the optimization of x,y-indicies exceeded limit'
+                        endif
+                        call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
                       endif
-                      call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
-                    endif
-                  else
-                    if (Evalue<Glob_CurrEnergy) then
-                      Glob_CurrEnergy=Evalue
-                      jbest=jj
+                    else
+                      if (Evalue<Glob_CurrEnergy) then
+                        Glob_CurrEnergy=Evalue
+                        jbest=jj
+                      endif
                     endif
                   endif
-                endif
-              enddo
-            endif
-            Glob_Index(nfru+ii,1)=jbest
-            if (.not.Glob_IsIndexFixed(2)) then
-              do jj2=1,Glob_n
-                if (jj2/=j2) then ! .and. jj2/=jbest
-                  Glob_Index(nfru+ii,2)=jj2
-                  Evalue=EnergyGA(nfrup1,K,.true.,ErrCode)
-                  if (ErrCode/=0) then
-                    NumOfFailures=NumOfFailures+1
-                    Glob_Index(nfru+ii,2)=jbest2
-                    if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
-                      if (Glob_ProcID==0) then
-                        write(*,*) 'Error EC0129 in BasisEnlG: number of failures in energy calculations'
-                        write(*,*) 'during the optimization of y-indicies exceeded limit'
+                enddo
+              endif
+              jbest2=jbest
+              Glob_Index(nfru+ii,1)=jbest
+              Glob_Index(nfru+ii,2)=jbest2
+            else
+              !Coupling scheme 1 requires the two indices to be different, which is why the
+              !value of the other index is excluded from the trial values below. Both index
+              !orderings remain allowed, but a single-index move cannot turn one ordering
+              !into the other. Scheme 0 imposes no restrictions on the indices.
+              if (.not.Glob_IsIndexFixed(1)) then
+                do jj=1,Glob_n
+                  if ((jj/=j).and.((Glob_VectorCouplingScheme/=1).or.(jj/=j2))) then
+                    Glob_Index(nfru+ii,1)=jj
+                    Evalue=EnergyGA(nfrup1,K,.true.,ErrCode)
+                    if (ErrCode/=0) then
+                      NumOfFailures=NumOfFailures+1
+                      Glob_Index(nfru+ii,1)=jbest
+                      if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
+                        if (Glob_ProcID==0) then
+                          write(*,*) 'Error EC0128 in BasisEnlG: number of failures in energy calculations'
+                          write(*,*) 'during the optimization of x-indicies exceeded limit'
+                        endif
+                        call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
                       endif
-                      call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
-                    endif
-                  else
-                    if (Evalue<Glob_CurrEnergy) then
-                      Glob_CurrEnergy=Evalue
-                      jbest2=jj2
+                    else
+                      if (Evalue<Glob_CurrEnergy) then
+                        Glob_CurrEnergy=Evalue
+                        jbest=jj
+                      endif
                     endif
                   endif
-                endif
-              enddo
+                enddo
+              endif
+              Glob_Index(nfru+ii,1)=jbest
+              if (.not.Glob_IsIndexFixed(2)) then
+                do jj2=1,Glob_n
+                  if ((jj2/=j2).and.((Glob_VectorCouplingScheme/=1).or.(jj2/=jbest))) then
+                    Glob_Index(nfru+ii,2)=jj2
+                    Evalue=EnergyGA(nfrup1,K,.true.,ErrCode)
+                    if (ErrCode/=0) then
+                      NumOfFailures=NumOfFailures+1
+                      Glob_Index(nfru+ii,2)=jbest2
+                      if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
+                        if (Glob_ProcID==0) then
+                          write(*,*) 'Error EC0129 in BasisEnlG: number of failures in energy calculations'
+                          write(*,*) 'during the optimization of y-indicies exceeded limit'
+                        endif
+                        call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
+                      endif
+                    else
+                      if (Evalue<Glob_CurrEnergy) then
+                        Glob_CurrEnergy=Evalue
+                        jbest2=jj2
+                      endif
+                    endif
+                  endif
+                enddo
+              endif
+              Glob_Index(nfru+ii,2)=jbest2
             endif
-            Glob_Index(nfru+ii,2)=jbest2
           enddo
           
           !Now we optimize nonlinear parameters
@@ -4861,56 +4975,96 @@ contains
             j2=Glob_Index(nfru+ii,2)
             jbest=j
             jbest2=j2
-            if (.not.Glob_IsIndexFixed(1)) then
-              do jj=1,Glob_n
-                if (jj/=j) then !.and. jj/=j2
-                  Glob_Index(nfru+ii,1)=jj
-                  Evalue=EnergyIA(nfrup1,K,.true.,ErrCode)
-                  if (ErrCode/=0) then
-                    NumOfFailures=NumOfFailures+1
-                    Glob_Index(nfru+ii,1)=jbest
-                    if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
-                      if (Glob_ProcID==0) then
-                        write(*,*) 'Error EC0138 in BasisEnlI: number of failures in energy calculations'
-                        write(*,*) 'during the optimization of x-indicies exceeded limit'
+            if (Glob_VectorCouplingScheme==2) then
+              !Coupling scheme 2 requires the two indices to be equal. They therefore cannot
+              !be varied independently and are varied together here. Note that if either of
+              !the indices is fixed then both of them are effectively fixed, in which case
+              !there is nothing to optimize.
+              if (.not.(Glob_IsIndexFixed(1).or.Glob_IsIndexFixed(2))) then
+                do jj=1,Glob_n
+                  if (jj/=j) then
+                    Glob_Index(nfru+ii,1)=jj
+                    Glob_Index(nfru+ii,2)=jj
+                    Evalue=EnergyIA(nfrup1,K,.true.,ErrCode)
+                    if (ErrCode/=0) then
+                      NumOfFailures=NumOfFailures+1
+                      Glob_Index(nfru+ii,1)=jbest
+                      Glob_Index(nfru+ii,2)=jbest
+                      if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
+                        if (Glob_ProcID==0) then
+                          write(*,*) 'Error EC0138 in BasisEnlI: number of failures in energy calculations'
+                          write(*,*) 'during the optimization of x,y-indicies exceeded limit'
+                        endif
+                        call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
                       endif
-                      call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
-                    endif
-                  else
-                    if (Evalue<Glob_CurrEnergy) then
-                      Glob_CurrEnergy=Evalue
-                      jbest=jj
+                    else
+                      if (Evalue<Glob_CurrEnergy) then
+                        Glob_CurrEnergy=Evalue
+                        jbest=jj
+                      endif
                     endif
                   endif
-                endif
-              enddo
-            endif
-            Glob_Index(nfru+ii,1)=jbest
-            if (.not.Glob_IsIndexFixed(2)) then
-              do jj2=1,Glob_n
-                if (jj2/=j2) then ! .and. jj2/=jbest
-                  Glob_Index(nfru+ii,2)=jj2
-                  Evalue=EnergyIA(nfrup1,K,.true.,ErrCode)
-                  if (ErrCode/=0) then
-                    NumOfFailures=NumOfFailures+1
-                    Glob_Index(nfru+ii,2)=jbest2
-                    if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
-                      if (Glob_ProcID==0) then
-                        write(*,*) 'Error EC0139 in BasisEnlI: number of failures in energy calculations'
-                        write(*,*) 'during the optimization of y-indicies exceeded limit'
+                enddo
+              endif
+              jbest2=jbest
+              Glob_Index(nfru+ii,1)=jbest
+              Glob_Index(nfru+ii,2)=jbest2
+            else
+              !Coupling scheme 1 requires the two indices to be different, which is why the
+              !value of the other index is excluded from the trial values below. Both index
+              !orderings remain allowed, but a single-index move cannot turn one ordering
+              !into the other. Scheme 0 imposes no restrictions on the indices.
+              if (.not.Glob_IsIndexFixed(1)) then
+                do jj=1,Glob_n
+                  if ((jj/=j).and.((Glob_VectorCouplingScheme/=1).or.(jj/=j2))) then
+                    Glob_Index(nfru+ii,1)=jj
+                    Evalue=EnergyIA(nfrup1,K,.true.,ErrCode)
+                    if (ErrCode/=0) then
+                      NumOfFailures=NumOfFailures+1
+                      Glob_Index(nfru+ii,1)=jbest
+                      if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
+                        if (Glob_ProcID==0) then
+                          write(*,*) 'Error EC0138 in BasisEnlI: number of failures in energy calculations'
+                          write(*,*) 'during the optimization of x-indicies exceeded limit'
+                        endif
+                        call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
                       endif
-                      call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
-                    endif
-                  else
-                    if (Evalue<Glob_CurrEnergy) then
-                      Glob_CurrEnergy=Evalue
-                      jbest2=jj2
+                    else
+                      if (Evalue<Glob_CurrEnergy) then
+                        Glob_CurrEnergy=Evalue
+                        jbest=jj
+                      endif
                     endif
                   endif
-                endif
-              enddo
+                enddo
+              endif
+              Glob_Index(nfru+ii,1)=jbest
+              if (.not.Glob_IsIndexFixed(2)) then
+                do jj2=1,Glob_n
+                  if ((jj2/=j2).and.((Glob_VectorCouplingScheme/=1).or.(jj2/=jbest))) then
+                    Glob_Index(nfru+ii,2)=jj2
+                    Evalue=EnergyIA(nfrup1,K,.true.,ErrCode)
+                    if (ErrCode/=0) then
+                      NumOfFailures=NumOfFailures+1
+                      Glob_Index(nfru+ii,2)=jbest2
+                      if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
+                        if (Glob_ProcID==0) then
+                          write(*,*) 'Error EC0139 in BasisEnlI: number of failures in energy calculations'
+                          write(*,*) 'during the optimization of y-indicies exceeded limit'
+                        endif
+                        call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
+                      endif
+                    else
+                      if (Evalue<Glob_CurrEnergy) then
+                        Glob_CurrEnergy=Evalue
+                        jbest2=jj2
+                      endif
+                    endif
+                  endif
+                enddo
+              endif
+              Glob_Index(nfru+ii,2)=jbest2
             endif
-            Glob_Index(nfru+ii,2)=jbest2
           enddo
 
           !Now we optimize nonlinear parameters
