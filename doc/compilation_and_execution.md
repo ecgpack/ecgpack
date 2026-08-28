@@ -110,6 +110,7 @@ Script `build.bash` can use some common toolchains available in HPC systems/envi
 | intel-2025a | intel/2025a | Intel compilers and libraries |
 | intel-2024a | intel/2024a | Intel compilers and libraries |  
 | intel-2023b | intel/2023b | Intel compilers and libraries |
+| nvhpc-26.5 | NVHPC/26.5-CUDA-13.2.0 | Nvidia compilers and libraries included in NVHPC SDK |
 | nvhpc-25.9 | NVHPC/25.9-CUDA-12.9.1 | Nvidia compilers and libraries included in NVHPC SDK |
 | nvhpc-25.3 | NVHPC/25.3-CUDA-12.8.0 | Nvidia compilers and libraries included in NVHPC SDK |
 
