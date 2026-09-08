@@ -8,11 +8,14 @@ the same method to the other ECGPACK variants. Update it after every reviewable
 chunk with the exact files changed, validation performed, open questions, and
 any decision that a later port must reproduce.
 
-The first three chunks define code ownership and canonical layout, integrate
-qrlinalg and its build dependencies, and implement non-derivative canonical Q
-storage plus arbitrary-index staged column assembly. Q remains absent from
-`main.f90` dispatch, so no Q BBOP is usable yet and existing G/I input behavior
-is unchanged.
+The first committed foundation (`8561b61`) defines code ownership and canonical
+layout, integrates qrlinalg and its build dependencies, and implements
+non-derivative canonical Q storage plus arbitrary-index staged column assembly.
+The next implementation chunk completes `OPT_CYCLE Q`: factor lifecycle,
+replacement transactions, solve/residual monitoring, indexed derivatives,
+energy/gradient wrappers, swap handling, driver, and `main.f90` dispatch are
+implemented and validated. `BASIS_ENL Q` and `FULL_OPT1 Q` remain fail-closed
+and are the next BBOP-specific tasks.
 
 The G implementations are the behavioral references:
 
@@ -511,22 +514,24 @@ update `THIRD-PARTY-NOTICES.md` when integration becomes distributable.
 
 Each chunk stops for review and is committed only on explicit request.
 
-1. **Completed in this working tree:** API study, canonical stable-order
+1. **Completed in foundation commit `8561b61`:** API study, canonical stable-order
    decision, memory/code scaffold in workproc, routine map, and porting record.
-2. **Completed in this working tree:** qrlinalg shape/residual API import,
+2. **Completed in foundation commit `8561b61`:** qrlinalg shape/residual API import,
    build/provider integration, all-precision compilation, analytical residual
    test, and an existing I-method sample check.
-3. **Completed in this working tree:** Q canonical `StoreHS`, explicit matrix-
+3. **Completed in foundation commit `8561b61`:** Q canonical `StoreHS`, explicit matrix-
    parameter generation state, and staged arbitrary-index non-derivative H/S
    columns compared with full G/Q recomputation under MPI.
-4. **Root factor lifecycle and solve:** fresh factorization, status broadcasts,
+4. **Completed for OPT_CYCLE Q:** root factor lifecycle and solve: fresh factorization, status broadcasts,
    S-normalized coefficients, residual checks, and single-function behavior.
-5. **Sequential replacement transactions:** repeated trials, intersecting
+5. **Completed for OPT_CYCLE Q:** sequential replacement transactions: repeated trials, intersecting
    active columns, restoration after failed solves, and refresh diagnostics.
-6. **Indexed gradients and penalties:** compare with G suffix gradients and
-   finite differences for interior/noncontiguous active sets under MPI.
-7. **OPT_CYCLE Q:** preserve G scheduling/history semantics without physical
-   permutations; test restart and final short blocks.
+6. **Indexed gradients completed for OPT_CYCLE Q:** compare with finite
+   differences for interior and multi-function active sets under MPI. Indexed
+   overlap-penalty gradients remain part of `FULL_OPT1 Q`.
+7. **Completed:** `OPT_CYCLE Q` preserves G scheduling/history semantics
+   without physical permutations and supports final short blocks and swap
+   restart.
 8. **BASIS_ENL Q:** append lifecycle, repeated candidate replacement, accepted
    order versus tentative order, and rejection recovery.
 9. **FULL_OPT1 Q:** dense-change policy, Hessian ordering/restart, penalties,
@@ -715,3 +720,188 @@ Not changed:
   remain stubs;
 - Q is not accepted by `main.f90`, so user-visible behavior is unchanged;
 - no commit was created.
+
+## 14. OPT_CYCLE Q implementation log
+
+This section records the complete implementation after foundation commit
+`8561b61`. The statements in sections 11--13 are historical chunk boundaries;
+their “not changed” lists describe those earlier reviews, not current code.
+
+### Step 1: factor ownership and fresh construction
+
+`PrepareQWorkspace` now allocates the four capacity-length vectors used for
+inverse iteration and column changes. The dense `qr_real_state` itself remains
+root-owned. `FactorizeQFresh` checks the canonical matrix relationship and
+physical extents on every rank, initializes root storage only when capacity
+changes, calls
+
+```fortran
+call Factors%factorize_fresh(Glob_H,Glob_S,Glob_ApproxEnergy,info, &
+                             active_order=MatrixOrder)
+```
+
+on rank zero, broadcasts the status, and changes `FactorsMatchMatrices` only
+after collective success. This exact call form is important for future
+`BASIS_ENL Q`: passing capacity-sized matrices with `active_order` avoids a
+packed temporary when active order is smaller than capacity.
+
+### Step 2: transactional symmetric replacements
+
+`ApplyQTrial` preflights factor validity, order, capacity, and shift before the
+first update. It then snapshots all original active physical columns, raw
+overlap diagonals, and represented nonlinear parameters. Columns are applied
+in active-map order:
+
+1. gather the current conceptual physical column from the lower triangle;
+2. subtract it from the staged final column;
+3. call `replace_symmetric` on rank zero;
+4. broadcast its status;
+5. commit that final column to canonical H/S on every rank;
+6. update the corresponding raw `Glob_diagS` and parameter generation.
+
+The current column is gathered again at each step. Consequently, an
+active--active intersection installed by an earlier replacement has zero delta
+when the later endpoint is processed and is not applied twice. Although all
+ordinary qrlinalg failures are eliminated by preflight, the defensive failure
+path restores every physical snapshot and parameter block and constructs fresh
+factors. It never reuses a factor state whose relationship is uncertain.
+
+### Step 3: solve and two distinct residual monitors
+
+`SolveQ` uses the preceding `Glob_c` as the inverse-iteration initial vector
+and falls back to an all-ones vector only when it is numerically zero. It calls
+qrlinalg with `norm_mode=0`, so the returned coefficient vector obeys
+`c^T*S*c=1`, and broadcasts status, energy, coefficients, direction accuracy,
+and iteration count.
+
+Every successful solve evaluates two different diagnostics:
+
+- `ComputeQEigenpairResidual` computes
+  `||H*c-E*S*c||/(||H*c||+|E|*||S*c||+tiny)` from canonical H/S;
+- `factorization_residual` compares the physical shifted action with `Q*(R*v)`
+  using a fixed, alternating dense probe vector.
+
+Do not use the eigenvector as the factor probe. Because the shift is close to
+the desired eigenvalue, `(H-shift*S)*c` is nearly zero and makes the relative
+factor-action ratio artificially sensitive. On the 100-function Li test, an
+eigenvector probe reported about `1.6e-10` immediately after a fresh
+factorization, while the deterministic probe reported about `3.9e-16` and the
+physical eigenpair residual was about `2.6e-16`.
+
+A factor or physical residual beyond its precision-scaled tolerance causes one
+fresh-factorization and solve retry. Continued physical-residual failure is
+reported as `QR_ERR_NO_CONVERGENCE`; continued factor mismatch is reported as
+invalid state. Independently, a fresh factorization is forced after
+`max(64,8*n)` replacements. Because this guard is O(n), its O(n^3) refresh cost
+amortizes to O(n^2) per replacement. `LastEigenpairResidual`,
+`LastFactorResidual`, and `FreshFactorizations` preserve the latest diagnostics
+in `Q_Workspace` for tests and future reporting.
+
+### Step 4: arbitrary-index derivatives
+
+`AssembleQTrial(.true.)` uses the same unordered-pair enumeration as the
+non-derivative path. For active position `a` and canonical partner `j`, it
+stores the G-compatible scaled raw derivatives in `Glob_D(:,a,j)`. When both
+endpoints are active, the matrix-element kernel returns both endpoint
+derivatives and the second one is placed through `ActivePosition`; no second
+matrix-element evaluation is made.
+
+Local derivative contributions are combined with one in-place MPI all-reduce
+over `Glob_D`. This avoids another `2*npt*max_active*capacity` receive tensor.
+Active raw diagonal norms are reduced before normalization. Off-diagonal
+derivatives are multiplied by `1/sqrt(Sii*Sjj)`; diagonal derivatives are
+multiplied by `2/Sii`, matching `StoreHSD` and accounting for both identical
+endpoints.
+
+`EnergyQB` contracts this tensor with canonical coefficients. Its diagonal
+correction uses `Glob_D(:,a,ActiveFunction(a))`, so no suffix assumption
+remains. `OPT_CYCLE` disables the smooth overlap penalty exactly as G does;
+the Q energy wrappers deliberately return `QR_ERR_NOT_IMPLEMENTED` if a future
+caller enables that penalty before the indexed `FULL_OPT1 Q` implementation.
+
+### Step 5: cyclic driver without matrix permutations
+
+`OptCycleQ` retains the input validation, DRMNG configuration, best-point
+selection, evaluation limits, overlap/coefficient rejection, history fields,
+saving frequency, and warning policy of `OptCycleG`. It removes all calls to
+`ReverseFuncOrder`, `PermuteFunctions*`, `PermuteMatrixElements*`, and
+`SortBasisFuncAndMatElem`.
+
+For a step beginning at canonical `CurrFunc`, it constructs
+
+```text
+ActiveFunction(a) = CurrFunc+nfo-a
+```
+
+This descending order reproduces the optimizer block order created by G's
+initial reversal while leaving every physical index fixed. Before DRMNG begins,
+the driver captures the matrix parameter generation. Every energy or gradient
+request copies the requested blocks into their mapped canonical functions and
+executes a complete assemble/apply/solve transaction. At termination it
+re-evaluates `x_best`; on failed solve, excessive overlap, or excessive linear
+coefficient, it transactionally re-evaluates `x_init` rather than restoring
+parameters alone.
+
+Overlap rejection enumerates every unordered pair touching an active function.
+This explicitly includes inactive canonical indices greater than the active
+index, a case that G handles implicitly by moving active functions to the end.
+Results are saved with `Sort='no'` because canonical order is already the
+user-visible order.
+
+### Step 6: swap format and dispatch
+
+The on-disk swap representation is unchanged: H occupies the lower triangle
+and diagonal, normalized S occupies the upper triangle, and raw `diagS` follows
+the packed matrix. For Q, restore copies packed S into only its canonical lower
+triangle and sets `Sii=1`; it does not shift H or populate an authoritative
+upper triangle. Store borrows only the unused upper H triangle, so live lower
+H/S and QR factors remain consistent.
+
+`main.f90` dispatches `OPT_CYCLE Q` to `OptCycleQ` and reports a returned Q
+status. `BASIS_ENL Q` and `FULL_OPT1 Q` print explicit unsupported messages
+instead of silently doing nothing. Their workproc entry points remain
+fail-closed stubs.
+
+The accepted input line has the same fields as G and I, with method `Q`:
+
+```text
+OPT_CYCLE Q K FuncBegin FuncEnd NumToOpt NumToShift NumCycles MaxEnergyEval \
+              OverlapThreshold LinCoeffThreshold SavingFreq
+```
+
+### Validation performed
+
+Strict and optimized wp=8 builds completed with only the pre-existing legacy
+format warning in `ExpectationValues`. Optimized wp=10 and wp=16 builds also
+completed successfully:
+
+```bash
+make debug   COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib EXEFILE=ecg
+make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib EXEFILE=ecg
+make release COMPILER=gfortran MACHINE=linux-generic PREC=10 LINALG=netlib EXEFILE=ecg_q_wp10
+make release COMPILER=gfortran MACHINE=linux-generic PREC=16 LINALG=netlib EXEFILE=ecg_q_wp16
+```
+
+A disposable harness used the 100-function Li basis and canonical function 50.
+All six `EnergyQB` components were compared with central differences through
+the full staged-replacement and QR-solve path. The maximum scaled discrepancy
+was `7.39e-5` at a finite-difference step of `1e-5*max(1,abs(parameter))`.
+The same harness with descending, noncontiguous active functions `(100,50)`
+validated all twelve gradient entries, including the shared active--active
+matrix element, to the same scaled tolerance on both one and two MPI ranks.
+The two-rank maximum scaled discrepancy was `2.05e-5`. The tiny function-100
+gradient components were at the energy finite-difference resolution; their
+absolute discrepancies were at most about `3e-11`.
+
+End-to-end release runs on the same basis completed for:
+
+- one MPI rank, functions 99--100 in separate one-function steps, with two
+  energy and one gradient evaluation per step;
+- two MPI ranks with the same schedule;
+- two MPI ranks with one descending two-function block `(100,99)`, exercising
+  both endpoint derivatives and sequential intersection handling;
+- two consecutive Q BBOP steps, where the first wrote the swap file and the
+  second restored it and reproduced the same initial energy.
+
+No sample input was modified. All calculation inputs and gradient harnesses
+used for these checks were disposable files under `/tmp`.

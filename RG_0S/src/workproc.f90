@@ -4,8 +4,10 @@ module workproc
   use matform
   use matelem
   use linalg
+  use iso_fortran_env, only: int64
   use qrlinalg, only: qr_real_state,QR_SUCCESS,QR_ERR_INVALID_ARGUMENT, &
-    QR_ERR_ALLOCATION,QR_ERR_NOT_IMPLEMENTED
+    QR_ERR_ALLOCATION,QR_ERR_NOT_IMPLEMENTED,QR_ERR_INVALID_STATE, &
+    QR_ERR_DIMENSION_MISMATCH,QR_ERR_NO_CONVERGENCE
   implicit none
 
 !The Q method keeps the physical basis in its canonical order. Unlike the G
@@ -26,6 +28,8 @@ module workproc
   integer,parameter :: Q_METHOD_NOT_IMPLEMENTED=QR_ERR_NOT_IMPLEMENTED
   integer,parameter :: Q_METHOD_INVALID_ARGUMENT=QR_ERR_INVALID_ARGUMENT
   integer,parameter :: Q_METHOD_ALLOCATION_ERROR=QR_ERR_ALLOCATION
+  integer,parameter :: Q_METHOD_INVALID_STATE=QR_ERR_INVALID_STATE
+  integer,parameter :: Q_METHOD_DIMENSION_MISMATCH=QR_ERR_DIMENSION_MISMATCH
 
   type :: QMethodWorkspace
     !The QR state is meaningful only on rank zero. Keeping it in the same
@@ -73,10 +77,17 @@ module workproc
     real(wp) :: AcceptedEnergy=ZERO
     logical :: AcceptedPointIsStored=.false.
 
+    !These diagnostics distinguish inverse-iteration accuracy from agreement
+    !between the updated factors and the physical matrices. Both are relative
+    !action residuals evaluated for the most recently returned eigenvector.
+    real(wp) :: LastEigenpairResidual=huge(ONE)
+    real(wp) :: LastFactorResidual=huge(ONE)
+    integer :: FreshFactorizations=0
+
     !The qrlinalg solve requires distinct input and output vectors. DeltaH and
     !DeltaS hold one replacement column and are also useful for residual and
-    !fresh-factorization checks. These arrays will be allocated only on rank
-    !zero once the serial qrlinalg state is connected.
+    !fresh-factorization checks. They are replicated because the surrounding
+    !transaction is collective, but only rank zero passes them to qrlinalg.
     real(wp),allocatable :: InitialVector(:),SolvedVector(:)
     real(wp),allocatable :: DeltaH(:),DeltaS(:)
   end type QMethodWorkspace
@@ -2664,6 +2675,18 @@ contains
         enddo
       endif
 
+      !Q uses the same compact swap-file representation as G, but restores
+      !unshifted physical matrices with both diagonals stored in place. The
+      !lower triangles remain the only authoritative matrix storage.
+      if (Glob_GSEPSolutionMethod=='Q') then
+        do i=1,Glob_CurrBasisSize
+          do j=1,i-1
+            Glob_S(i,j)=Glob_H(j,i)
+          enddo
+          Glob_S(i,i)=ONE
+        enddo
+      endif
+
       if (Glob_ProcID==0) write(*,*) 'completed'
     else
       if (Glob_ProcID==0) then
@@ -2710,6 +2733,17 @@ contains
                 Glob_H(i,i)=Glob_H(i,i)+Glob_ApproxEnergy
                 do j=i+1,Glob_CurrBasisSize
                   Glob_H(j,i)=Glob_H(j,i)+Glob_ApproxEnergy*Glob_S(j,i)
+                enddo
+              enddo
+            endif
+
+            if (Glob_GSEPSolutionMethod=='Q') then
+              !Borrow only the unused upper triangle of H for serialized S.
+              !The canonical lower triangles and the physical H diagonal are
+              !unchanged, so live factors still match after this routine.
+              do i=1,Glob_CurrBasisSize
+                do j=1,i-1
+                  Glob_H(j,i)=Glob_S(i,j)
                 enddo
               enddo
             endif
@@ -3772,6 +3806,10 @@ contains
              Q_Workspace%MatrixParam(Glob_npt,MaxActive), &
              Q_Workspace%PreviousParam(Glob_npt,MaxActive), &
              Q_Workspace%AcceptedParam(Glob_npt,MaxActive), &
+             Q_Workspace%InitialVector(Capacity), &
+             Q_Workspace%SolvedVector(Capacity), &
+             Q_Workspace%DeltaH(Capacity), &
+             Q_Workspace%DeltaS(Capacity), &
              stat=AllocationStatus)
     if (AllocationStatus/=0) then
       call ClearQWorkspace()
@@ -3794,8 +3832,15 @@ contains
     Q_Workspace%MatrixParam=ZERO
     Q_Workspace%PreviousParam=ZERO
     Q_Workspace%AcceptedParam=ZERO
+    Q_Workspace%InitialVector=ONE
+    Q_Workspace%SolvedVector=ZERO
+    Q_Workspace%DeltaH=ZERO
+    Q_Workspace%DeltaS=ZERO
     Q_Workspace%AcceptedEnergy=ZERO
     Q_Workspace%AcceptedPointIsStored=.false.
+    Q_Workspace%LastEigenpairResidual=huge(ONE)
+    Q_Workspace%LastFactorResidual=huge(ONE)
+    Q_Workspace%FreshFactorizations=0
     Q_Workspace%MatricesAreCanonical=.false.
     Q_Workspace%FactorsMatchMatrices=.false.
     Q_Workspace%MatrixParametersAreStored=.false.
@@ -3843,6 +3888,9 @@ contains
     Q_Workspace%TrialHasDerivatives=.false.
     Q_Workspace%AcceptedEnergy=ZERO
     Q_Workspace%AcceptedPointIsStored=.false.
+    Q_Workspace%LastEigenpairResidual=huge(ONE)
+    Q_Workspace%LastFactorResidual=huge(ONE)
+    Q_Workspace%FreshFactorizations=0
 
   end subroutine ClearQWorkspace
 
@@ -4026,29 +4074,23 @@ contains
     integer,intent(out) :: ErrorCode
 !Local variables:
     integer a,b,i,j,q,PairNumber,MatrixOrder,NumActive
-    integer ActiveIndex,NumMatrixEntries
+    integer ActiveIndex,NumMatrixEntries,NumDerivativeEntries,npt2
     real(wp) ParamActive(Glob_AllowedNumOfPseudoParticles* &
                          (Glob_AllowedNumOfPseudoParticles+1)/2)
     real(wp) ParamOther(Glob_AllowedNumOfPseudoParticles* &
                         (Glob_AllowedNumOfPseudoParticles+1)/2)
     real(wp) Hkl,Skl,Hsum,Ssum,ActiveNorm,OtherNorm,Normalization
-!These arrays are not used when both derivative switches passed to the matrix-
-!element kernel are false. Small actual arrays are sufficient for that API.
-    real(wp) DActive(2),DOther(2)
+    real(wp) DActive(2*Glob_npt_MaxAllowed),DOther(2*Glob_npt_MaxAllowed)
+    real(wp) DActiveSum(2*Glob_npt_MaxAllowed),DOtherSum(2*Glob_npt_MaxAllowed)
+    logical OtherDerivativeNeeded
 
     Q_Workspace%TrialIsReady=.false.
     Q_Workspace%TrialHasDerivatives=.false.
-    if (AreDerivativesNeeded) then
-      !Indexed derivative placement is a separate review chunk. Returning a
-      !distinct fail-closed status prevents a caller from silently reusing the
-      !suffix-indexed derivative layout produced by ComputeMatElemAndDeriv.
-      ErrorCode=Q_METHOD_NOT_IMPLEMENTED
-      return
-    endif
 
     ErrorCode=Q_METHOD_INVALID_ARGUMENT
     MatrixOrder=Q_Workspace%MatrixOrder
     NumActive=Q_Workspace%NumActive
+    npt2=2*Glob_npt
     if (Glob_GSEPSolutionMethod/='Q') return
     if (.not.Q_Workspace%MatricesAreCanonical) return
     if (.not.Q_Workspace%MatrixParametersAreStored) return
@@ -4066,6 +4108,13 @@ contains
     if (size(Glob_NonlinParam,2)<MatrixOrder) return
     if (size(Glob_diagS)<MatrixOrder) return
     if (Glob_NumYHYTerms<1) return
+    if (AreDerivativesNeeded) then
+      if (.not.allocated(Glob_D)) return
+      if (size(Glob_D,1)<npt2) return
+      if (size(Glob_D,2)<NumActive) return
+      if (size(Glob_D,3)<MatrixOrder) return
+      Glob_D=ZERO
+    endif
 
     !Each physical pair that touches the active set is evaluated exactly once.
     !For an active-active pair, the value is copied into both conceptual trial
@@ -4086,21 +4135,38 @@ contains
         ParamOther(1:Glob_npt)=Glob_NonlinParam(1:Glob_npt,i)
         Hsum=ZERO
         Ssum=ZERO
+        if (AreDerivativesNeeded) then
+          DActiveSum(1:npt2)=ZERO
+          DOtherSum(1:npt2)=ZERO
+        endif
+        OtherDerivativeNeeded=AreDerivativesNeeded.and.(b>0).and.(b/=a)
         q=(PairNumber-1)*Glob_NumYHYTerms-1
         do j=1,Glob_NumYHYTerms
           if (mod(q+j,Glob_NumOfProcs)==Glob_ProcID) then
             call MatrixElementsHS_RG_0S(ParamActive,ParamOther, &
               Glob_YHYMatr(1:Glob_n,1:Glob_n,j),Hkl,Skl, &
-              DActive,DOther,.false.,.false.)
+              DActive,DOther,AreDerivativesNeeded,OtherDerivativeNeeded)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl
+            if (AreDerivativesNeeded) then
+              DActiveSum(1:npt2)=DActiveSum(1:npt2)+ &
+                Glob_YHYCoeff(j)*DActive(1:npt2)
+              if (OtherDerivativeNeeded) then
+                DOtherSum(1:npt2)=DOtherSum(1:npt2)+ &
+                  Glob_YHYCoeff(j)*DOther(1:npt2)
+              endif
+            endif
           endif
         enddo
         Q_Workspace%TrialH(i,a)=Hsum
         Q_Workspace%TrialS(i,a)=Ssum
+        if (AreDerivativesNeeded) &
+          Glob_D(1:npt2,a,i)=DActiveSum(1:npt2)
         if ((b>0).and.(b/=a)) then
           Q_Workspace%TrialH(ActiveIndex,b)=Hsum
           Q_Workspace%TrialS(ActiveIndex,b)=Ssum
+          if (AreDerivativesNeeded) &
+            Glob_D(1:npt2,b,ActiveIndex)=DOtherSum(1:npt2)
         endif
       enddo
     enddo
@@ -4117,6 +4183,14 @@ contains
       NumMatrixEntries,MPI_WP,MPI_SUM,MPI_COMM_WORLD,Glob_MPIErrCode)
     Q_Workspace%TrialH=Q_Workspace%PreviousH
     Q_Workspace%TrialS=Q_Workspace%PreviousS
+    if (AreDerivativesNeeded) then
+      !Every derivative element is owned by the process that evaluated its
+      !symmetry term. An in-place collective avoids a second replicated
+      !2*npt-by-active-by-order tensor solely for the reduction receive side.
+      NumDerivativeEntries=size(Glob_D)
+      call MPI_ALLREDUCE(MPI_IN_PLACE,Glob_D,NumDerivativeEntries, &
+        MPI_WP,MPI_SUM,MPI_COMM_WORLD,Glob_MPIErrCode)
+    endif
 
     !All active raw self-overlaps must be known before any column is
     !normalized, because an active-active element depends on both new norms.
@@ -4142,6 +4216,18 @@ contains
         Normalization=ONE/sqrt(ActiveNorm*OtherNorm)
         Q_Workspace%TrialH(i,a)=Q_Workspace%TrialH(i,a)*Normalization
         Q_Workspace%TrialS(i,a)=Q_Workspace%TrialS(i,a)*Normalization
+        if (AreDerivativesNeeded) then
+          if (i==ActiveIndex) then
+            !The kernel differentiates one side of an identical bra/ket pair.
+            !Both sides contribute equally to the physical diagonal.
+            Glob_D(1:npt2,a,i)=TWO*Glob_D(1:npt2,a,i)/ActiveNorm
+          else
+            !As in StoreHSD, keep derivatives of the raw matrix element scaled
+            !by the two basis-function norms. The normalization derivative is
+            !subtracted once, explicitly, in the energy-gradient contraction.
+            Glob_D(1:npt2,a,i)=Glob_D(1:npt2,a,i)*Normalization
+          endif
+        endif
       enddo
       !Set the analytically normalized diagonal exactly. This avoids allowing
       !roundoff in Sii/Sii to enter overlap tests or qrlinalg's solve path.
@@ -4149,26 +4235,58 @@ contains
     enddo
 
     Q_Workspace%TrialIsReady=.true.
-    Q_Workspace%TrialHasDerivatives=.false.
+    Q_Workspace%TrialHasDerivatives=AreDerivativesNeeded
     ErrorCode=Q_METHOD_SUCCESS
 
   end subroutine AssembleQTrial
 
   subroutine FactorizeQFresh(ErrorCode)
-!Subroutine FactorizeQFresh will initialize or refresh the root-owned qrlinalg
+!Subroutine FactorizeQFresh initializes or refreshes the root-owned qrlinalg
 !state from canonical, normalized, unshifted Glob_H and Glob_S. The represented
 !shift is fixed to Glob_ApproxEnergy for one BBOP step. Rank zero broadcasts the
 !status before any process continues to a collective gradient calculation.
 !
 !Arguments:
     integer,intent(out) :: ErrorCode
+!Local variables:
+    integer RootError
 
-    ErrorCode=Q_METHOD_NOT_IMPLEMENTED
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    Q_Workspace%FactorsMatchMatrices=.false.
+    if (Glob_GSEPSolutionMethod/='Q') return
+    if (.not.Q_Workspace%MatricesAreCanonical) return
+    if (Q_Workspace%MatrixOrder<1) return
+    if (Q_Workspace%Capacity<Q_Workspace%MatrixOrder) return
+    if (.not.allocated(Glob_H)) return
+    if (.not.allocated(Glob_S)) return
+    if ((size(Glob_H,1)<Q_Workspace%MatrixOrder).or. &
+        (size(Glob_H,2)<Q_Workspace%MatrixOrder)) return
+    if ((size(Glob_S,1)<Q_Workspace%MatrixOrder).or. &
+        (size(Glob_S,2)<Q_Workspace%MatrixOrder)) return
+
+    RootError=Q_METHOD_SUCCESS
+    if (Glob_ProcID==0) then
+      !Initialization is separated from fresh factorization in qrlinalg. Reuse
+      !the allocated state whenever its capacity is already correct; this
+      !preserves the lifetime update counter across ordinary refreshes.
+      if (Q_Workspace%Factors%get_capacity()/=Q_Workspace%Capacity) then
+        call Q_Workspace%Factors%initialize(Q_Workspace%Capacity,RootError)
+      endif
+      if (RootError==Q_METHOD_SUCCESS) then
+        call Q_Workspace%Factors%factorize_fresh(Glob_H,Glob_S, &
+          Glob_ApproxEnergy,RootError,active_order=Q_Workspace%MatrixOrder)
+      endif
+    endif
+    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    ErrorCode=RootError
+    Q_Workspace%FactorsMatchMatrices=(ErrorCode==Q_METHOD_SUCCESS)
+    if (ErrorCode==Q_METHOD_SUCCESS) &
+      Q_Workspace%FreshFactorizations=Q_Workspace%FreshFactorizations+1
 
   end subroutine FactorizeQFresh
 
   subroutine ApplyQTrial(ErrorCode)
-!Subroutine ApplyQTrial will update active columns in the exact order stored in
+!Subroutine ApplyQTrial updates active columns in the exact order stored in
 !Q_Workspace%ActiveFunction. For each column it gathers the currently
 !represented physical column, subtracts it from the staged target, calls
 !replace_symmetric on rank zero, broadcasts the status, and only then commits
@@ -4177,13 +4295,192 @@ contains
 !
 !Arguments:
     integer,intent(out) :: ErrorCode
+!Local variables:
+    integer a,FunctionIndex,MatrixOrder,NumActive,RootError,StoreError
+    integer RecoveryError
 
-    ErrorCode=Q_METHOD_NOT_IMPLEMENTED
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    MatrixOrder=Q_Workspace%MatrixOrder
+    NumActive=Q_Workspace%NumActive
+    if (Glob_GSEPSolutionMethod/='Q') return
+    if (.not.Q_Workspace%MatricesAreCanonical) return
+    if (.not.Q_Workspace%FactorsMatchMatrices) return
+    if (.not.Q_Workspace%MatrixParametersAreStored) return
+    if (.not.Q_Workspace%TrialIsReady) return
+    if ((MatrixOrder<1).or.(NumActive<1)) return
+    if (.not.allocated(Q_Workspace%ActiveFunction)) return
+    if (.not.allocated(Q_Workspace%PreviousH)) return
+    if (.not.allocated(Q_Workspace%PreviousS)) return
+    if (.not.allocated(Q_Workspace%PreviousDiagS)) return
+    if (.not.allocated(Q_Workspace%PreviousParam)) return
+    if (.not.allocated(Q_Workspace%DeltaH)) return
+    if (.not.allocated(Q_Workspace%DeltaS)) return
+    if (size(Q_Workspace%DeltaH)<MatrixOrder) return
+    if (size(Q_Workspace%DeltaS)<MatrixOrder) return
+
+    !Preflight the private factor metadata on rank zero. Every subsequent
+    !replace_symmetric call then has a valid index and vectors of exact order;
+    !the library documents that these validated updates have no numerical
+    !failure return.
+    RootError=Q_METHOD_SUCCESS
+    if (Glob_ProcID==0) then
+      if (.not.Q_Workspace%Factors%is_valid()) RootError=Q_METHOD_INVALID_STATE
+      if (Q_Workspace%Factors%order()/=MatrixOrder) RootError=Q_METHOD_INVALID_STATE
+      if (Q_Workspace%Factors%get_capacity()/=Q_Workspace%Capacity) &
+        RootError=Q_METHOD_INVALID_STATE
+      if (Q_Workspace%Factors%get_shift()/=Glob_ApproxEnergy) &
+        RootError=Q_METHOD_INVALID_STATE
+    endif
+    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    if (RootError/=Q_METHOD_SUCCESS) then
+      ErrorCode=RootError
+      Q_Workspace%FactorsMatchMatrices=.false.
+      return
+    endif
+
+    !Snapshot every original column before the first commit. In particular,
+    !an active-active intersection must be captured before either endpoint is
+    !changed. These copies also define the nonlinear-parameter generation to
+    !which a rare transaction recovery must return.
+    Q_Workspace%PreviousParam=Q_Workspace%MatrixParam
+    do a=1,NumActive
+      FunctionIndex=Q_Workspace%ActiveFunction(a)
+      call GatherQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
+        Q_Workspace%PreviousH(1:MatrixOrder,a),StoreError)
+      if (StoreError/=Q_METHOD_SUCCESS) then
+        ErrorCode=StoreError
+        return
+      endif
+      call GatherQCanonicalColumn(Glob_S,MatrixOrder,FunctionIndex, &
+        Q_Workspace%PreviousS(1:MatrixOrder,a),StoreError)
+      if (StoreError/=Q_METHOD_SUCCESS) then
+        ErrorCode=StoreError
+        return
+      endif
+      Q_Workspace%PreviousDiagS(a)=Glob_diagS(FunctionIndex)
+    enddo
+
+    do a=1,NumActive
+      FunctionIndex=Q_Workspace%ActiveFunction(a)
+      !Gather the progressively updated column, not the original snapshot.
+      !Earlier active columns have already installed their shared intersection,
+      !so the later replacement sees a zero delta at that location.
+      call GatherQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
+        Q_Workspace%DeltaH(1:MatrixOrder),StoreError)
+      call GatherQCanonicalColumn(Glob_S,MatrixOrder,FunctionIndex, &
+        Q_Workspace%DeltaS(1:MatrixOrder),StoreError)
+      Q_Workspace%DeltaH(1:MatrixOrder)= &
+        Q_Workspace%TrialH(1:MatrixOrder,a)-Q_Workspace%DeltaH(1:MatrixOrder)
+      Q_Workspace%DeltaS(1:MatrixOrder)= &
+        Q_Workspace%TrialS(1:MatrixOrder,a)-Q_Workspace%DeltaS(1:MatrixOrder)
+
+      RootError=Q_METHOD_SUCCESS
+      if (Glob_ProcID==0) then
+        call Q_Workspace%Factors%replace_symmetric(FunctionIndex, &
+          Q_Workspace%DeltaH(1:MatrixOrder), &
+          Q_Workspace%DeltaS(1:MatrixOrder),RootError)
+      endif
+      call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+      if (RootError/=Q_METHOD_SUCCESS) exit
+
+      call StoreQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
+        Q_Workspace%TrialH(1:MatrixOrder,a),StoreError)
+      call StoreQCanonicalColumn(Glob_S,MatrixOrder,FunctionIndex, &
+        Q_Workspace%TrialS(1:MatrixOrder,a),StoreError)
+      Glob_diagS(FunctionIndex)=Q_Workspace%TrialDiagS(a)
+    enddo
+
+    if (RootError/=Q_METHOD_SUCCESS) then
+      !A library failure is not expected after the preflight, but fail safely:
+      !restore the complete physical generation and construct fresh factors
+      !instead of trying to reason about a possibly partial QR update.
+      do a=1,NumActive
+        FunctionIndex=Q_Workspace%ActiveFunction(a)
+        call StoreQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
+          Q_Workspace%PreviousH(1:MatrixOrder,a),StoreError)
+        call StoreQCanonicalColumn(Glob_S,MatrixOrder,FunctionIndex, &
+          Q_Workspace%PreviousS(1:MatrixOrder,a),StoreError)
+        Glob_diagS(FunctionIndex)=Q_Workspace%PreviousDiagS(a)
+        Glob_NonlinParam(1:Glob_npt,FunctionIndex)= &
+          Q_Workspace%PreviousParam(1:Glob_npt,a)
+      enddo
+      Q_Workspace%MatrixParam=Q_Workspace%PreviousParam
+      call FactorizeQFresh(RecoveryError)
+      if (RecoveryError/=Q_METHOD_SUCCESS) then
+        ErrorCode=RecoveryError
+      else
+        ErrorCode=RootError
+      endif
+      Q_Workspace%TrialIsReady=.false.
+      Q_Workspace%TrialHasDerivatives=.false.
+      return
+    endif
+
+    do a=1,NumActive
+      FunctionIndex=Q_Workspace%ActiveFunction(a)
+      Q_Workspace%MatrixParam(1:Glob_npt,a)= &
+        Glob_NonlinParam(1:Glob_npt,FunctionIndex)
+    enddo
+    Q_Workspace%FactorsMatchMatrices=.true.
+    Q_Workspace%MatrixParametersAreStored=.true.
+    Q_Workspace%TrialIsReady=.false.
+    ErrorCode=Q_METHOD_SUCCESS
 
   end subroutine ApplyQTrial
 
+  subroutine ComputeQEigenpairResidual(Evalue,Eigenvector,AbsoluteResidual, &
+                                       RelativeResidual,ErrorCode)
+!Subroutine ComputeQEigenpairResidual measures the residual of the physical
+!generalized eigenproblem, independently of qrlinalg's direction-change test:
+!
+!                  r = H*c-Evalue*S*c .
+!
+!The returned relative value is ||r||/(||H*c||+|E|*||S*c||+tiny). Only the
+!canonical lower triangles are read. This routine is serial and is called on
+!rank zero; it performs no allocation and does not modify H, S, or c.
+!
+!Arguments:
+    real(wp),intent(in)  :: Evalue,Eigenvector(:)
+    real(wp),intent(out) :: AbsoluteResidual,RelativeResidual
+    integer,intent(out)  :: ErrorCode
+!Local variables:
+    integer i,j,MatrixOrder
+    real(wp) HAction,SAction,HNorm2,SNorm2,ResidualNorm2
+
+    AbsoluteResidual=ZERO
+    RelativeResidual=ZERO
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    MatrixOrder=Q_Workspace%MatrixOrder
+    if (MatrixOrder<1) return
+    if (size(Eigenvector)/=MatrixOrder) return
+    if (.not.allocated(Q_Workspace%DeltaH)) return
+    if (.not.allocated(Q_Workspace%DeltaS)) return
+
+    HNorm2=ZERO
+    SNorm2=ZERO
+    ResidualNorm2=ZERO
+    do i=1,MatrixOrder
+      HAction=ZERO
+      SAction=ZERO
+      do j=1,MatrixOrder
+        HAction=HAction+QCanonicalMatrixElement(Glob_H,i,j)*Eigenvector(j)
+        SAction=SAction+QCanonicalMatrixElement(Glob_S,i,j)*Eigenvector(j)
+      enddo
+      Q_Workspace%DeltaH(i)=HAction
+      Q_Workspace%DeltaS(i)=SAction
+      HNorm2=HNorm2+HAction*HAction
+      SNorm2=SNorm2+SAction*SAction
+      ResidualNorm2=ResidualNorm2+(HAction-Evalue*SAction)**2
+    enddo
+    AbsoluteResidual=sqrt(ResidualNorm2)
+    RelativeResidual=AbsoluteResidual/ &
+      (sqrt(HNorm2)+abs(Evalue)*sqrt(SNorm2)+tiny(ONE))
+    ErrorCode=Q_METHOD_SUCCESS
+
+  end subroutine ComputeQEigenpairResidual
+
   subroutine SolveQ(Evalue,ErrorCode)
-!Subroutine SolveQ will call qrlinalg inverse iteration on rank zero with
+!Subroutine SolveQ calls qrlinalg inverse iteration on rank zero with
 !distinct input and output vectors and normalization mode zero, then broadcast
 !the physical energy, S-normalized Glob_c, convergence diagnostics, and status.
 !A QR_ERR_NO_CONVERGENCE result contains an approximation but is still an
@@ -4192,17 +4489,186 @@ contains
 !Arguments:
     real(wp),intent(out) :: Evalue
     integer,intent(out)  :: ErrorCode
+!Local variables:
+    integer i,MatrixOrder,NumOfIterations,RootError,RefreshError
+    integer(int64) UpdatesSinceFresh,RefreshLimit
+    real(wp) AbsoluteResidual,RelativeResidual,FactorResidual
+    real(wp) RefreshTolerance,SolveTolerance
+    logical RefreshNeeded
 
     Evalue=huge(Evalue)
-    ErrorCode=Q_METHOD_NOT_IMPLEMENTED
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    MatrixOrder=Q_Workspace%MatrixOrder
+    if (Glob_GSEPSolutionMethod/='Q') return
+    if (.not.Q_Workspace%MatricesAreCanonical) return
+    if (.not.Q_Workspace%FactorsMatchMatrices) return
+    if (MatrixOrder<1) return
+    if (.not.allocated(Glob_c)) return
+    if (size(Glob_c)<MatrixOrder) return
+    if (.not.allocated(Q_Workspace%InitialVector)) return
+    if (.not.allocated(Q_Workspace%SolvedVector)) return
+
+    !A full refresh after O(n) replacements keeps the amortized cost of fresh
+    !O(n**3) factorizations at O(n**2) per replacement. The residual check
+    !below can request an earlier refresh when accumulated rotations drift.
+    RefreshNeeded=.false.
+    if (Glob_ProcID==0) then
+      if (.not.Q_Workspace%Factors%is_valid()) then
+        RootError=Q_METHOD_INVALID_STATE
+      else
+        RootError=Q_METHOD_SUCCESS
+        UpdatesSinceFresh=Q_Workspace%Factors%get_updates_since_fresh()
+        RefreshLimit=int(max(64,8*MatrixOrder),int64)
+        RefreshNeeded=(UpdatesSinceFresh>=RefreshLimit)
+      endif
+    endif
+    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call MPI_BCAST(RefreshNeeded,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    if (RootError/=Q_METHOD_SUCCESS) then
+      ErrorCode=RootError
+      Q_Workspace%FactorsMatchMatrices=.false.
+      return
+    endif
+    if (RefreshNeeded) then
+      call FactorizeQFresh(RefreshError)
+      if (RefreshError/=Q_METHOD_SUCCESS) then
+        ErrorCode=RefreshError
+        return
+      endif
+    endif
+
+    RootError=Q_METHOD_SUCCESS
+    AbsoluteResidual=ZERO
+    RelativeResidual=ZERO
+    NumOfIterations=0
+    if (Glob_ProcID==0) then
+      Q_Workspace%InitialVector(1:MatrixOrder)=Glob_c(1:MatrixOrder)
+      if (.not.(maxval(abs(Q_Workspace%InitialVector(1:MatrixOrder)))>tiny(ONE))) then
+        do i=1,MatrixOrder
+          Q_Workspace%InitialVector(i)=ONE
+        enddo
+      endif
+      call Q_Workspace%Factors%solve(Glob_S, &
+        Q_Workspace%InitialVector(1:MatrixOrder), &
+        Q_Workspace%SolvedVector(1:MatrixOrder),Evalue,Glob_EigvalTol, &
+        Glob_MaxIterForGSEPIIS,0,RelativeResidual,NumOfIterations,RootError)
+      Glob_c(1:MatrixOrder)=Q_Workspace%SolvedVector(1:MatrixOrder)
+    endif
+    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call MPI_BCAST(RelativeResidual,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call MPI_BCAST(NumOfIterations,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call MPI_BCAST(Glob_c,MatrixOrder,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    Glob_LastEigvalTol=RelativeResidual
+    Glob_InvItTempCounter1=Glob_InvItTempCounter1+1
+    Glob_InvItTempCounter2=Glob_InvItTempCounter2+NumOfIterations
+    if (RootError/=Q_METHOD_SUCCESS) then
+      ErrorCode=RootError
+      return
+    endif
+
+    !Measure both independent numerical relationships. The physical residual
+    !checks H*c=E*S*c. The factor residual checks Q*R=(H-shift*S) with a fixed
+    !dense probe. The eigenvector must not be used for the latter because it
+    !is nearly a null vector of the deliberately near-eigenvalue shifted
+    !matrix, which amplifies harmless factorization roundoff in the relative
+    !action ratio. Either diagnostic may request one fresh-factorization retry.
+    if (Glob_ProcID==0) then
+      call ComputeQEigenpairResidual(Evalue,Glob_c(1:MatrixOrder), &
+        AbsoluteResidual,Q_Workspace%LastEigenpairResidual,RootError)
+      if (RootError==Q_METHOD_SUCCESS) then
+        do i=1,MatrixOrder
+          Q_Workspace%InitialVector(i)=ONE+ &
+            real(mod(17*i,23),wp)/real(23,wp)
+          if (mod(i,2)==0) Q_Workspace%InitialVector(i)= &
+            -Q_Workspace%InitialVector(i)
+        enddo
+        call Q_Workspace%Factors%factorization_residual(Glob_H,Glob_S, &
+          Q_Workspace%InitialVector(1:MatrixOrder),AbsoluteResidual, &
+          FactorResidual,RootError)
+        Q_Workspace%LastFactorResidual=FactorResidual
+      endif
+      RefreshTolerance=max(1000*epsilon(ONE)*MatrixOrder, &
+                           10*abs(Glob_EigvalTol))
+      SolveTolerance=max(1000*epsilon(ONE)*MatrixOrder, &
+                         100*abs(Glob_EigvalTol))
+      RefreshNeeded=(RootError==Q_METHOD_SUCCESS).and. &
+        ((Q_Workspace%LastFactorResidual>RefreshTolerance).or. &
+         (Q_Workspace%LastEigenpairResidual>SolveTolerance))
+    endif
+    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call MPI_BCAST(RefreshNeeded,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call MPI_BCAST(Q_Workspace%LastEigenpairResidual,1,MPI_WP,0, &
+      MPI_COMM_WORLD,Glob_MPIErrCode)
+    call MPI_BCAST(Q_Workspace%LastFactorResidual,1,MPI_WP,0, &
+      MPI_COMM_WORLD,Glob_MPIErrCode)
+    if (RootError/=Q_METHOD_SUCCESS) then
+      ErrorCode=RootError
+      return
+    endif
+
+    if (RefreshNeeded) then
+      call FactorizeQFresh(RefreshError)
+      if (RefreshError/=Q_METHOD_SUCCESS) then
+        ErrorCode=RefreshError
+        return
+      endif
+      if (Glob_ProcID==0) then
+        Q_Workspace%InitialVector(1:MatrixOrder)=Glob_c(1:MatrixOrder)
+        call Q_Workspace%Factors%solve(Glob_S, &
+          Q_Workspace%InitialVector(1:MatrixOrder), &
+          Q_Workspace%SolvedVector(1:MatrixOrder),Evalue,Glob_EigvalTol, &
+          Glob_MaxIterForGSEPIIS,0,RelativeResidual,NumOfIterations,RootError)
+        Glob_c(1:MatrixOrder)=Q_Workspace%SolvedVector(1:MatrixOrder)
+      endif
+      call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+      call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+      call MPI_BCAST(RelativeResidual,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+      call MPI_BCAST(NumOfIterations,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+      call MPI_BCAST(Glob_c,MatrixOrder,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+      Glob_LastEigvalTol=RelativeResidual
+      Glob_InvItTempCounter1=Glob_InvItTempCounter1+1
+      Glob_InvItTempCounter2=Glob_InvItTempCounter2+NumOfIterations
+
+      if (RootError==Q_METHOD_SUCCESS) then
+        if (Glob_ProcID==0) then
+          call ComputeQEigenpairResidual(Evalue,Glob_c(1:MatrixOrder), &
+            AbsoluteResidual,Q_Workspace%LastEigenpairResidual,RootError)
+          if (RootError==Q_METHOD_SUCCESS) then
+            do i=1,MatrixOrder
+              Q_Workspace%InitialVector(i)=ONE+ &
+                real(mod(17*i,23),wp)/real(23,wp)
+              if (mod(i,2)==0) Q_Workspace%InitialVector(i)= &
+                -Q_Workspace%InitialVector(i)
+            enddo
+            call Q_Workspace%Factors%factorization_residual(Glob_H,Glob_S, &
+              Q_Workspace%InitialVector(1:MatrixOrder),AbsoluteResidual, &
+              FactorResidual,RootError)
+            Q_Workspace%LastFactorResidual=FactorResidual
+          endif
+          if ((RootError==Q_METHOD_SUCCESS).and. &
+              (Q_Workspace%LastEigenpairResidual>SolveTolerance)) &
+            RootError=QR_ERR_NO_CONVERGENCE
+          if ((RootError==Q_METHOD_SUCCESS).and. &
+              (Q_Workspace%LastFactorResidual>RefreshTolerance)) &
+            RootError=Q_METHOD_INVALID_STATE
+        endif
+        call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+        call MPI_BCAST(Q_Workspace%LastEigenpairResidual,1,MPI_WP,0, &
+          MPI_COMM_WORLD,Glob_MPIErrCode)
+        call MPI_BCAST(Q_Workspace%LastFactorResidual,1,MPI_WP,0, &
+          MPI_COMM_WORLD,Glob_MPIErrCode)
+      endif
+    endif
+    ErrorCode=RootError
 
   end subroutine SolveQ
 
   function EnergyQA(AreMatElemNeeded,ErrorCode)
-!Function EnergyQA will provide the Q counterpart of EnergyGA. The active set
+!Function EnergyQA provides the Q counterpart of EnergyGA. The active set
 !is taken from Q_Workspace rather than encoded as a trailing Nmin:Nmax range.
 !It assembles and applies a trial when AreMatElemNeeded is true, solves the
-!represented problem, and adds the existing overlap penalty when requested.
+!represented problem, and returns the requested physical eigenvalue.
 !
 !Arguments:
     logical,intent(in)  :: AreMatElemNeeded
@@ -4210,12 +4676,29 @@ contains
     real(wp) EnergyQA
 
     EnergyQA=huge(EnergyQA)
-    ErrorCode=Q_METHOD_NOT_IMPLEMENTED
+    ErrorCode=Q_METHOD_SUCCESS
+    if (AreMatElemNeeded) then
+      call AssembleQTrial(.false.,ErrorCode)
+      if (ErrorCode/=Q_METHOD_SUCCESS) return
+      call ApplyQTrial(ErrorCode)
+      if (ErrorCode/=Q_METHOD_SUCCESS) return
+    endif
+    call SolveQ(EnergyQA,ErrorCode)
+
+    !OPT_CYCLE deliberately disables the smooth overlap penalty and applies
+    !its existing post-optimization overlap rejection instead. The indexed Q
+    !penalty gradient belongs to FULL_OPT1Q; fail closed if a future caller
+    !enables that policy before its mapped implementation is connected.
+    if ((ErrorCode==Q_METHOD_SUCCESS).and.Glob_OverlapPenaltyAllowed) then
+      EnergyQA=huge(EnergyQA)
+      ErrorCode=Q_METHOD_NOT_IMPLEMENTED
+    endif
+    Glob_EnergyGACounter=Glob_EnergyGACounter+1
 
   end function EnergyQA
 
   function EnergyQAM(AreMatElemNeeded,ErrorCode)
-!Function EnergyQAM will provide the Q counterpart of EnergyGAM. qrlinalg
+!Function EnergyQAM provides the Q counterpart of EnergyGAM. qrlinalg
 !always computes an eigenvector, so EnergyQA and EnergyQAM may share one solve;
 !the separate entry point keeps G's candidate-acceptance call structure clear.
 !
@@ -4224,13 +4707,12 @@ contains
     integer,intent(out) :: ErrorCode
     real(wp) EnergyQAM
 
-    EnergyQAM=huge(EnergyQAM)
-    ErrorCode=Q_METHOD_NOT_IMPLEMENTED
+    EnergyQAM=EnergyQA(AreMatElemNeeded,ErrorCode)
 
   end function EnergyQAM
 
   subroutine EnergyQB(Evalue,Gradient,AreMatElemNeeded,ErrorCode)
-!Subroutine EnergyQB will provide the Q counterpart of EnergyGB. Gradient block
+!Subroutine EnergyQB provides the Q counterpart of EnergyGB. Gradient block
 !a corresponds to Q_Workspace%ActiveFunction(a); contractions must use the
 !coefficient of that canonical function instead of Glob_c(a+Glob_nfru).
 !
@@ -4239,10 +4721,69 @@ contains
     real(wp),intent(out) :: Gradient(:)
     logical,intent(in)   :: AreMatElemNeeded
     integer,intent(out)  :: ErrorCode
+!Local variables:
+    integer a,l,m,npt,MatrixOrder,NumActive,ActiveIndex
+    real(wp) W(Glob_npt_MaxAllowed),t,t2
 
     Evalue=huge(Evalue)
     Gradient=huge(Evalue)
-    ErrorCode=Q_METHOD_NOT_IMPLEMENTED
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    MatrixOrder=Q_Workspace%MatrixOrder
+    NumActive=Q_Workspace%NumActive
+    npt=Glob_npt
+    if (size(Gradient)<NumActive*npt) return
+    if (.not.allocated(Glob_D)) return
+    if (.not.allocated(Glob_WkGR)) return
+    if (size(Glob_WkGR)<NumActive*npt) return
+
+    if (AreMatElemNeeded) then
+      call AssembleQTrial(.true.,ErrorCode)
+      if (ErrorCode/=Q_METHOD_SUCCESS) return
+      call ApplyQTrial(ErrorCode)
+      if (ErrorCode/=Q_METHOD_SUCCESS) return
+    else
+      if (.not.Q_Workspace%TrialHasDerivatives) return
+    endif
+
+    call SolveQ(Evalue,ErrorCode)
+    if (ErrorCode/=Q_METHOD_SUCCESS) return
+
+    !The derivative tensor stores the derivative of one raw matrix element,
+    !scaled by both raw basis norms. Contracting the full conceptual row gives
+    !both symmetric H/S contributions. The final diagonal subtraction removes
+    !the duplicate diagonal and, through the eigenvalue equation, accounts for
+    !the derivative of normalization of every element touching this function.
+    Glob_WkGR(1:NumActive*npt)=ZERO
+    do a=1,NumActive
+      ActiveIndex=Q_Workspace%ActiveFunction(a)
+      W(1:npt)=ZERO
+      do l=1+Glob_ProcID,MatrixOrder,Glob_NumOfProcs
+        t=Glob_c(l)
+        do m=1,npt
+          W(m)=W(m)+t*(Glob_D(m,a,l)-Evalue*Glob_D(m+npt,a,l))
+        enddo
+      enddo
+      t=Glob_c(ActiveIndex)
+      t2=t*t
+      do m=1,npt
+        Glob_WkGR((a-1)*npt+m)=TWO*t*W(m)
+      enddo
+      do m=1+Glob_ProcID,npt,Glob_NumOfProcs
+        Glob_WkGR((a-1)*npt+m)=Glob_WkGR((a-1)*npt+m)- &
+          t2*(Glob_D(m,a,ActiveIndex)- &
+              Evalue*Glob_D(m+npt,a,ActiveIndex))
+      enddo
+    enddo
+
+    if (Glob_OverlapPenaltyAllowed) then
+      Evalue=huge(Evalue)
+      Gradient=huge(Evalue)
+      ErrorCode=Q_METHOD_NOT_IMPLEMENTED
+      return
+    endif
+    call MPI_ALLREDUCE(Glob_WkGR,Gradient,NumActive*npt,MPI_WP, &
+      MPI_SUM,MPI_COMM_WORLD,Glob_MPIErrCode)
+    Glob_EnergyGBCounter=Glob_EnergyGBCounter+1
 
   end subroutine EnergyQB
 
@@ -4265,10 +4806,10 @@ contains
   subroutine OptCycleQ(K,FuncBegin,FuncEnd,NumOfFuncToOpt,NumOfFuncToShift, &
                        NumCycles,MaxEnergyEval,OverlapThreshold,LinCoeffThreshold, &
                        SavingFreq,ErrorCode)
-!Subroutine OptCycleQ will follow OptCycleG's scheduling, DRMNG, acceptance,
+!Subroutine OptCycleQ follows OptCycleG's scheduling, DRMNG, acceptance,
 !failure limits, saving, and history semantics. G reverses the requested range
 !before placing it at the end, so its optimizer block for CurrFunc is ordered
-!from CurrFunc+NumActive-1 down to CurrFunc. Q will put those descending
+!from CurrFunc+NumActive-1 down to CurrFunc. Q puts those descending
 !canonical indices in the active map without calling ReverseFuncOrder,
 !PermuteFunctions, or any matrix permutation helper.
 !
@@ -4277,8 +4818,415 @@ contains
     integer,intent(in)  :: NumCycles,MaxEnergyEval,SavingFreq
     real(wp),intent(in) :: OverlapThreshold,LinCoeffThreshold
     integer,intent(out) :: ErrorCode
+!Local variables:
+    integer i,j,a,ii,totsteps
+    integer npt,nfo,nv,nvmax,cbs,CurrCycle,CurrFunc,CurrFuncBegin
+    integer NumOfFailures,NumOfEnergyEval,NumOfGradEval,ErrCode
+    integer ActiveI
+    integer,allocatable :: ActiveFunction(:)
+    real(wp) Evalue,E_best,E_prev,t
+    real(wp),allocatable :: x(:),grad(:),x_init(:),x_best(:)
+    logical IsSwapFileOK,ExitNeeded,LastIter
+    logical IsOverlapBad,IsAnyLinCoeffBad
+!Arrays used by DRMNG
+    real(wp),allocatable :: D(:),V(:),V_init(:)
+    integer,parameter :: LIV=60
+    integer IV(LIV),IV_init(LIV),LV,ALG
 
-    ErrorCode=Q_METHOD_NOT_IMPLEMENTED
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    cbs=Glob_CurrBasisSize
+    if (K/=cbs) return
+    if ((FuncBegin<1).or.(FuncEnd<FuncBegin).or.(FuncEnd>cbs)) return
+    if ((NumOfFuncToOpt<1).or.(NumOfFuncToShift<1)) return
+    if ((NumCycles<0).or.(MaxEnergyEval<0).or.(SavingFreq<1)) return
+
+    Glob_GSEPSolutionMethod='Q'
+    Glob_OverlapPenaltyAllowed=.false.
+    npt=Glob_npt
+    nvmax=NumOfFuncToOpt*npt
+    Glob_HSLeadDim=cbs
+    Glob_HSBuffLen=cbs*NumOfFuncToOpt
+    Glob_nfa=cbs
+
+!Checking if cyclic optimization is already completed for this basis size
+    if ((Glob_History(cbs)%CyclesDone>=NumCycles).and. &
+        (Glob_History(cbs)%InitFuncAtLastStep>=FuncEnd)) then
+      if (Glob_ProcID==0) then
+        write(*,*)
+        write(*,*) 'Routine OptCycleQ started'
+        write(*,'(1x,a,1x,i0)') 'Basis size is',cbs
+        write(*,'(1x,a,1x,i0,a,i0,1x,a)') 'Cyclic optimization of basis functions', &
+          FuncBegin,'-',FuncEnd,'is already completed'
+        write(*,*) 'Exiting OptCycleQ...'
+        write(*,*) 'Routine OptCycleQ finished'
+      endif
+      ErrorCode=Q_METHOD_SUCCESS
+      return
+    endif
+
+    if (Glob_ProcID==0) then
+      write(*,*)
+      write(*,*) 'Routine OptCycleQ started'
+      write(*,'(1x,a,1x,i0)') 'Basis size is',cbs
+      write(*,'(1x,a,1x,i0,a,i0,1x,a)') 'Cyclic optimization of basis functions', &
+        FuncBegin,'-',FuncEnd,'will be performed'
+      write(*,'(1x,a,1x,i0)') 'MaxEnergyEval',MaxEnergyEval
+    endif
+
+!Allocate the canonical physical matrices and matrix-element work buffers.
+!Unlike G, Q stores both diagonals directly in Glob_H and Glob_S and therefore
+!does not allocate Glob_diagH or DSYGVX workspace.
+    allocate(Glob_H(cbs,cbs))
+    allocate(Glob_S(cbs,cbs))
+    allocate(Glob_diagS(cbs))
+    allocate(Glob_D(2*npt,NumOfFuncToOpt,cbs))
+    allocate(Glob_c(cbs))
+    allocate(Glob_HklBuff1(Glob_HSBuffLen))
+    allocate(Glob_HklBuff2(Glob_HSBuffLen))
+    allocate(Glob_SklBuff1(Glob_HSBuffLen))
+    allocate(Glob_SklBuff2(Glob_HSBuffLen))
+    allocate(Glob_WkGR(nvmax))
+
+!Allocate arrays used by DRMNG and the canonical active-index schedule.
+    allocate(D(nvmax))
+    LV=71+nvmax*(nvmax+13)/2+1
+    allocate(V(LV))
+    allocate(V_init(LV))
+    allocate(x(nvmax))
+    allocate(x_init(nvmax))
+    allocate(x_best(nvmax))
+    allocate(grad(nvmax))
+    allocate(ActiveFunction(NumOfFuncToOpt))
+
+    call PrepareQWorkspace(cbs,cbs,NumOfFuncToOpt,ErrCode)
+    if (ErrCode/=Q_METHOD_SUCCESS) then
+      if (Glob_ProcID==0) write(*,*) &
+        'Error EC0150 in OptCycleQ: Q workspace cannot be allocated'
+      call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+    endif
+
+!Call DIVSET to get default values in IV and V arrays. These settings are kept
+!identical to OptCycleG so a G/Q comparison changes the eigensolver only.
+    ALG=2
+    call DIVSET(ALG,IV_init,LIV,LV,V_init)
+    IV_init(17)=1000000
+    IV_init(18)=1000000
+    IV_init(19)=0
+    IV_init(20)=0; IV_init(22)=0; IV_init(23)=-1; IV_init(24)=0
+    V_init(31)=0.0_wp
+    V_init(32)=2*epsilon(V_init(32))
+    V_init(37)=2*epsilon(V_init(37))
+    V_init(35)=Glob_MaxScStepAllowedInOpt*ONE
+    IV_init(1)=12
+
+!Restore canonical physical matrices when possible. A missing swap file causes
+!one full matrix-element assembly, after which every optimizer evaluation
+!changes only the active rows and columns.
+    Glob_H=ZERO
+    Glob_S=ZERO
+    Glob_diagS=ZERO
+    Glob_c=ONE
+    call ReadSwapFileAndDistributeData(IsSwapFileOK)
+    if (.not.IsSwapFileOK) then
+      if (Glob_ProcID==0) write(*,*) &
+        'Computing matrix elements and constructing fresh QR factors...'
+      call ComputeMatElem(1,cbs)
+    else
+      if (Glob_ProcID==0) write(*,*) 'Constructing fresh QR factors...'
+    endif
+    Q_Workspace%MatricesAreCanonical=.true.
+    call FactorizeQFresh(ErrCode)
+    if (ErrCode==Q_METHOD_SUCCESS) call SolveQ(Glob_CurrEnergy,ErrCode)
+    if (ErrCode/=Q_METHOD_SUCCESS) then
+      if (Glob_ProcID==0) write(*,'(1x,a,1x,i0)') &
+        'Error EC0151 in OptCycleQ: initial Q energy cannot be computed, status',ErrCode
+      call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+    endif
+    if (Glob_ProcID==0) write(*,*) 'Initial energy ',Glob_CurrEnergy
+
+!Normalize restart history exactly as in OptCycleG. Function numbers stay in
+!their input positions, so no preliminary or restart permutation is required.
+    if (Glob_History(cbs)%InitFuncAtLastStep<FuncBegin) &
+      Glob_History(cbs)%InitFuncAtLastStep=FuncBegin-NumOfFuncToShift
+    if (Glob_History(cbs)%InitFuncAtLastStep>=FuncEnd) then
+      Glob_History(cbs)%InitFuncAtLastStep=FuncBegin-NumOfFuncToShift
+      Glob_History(cbs)%CyclesDone=Glob_History(cbs)%CyclesDone+1
+    endif
+
+    totsteps=0
+    do CurrCycle=Glob_History(cbs)%CyclesDone+1,NumCycles
+      if (Glob_ProcID==0) then
+        write(*,*)
+        write(*,'(1x,a,1x,i0,1x,a)') 'Cycle',CurrCycle,'began'
+      endif
+      CurrFuncBegin=Glob_History(cbs)%InitFuncAtLastStep+NumOfFuncToShift
+      do CurrFunc=CurrFuncBegin,FuncEnd,NumOfFuncToShift
+        totsteps=totsteps+1
+        nfo=min(FuncEnd-CurrFunc+1,NumOfFuncToOpt)
+        Glob_nfo=nfo
+        Glob_nfru=cbs-nfo
+        nv=nfo*npt
+
+        !G reverses the requested range before moving it to the trailing block.
+        !This descending map gives DRMNG the same block order while every
+        !physical basis function remains at its canonical index.
+        do a=1,nfo
+          ActiveFunction(a)=CurrFunc+nfo-a
+        enddo
+        call SetQActiveFunctions(ActiveFunction(1:nfo),ErrCode)
+        if (ErrCode==Q_METHOD_SUCCESS) call CaptureQMatrixParameters(ErrCode)
+        if (ErrCode/=Q_METHOD_SUCCESS) then
+          if (Glob_ProcID==0) write(*,*) &
+            'Error EC0152 in OptCycleQ: active Q transaction cannot be initialized'
+          call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+        endif
+
+        if (Glob_ProcID==0) then
+          write(*,*)
+          if (nfo>1) then
+            write(*,'(1x,a,1x,i0,a,i0)') &
+              'Optimizing functions',CurrFunc,'-',CurrFunc+nfo-1
+          else
+            write(*,'(1x,a,1x,i0)') 'Optimizing function',CurrFunc
+          endif
+          if (Glob_AreParamPrintedInCycleOptX) then
+            write(*,*) 'Nonlinear parameters before optimization:'
+            do a=1,nfo
+              ActiveI=ActiveFunction(a)
+              write(*,'(1x,i6,a1)',advance='no') Glob_FuncNum(ActiveI),':'
+              call writerealarradv(6,Glob_NonlinParam(1:npt,ActiveI),npt)
+            enddo
+          endif
+        endif
+
+        IV(1:LIV)=IV_init(1:LIV)
+        V(1:LV)=V_init(1:LV)
+        do a=1,nfo
+          ActiveI=ActiveFunction(a)
+          x((a-1)*npt+1:a*npt)=Glob_NonlinParam(1:npt,ActiveI)
+          x_init((a-1)*npt+1:a*npt)=Glob_NonlinParam(1:npt,ActiveI)
+        enddo
+
+        t=max(ONE/(cbs*cbs*sqrt(ONE*cbs)),10000*epsilon(Glob_CurrEnergy))
+        do a=1,nfo
+          do j=1,npt
+            D(npt*(a-1)+j)=t
+          enddo
+        enddo
+
+        ExitNeeded=.false.
+        NumOfFailures=0
+        NumOfEnergyEval=0
+        NumOfGradEval=0
+        if (NumOfEnergyEval>=MaxEnergyEval) ExitNeeded=.true.
+        E_best=Glob_CurrEnergy
+        x_best(1:nv)=x(1:nv)
+        E_prev=Glob_CurrEnergy
+
+        do while (.not.ExitNeeded)
+          if (Glob_ProcID==0) call DRMNG(D,Glob_CurrEnergy,grad,IV,LIV,LV,nv,V,x)
+          call MPI_BCAST(IV,LIV,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+          select case (IV(1))
+          case (1)
+            call MPI_BCAST(x,nv,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+            do a=1,nfo
+              ActiveI=ActiveFunction(a)
+              Glob_NonlinParam(1:npt,ActiveI)=x((a-1)*npt+1:a*npt)
+            enddo
+            Evalue=EnergyQA(.true.,ErrCode)
+            NumOfEnergyEval=NumOfEnergyEval+1
+            if (ErrCode/=Q_METHOD_SUCCESS) then
+              NumOfFailures=NumOfFailures+1
+              IV(2)=0
+            else
+              Glob_CurrEnergy=Evalue
+              if (Evalue<E_best) then
+                E_best=Evalue
+                x_best(1:nv)=x(1:nv)
+              endif
+            endif
+          case (2)
+            call MPI_BCAST(x,nv,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+            do a=1,nfo
+              ActiveI=ActiveFunction(a)
+              Glob_NonlinParam(1:npt,ActiveI)=x((a-1)*npt+1:a*npt)
+            enddo
+            call EnergyQB(Evalue,grad,.true.,ErrCode)
+            NumOfGradEval=NumOfGradEval+1
+            if (ErrCode/=Q_METHOD_SUCCESS) then
+              NumOfFailures=NumOfFailures+1
+              IV(2)=0
+            else
+              if (Evalue<E_best) then
+                E_best=Evalue
+                x_best(1:nv)=x(1:nv)
+              endif
+            endif
+          case (3:10)
+            ExitNeeded=.true.
+          endselect
+          if (NumOfFailures==Glob_MaxEnergyFailsAllowed) then
+            if (Glob_ProcID==0) then
+              write(*,'(1x,a,1x,a,1x,a,1x,i0)') &
+                'Warning WC0150 in OptCycleQ: number of failed Q energy or gradient', &
+                'calculations during nonlinear-parameter optimization reached', &
+                'the limit of',Glob_MaxEnergyFailsAllowed
+            endif
+          endif
+          if (NumOfEnergyEval>=MaxEnergyEval) ExitNeeded=.true.
+        enddo
+
+        !DRMNG's last requested point need not be its lowest-energy point.
+        !Reassemble x_best transactionally so nonlinear parameters, physical
+        !matrices, factors, energy, and coefficients all describe one state.
+        do a=1,nfo
+          ActiveI=ActiveFunction(a)
+          Glob_NonlinParam(1:npt,ActiveI)=x_best((a-1)*npt+1:a*npt)
+        enddo
+        Evalue=EnergyQAM(.true.,ErrCode)
+        if (ErrCode==Q_METHOD_SUCCESS) then
+          Glob_CurrEnergy=Evalue
+        else
+          if (Glob_ProcID==0) then
+            write(*,'(1x,a,1x,a)') &
+              'Warning WC0151 in OptCycleQ: failed to evaluate the best point.', &
+              'The original nonlinear parameters will be restored.'
+          endif
+        endif
+
+        !Check every unordered overlap pair touching the active set once. This
+        !includes inactive functions with canonical indices greater than an
+        !active function, which a simple lower-triangle prefix loop would miss.
+        IsOverlapBad=.false.
+        if ((ErrCode==Q_METHOD_SUCCESS).and.(OverlapThreshold>ZERO)) then
+          ii=0
+          do a=1,nfo
+            ActiveI=ActiveFunction(a)
+            do j=1,cbs
+              if (j==ActiveI) cycle
+              if ((Q_Workspace%ActivePosition(j)>0).and. &
+                  (Q_Workspace%ActivePosition(j)<a)) cycle
+              if (abs(QCanonicalMatrixElement(Glob_S,ActiveI,j))>OverlapThreshold) then
+                ii=ii+1
+                IsOverlapBad=.true.
+                if (Glob_ProcID==0) then
+                  if (ii==1) write(*,*) &
+                    'Warning WC0152: overlap of the following functions exceeds threshold. ', &
+                    'Nonlinear parameters will be left unchanged'
+                  write(*,'(1x,i6,a1,i6,i6,a6)',advance='no') &
+                    ii,':',Glob_FuncNum(ActiveI),Glob_FuncNum(j),'    S='
+                  call writerealadv(6,QCanonicalMatrixElement(Glob_S,ActiveI,j))
+                endif
+              endif
+            enddo
+          enddo
+        endif
+
+        IsAnyLinCoeffBad=.false.
+        if ((ErrCode==Q_METHOD_SUCCESS).and.(LinCoeffThreshold>ZERO)) then
+          ii=0
+          do i=1,cbs
+            if (abs(Glob_c(i))>LinCoeffThreshold) then
+              ii=ii+1
+              IsAnyLinCoeffBad=.true.
+              if (Glob_ProcID==0) then
+                if (ii==1) write(*,*) &
+                  'Warning WC0153: absolute value of linear parameters exceeds threshold. ', &
+                  'Nonlinear parameters will be left unchanged'
+                write(*,'(1x,i6,a1,i6,a6)',advance='no') &
+                  ii,':',Glob_FuncNum(i),'    c='
+                call writerealadv(6,Glob_c(i))
+              endif
+            endif
+          enddo
+        endif
+
+        if ((Glob_ProcID==0).and.(ErrCode==Q_METHOD_SUCCESS).and. &
+            (.not.IsOverlapBad).and.(.not.IsAnyLinCoeffBad)) then
+          write(*,'(1x,a,1x,i0,a,i0)') &
+            'Number of energy/gradient evaluations',NumOfEnergyEval,'/',NumOfGradEval
+          write(*,*) 'E=',Glob_CurrEnergy
+          if (Glob_AreParamPrintedInCycleOptX) then
+            write(*,*) 'Nonlinear parameters after optimization:'
+            do a=1,nfo
+              ActiveI=ActiveFunction(a)
+              write(*,'(1x,i6,a1)',advance='no') Glob_FuncNum(ActiveI),':'
+              call writerealarradv(6,Glob_NonlinParam(1:npt,ActiveI),npt)
+            enddo
+          endif
+        endif
+
+        if ((ErrCode/=Q_METHOD_SUCCESS).or.IsOverlapBad.or.IsAnyLinCoeffBad) then
+          do a=1,nfo
+            ActiveI=ActiveFunction(a)
+            Glob_NonlinParam(1:npt,ActiveI)=x_init((a-1)*npt+1:a*npt)
+          enddo
+          Evalue=EnergyQA(.true.,ErrCode)
+          if (ErrCode==Q_METHOD_SUCCESS) then
+            Glob_CurrEnergy=Evalue
+          else
+            !ApplyQTrial restores a provable matrix/factor generation on an
+            !update failure. A solve failure leaves the restored physical
+            !point represented, so retaining E_prev is safe for scheduling.
+            if (Glob_ProcID==0) write(*,'(1x,a,1x,a)') &
+              'Warning WC0154 in OptCycleQ: original-point energy cannot be computed.', &
+              'Proceeding to the next basis function'
+            Glob_CurrEnergy=E_prev
+          endif
+        endif
+
+        LastIter=(CurrFunc>FuncEnd-NumOfFuncToShift)
+        Glob_History(cbs)%Energy=Glob_CurrEnergy
+        if (LastIter) then
+          Glob_History(cbs)%InitFuncAtLastStep=0
+          Glob_History(cbs)%CyclesDone=Glob_History(cbs)%CyclesDone+1
+        else
+          Glob_History(cbs)%InitFuncAtLastStep=CurrFunc
+        endif
+
+        if (Glob_ProcID==0) then
+          if ((totsteps<=Glob_MinMandSavSteps).or. &
+              (mod(totsteps,SavingFreq)==0).or. &
+              (CurrFunc+NumOfFuncToShift>=FuncEnd)) then
+            !Canonical order is already the user-visible order; Q never needs
+            !SaveResults' sorting workspace or a temporary basis permutation.
+            call SaveResults(Sort='no')
+          endif
+        endif
+      enddo
+
+      if (Glob_ProcID==0) then
+        write(*,*)
+        write(*,*) 'Cycle',CurrCycle,' finished'
+      endif
+      if (CurrCycle/=NumCycles) &
+        Glob_History(cbs)%InitFuncAtLastStep=FuncBegin-NumOfFuncToShift
+    enddo
+
+    call StoreMatricesInSwapFile()
+    call ClearQWorkspace()
+
+    deallocate(ActiveFunction)
+    deallocate(grad)
+    deallocate(x_best)
+    deallocate(x_init)
+    deallocate(x)
+    deallocate(V_init)
+    deallocate(V)
+    deallocate(D)
+    deallocate(Glob_WkGR)
+    deallocate(Glob_SklBuff2)
+    deallocate(Glob_SklBuff1)
+    deallocate(Glob_HklBuff2)
+    deallocate(Glob_HklBuff1)
+    deallocate(Glob_c)
+    deallocate(Glob_D)
+    deallocate(Glob_diagS)
+    deallocate(Glob_S)
+    deallocate(Glob_H)
+
+    ErrorCode=Q_METHOD_SUCCESS
+    if (Glob_ProcID==0) write(*,*) 'Routine OptCycleQ finished'
 
   end subroutine OptCycleQ
 
