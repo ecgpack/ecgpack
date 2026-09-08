@@ -56,6 +56,8 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
   # gfortran and Open MPI (default on most Linux systems)
   ifeq ($(COMPILER), gfortran)
     FC=mpif90
+    QR_FIXED_FLAGS=-ffixed-line-length-none
+    QR_PREPROCESS_FLAGS=-cpp
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
     export FCFLAGS=-J$(CONFIG)
@@ -85,6 +87,8 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
   # Intel Fortran (ifort) and Intel MPI
   ifeq ($(COMPILER), ifort)
     FC=mpiifort
+    QR_FIXED_FLAGS=-extend-source
+    QR_PREPROCESS_FLAGS=-fpp
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
     export FCFLAGS=-module $(CONFIG)
@@ -109,6 +113,8 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
   # Intel Fortran (LLVM-based ifx) and Intel MPI
   ifeq ($(COMPILER), ifx)
     FC=mpiifx
+    QR_FIXED_FLAGS=-extend-source
+    QR_PREPROCESS_FLAGS=-fpp
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
     export FCFLAGS=-module $(CONFIG)
@@ -133,6 +139,8 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
   # NVIDIA HPC SDK (nvfortran) and Open MPI
   ifeq ($(COMPILER), nvfortran)
     FC=mpif90
+    QR_FIXED_FLAGS=-Mextend
+    QR_PREPROCESS_FLAGS=-Mpreprocess
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
     export FCFLAGS=-module $(CONFIG)
@@ -202,7 +210,9 @@ endif
 export OBJS_LPKBLS=$(addprefix $(CONFIG)/,$(BARE_OBJS_LPKBLS))
 
 export BARE_OBJS=wp_def_$(PREC).o X1MACH.o dmng.o globvars.o misc.o linalg.o \
-              matelem.o matform.o workproc.o main.o spin.o
+              matelem.o matform.o qrupdate_linalg.o qrupdate_error.o \
+              qrupdate_real.o qrupdate_complex.o qrupdate.o qrlinalg.o \
+              workproc.o main.o spin.o
 export OBJS=$(addprefix $(CONFIG)/,$(BARE_OBJS))
 export OBJS+=$(OBJS_LPKBLS)
 
@@ -256,11 +266,11 @@ $(CONFIG)/$(EXEFILE): ptarg $(OBJS)
 $(CONFIG)/wp_def_$(PREC).o: $(SRC_DIR)/wp_def_$(PREC).f90
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/wp_def_$(PREC).f90 -o $(CONFIG)/wp_def_$(PREC).o
 
-$(CONFIG)/BLAS.o: $(SRC_DIR)/BLAS.f $(CONFIG)/wp_def_$(PREC).o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/BLAS.f -o $(CONFIG)/BLAS.o
+$(CONFIG)/BLAS.o: $(SRC_DIR)/qrupdate/BLAS.f $(CONFIG)/wp_def_$(PREC).o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_FIXED_FLAGS) $(QR_PREPROCESS_FLAGS) -DQRLINALG_WP=$(PREC) -c $(SRC_DIR)/qrupdate/BLAS.f -o $(CONFIG)/BLAS.o
 
-$(CONFIG)/LAPACK.o: $(SRC_DIR)/LAPACK.f $(CONFIG)/BLAS.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/LAPACK.f -o $(CONFIG)/LAPACK.o
+$(CONFIG)/LAPACK.o: $(SRC_DIR)/qrupdate/LAPACK.f $(CONFIG)/BLAS.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_FIXED_FLAGS) -c $(SRC_DIR)/qrupdate/LAPACK.f -o $(CONFIG)/LAPACK.o
 
 $(CONFIG)/X1MACH.o: $(SRC_DIR)/X1MACH.f90 $(CONFIG)/wp_def_$(PREC).o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/X1MACH.f90 -o $(CONFIG)/X1MACH.o
@@ -286,7 +296,25 @@ $(CONFIG)/matelem.o: $(SRC_DIR)/matelem.f90 $(CONFIG)/globvars.o $(CONFIG)/spin.
 $(CONFIG)/matform.o: $(SRC_DIR)/matform.f90 $(CONFIG)/matelem.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/matform.f90 -o $(CONFIG)/matform.o
 
-$(CONFIG)/workproc.o: $(SRC_DIR)/workproc.f90 $(CONFIG)/misc.o $(CONFIG)/linalg.o $(CONFIG)/matform.o $(CONFIG)/matelem.o $(CONFIG)/dmng.o $(OBJS_LPKBLS)
+$(CONFIG)/qrupdate_linalg.o: $(SRC_DIR)/qrupdate/qrupdate_linalg.f90 $(CONFIG)/wp_def_$(PREC).o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate_linalg.f90 -o $(CONFIG)/qrupdate_linalg.o
+
+$(CONFIG)/qrupdate_error.o: $(SRC_DIR)/qrupdate/qrupdate_error.f90 $(CONFIG)/qrupdate_linalg.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate_error.f90 -o $(CONFIG)/qrupdate_error.o
+
+$(CONFIG)/qrupdate_real.o: $(SRC_DIR)/qrupdate/qrupdate_real.f90 $(CONFIG)/qrupdate_error.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate_real.f90 -o $(CONFIG)/qrupdate_real.o
+
+$(CONFIG)/qrupdate_complex.o: $(SRC_DIR)/qrupdate/qrupdate_complex.f90 $(CONFIG)/qrupdate_error.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate_complex.f90 -o $(CONFIG)/qrupdate_complex.o
+
+$(CONFIG)/qrupdate.o: $(SRC_DIR)/qrupdate/qrupdate.f90 $(CONFIG)/qrupdate_real.o $(CONFIG)/qrupdate_complex.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate.f90 -o $(CONFIG)/qrupdate.o
+
+$(CONFIG)/qrlinalg.o: $(SRC_DIR)/qrlinalg.f90 $(CONFIG)/qrupdate.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_PREPROCESS_FLAGS) -c $(SRC_DIR)/qrlinalg.f90 -o $(CONFIG)/qrlinalg.o
+
+$(CONFIG)/workproc.o: $(SRC_DIR)/workproc.f90 $(CONFIG)/misc.o $(CONFIG)/linalg.o $(CONFIG)/matform.o $(CONFIG)/matelem.o $(CONFIG)/dmng.o $(CONFIG)/qrlinalg.o $(OBJS_LPKBLS)
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/workproc.f90 -o $(CONFIG)/workproc.o
 
 $(CONFIG)/main.o: $(SRC_DIR)/main.f90 $(CONFIG)/workproc.o
