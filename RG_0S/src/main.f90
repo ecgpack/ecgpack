@@ -75,8 +75,13 @@ program main
             call BasisEnlI(Kstart,Kstop,Kstep,Glob_BBOP(i)%D,OptimizationType, &
                            Glob_BBOP(i)%E,Glob_BBOP(i)%Q,Glob_BBOP(i)%R)
           case('Q')
-            if (Glob_ProcID==0) write(*,*) &
-              'Sorry, GSEP solution method Q does not yet work in BASIS_ENL'
+            call BasisEnlQ(Kstart,Kstop,Kstep,Glob_BBOP(i)%D,OptimizationType, &
+                           Glob_BBOP(i)%E,Glob_BBOP(i)%Q,Glob_BBOP(i)%R,QErrorCode)
+            if ((QErrorCode/=Q_METHOD_SUCCESS).and.(Glob_ProcID==0)) then
+              write(*,'(1x,a,1x,i0,1x,a,1x,i0)') &
+                'Error EC0013 in main: BASIS_ENL Q failed at BBOP step',i, &
+                'with status',QErrorCode
+            endif
           endselect
         else
           if (Glob_ProcID==0) then
@@ -131,8 +136,14 @@ program main
                          Glob_BBOP(i)%R,real(Glob_BBOP(i)%E,4),real(Glob_BBOP(i)%F,4), &
                          Glob_BBOP(i)%FileName1)
         case('Q')
-          if (Glob_ProcID==0) write(*,*) &
-            'Sorry, GSEP solution method Q does not yet work in FULL_OPT1'
+          call FullOpt1Q(Glob_BBOP(i)%B,Glob_BBOP(i)%C,Glob_BBOP(i)%D,Glob_BBOP(i)%Q, &
+                         Glob_BBOP(i)%R,real(Glob_BBOP(i)%E,4),real(Glob_BBOP(i)%F,4), &
+                         Glob_BBOP(i)%FileName1,QErrorCode)
+          if ((QErrorCode/=Q_METHOD_SUCCESS).and.(Glob_ProcID==0)) then
+            write(*,'(1x,a,1x,i0,1x,a,1x,i0)') &
+              'Error EC0014 in main: FULL_OPT1 Q failed at BBOP step',i, &
+              'with status',QErrorCode
+          endif
         endselect
       else
         if (Glob_ProcID==0) then
@@ -147,6 +158,9 @@ program main
         case('G')
           call EliminateLittleContribFunc(Glob_BBOP(i)%Q,Glob_BBOP(i)%FileName1, &
                                           Glob_ElimRoutPrintSpec)
+        case('Q')
+          call EliminateLittleContribFunc(Glob_BBOP(i)%Q,Glob_BBOP(i)%FileName1, &
+                                          Glob_ElimRoutPrintSpec,'Q')
         case('I')
           if (Glob_ProcID==0) write(*,*) 'Sorry, GSEP soluton method I does not work in ELIM_LCFN'
         endselect
@@ -162,6 +176,9 @@ program main
         select case (Glob_BBOP(i)%GSEPSolutionMethod)
         case('G')
           call EliminateLinDepFunc(Glob_BBOP(i)%Q,Glob_BBOP(i)%FileName1,Glob_ElimRoutPrintSpec)
+        case('Q')
+          call EliminateLinDepFunc(Glob_BBOP(i)%Q,Glob_BBOP(i)%FileName1, &
+                                   Glob_ElimRoutPrintSpec,'Q')
         case('I')
           if (Glob_ProcID==0) write(*,*) 'Sorry, GSEP soluton method I does not work in ELIM_LND1'
         endselect
@@ -178,6 +195,9 @@ program main
         case('G')
           call SeparateLinDepFunc(Glob_BBOP(i)%Q,Glob_BBOP(i)%R,Glob_BBOP(i)%FileName1, &
                                   Glob_ElimRoutPrintSpec)
+        case('Q')
+          call SeparateLinDepFunc(Glob_BBOP(i)%Q,Glob_BBOP(i)%R,Glob_BBOP(i)%FileName1, &
+                                  Glob_ElimRoutPrintSpec,'Q')
         case('I')
           if (Glob_ProcID==0) write(*,*) 'Sorry, GSEP soluton method I does not work in SEPR_LND1'
         endselect
@@ -194,8 +214,11 @@ program main
         case('G')
           call SeparateFuncLargeCoeff(Glob_BBOP(i)%Q,Glob_BBOP(i)%R,Glob_BBOP(i)%FileName1, &
                                       Glob_ElimRoutPrintSpec)
+        case('Q')
+          call SeparateFuncLargeCoeff(Glob_BBOP(i)%Q,Glob_BBOP(i)%R,Glob_BBOP(i)%FileName1, &
+                                      Glob_ElimRoutPrintSpec,'Q')
         case('I')
-          if (Glob_ProcID==0) write(*,*) 'Sorry, GSEP soluton method I does not work in SEPR_LND1'
+          if (Glob_ProcID==0) write(*,*) 'Sorry, GSEP soluton method I does not work in SEPR_FLCF'
         endselect
       else
         if (Glob_ProcID==0) then

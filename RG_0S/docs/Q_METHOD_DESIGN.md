@@ -11,11 +11,18 @@ any decision that a later port must reproduce.
 The first committed foundation (`8561b61`) defines code ownership and canonical
 layout, integrates qrlinalg and its build dependencies, and implements
 non-derivative canonical Q storage plus arbitrary-index staged column assembly.
-The next implementation chunk completes `OPT_CYCLE Q`: factor lifecycle,
-replacement transactions, solve/residual monitoring, indexed derivatives,
-energy/gradient wrappers, swap handling, driver, and `main.f90` dispatch are
-implemented and validated. `BASIS_ENL Q` and `FULL_OPT1 Q` remain fail-closed
-and are the next BBOP-specific tasks.
+The second committed chunk (`4b07fa4`) completes `OPT_CYCLE Q`: factor
+lifecycle, replacement transactions, solve/residual monitoring, indexed
+derivatives, energy/gradient wrappers, swap handling, driver, and `main.f90`
+dispatch are implemented and validated.
+
+The current review chunk implements the remaining Q-facing work in `RG_0S`:
+`BASIS_ENL`, `FULL_OPT1`, indexed overlap penalties, `EXPC_VALS`, `DENSITIES`,
+`MOMT_DENS`, `SAVE_HSWF`, and all four elimination/separation commands. The
+optimizer drivers exercise append and replacement updates. The one-shot
+elimination/separation routines use qrlinalg but deliberately rebuild and
+factorize the resulting matrix, preserving their established full-recompute
+behavior. Sections 15 and 16 record the exact implementation and validation.
 
 The G implementations are the behavioral references:
 
@@ -61,8 +68,9 @@ Structural update routines validate ordinary argument errors before changing
 the factors. The underlying qrupdate kernels do not return a numerical status.
 A structurally successful update can still produce a singular shifted problem;
 `solve` detects that later. `QR_ERR_NO_CONVERGENCE` returns an approximate
-eigenpair, but Q optimizer code must still treat it as a failed evaluation
-unless a separate acceptance policy is explicitly designed.
+eigenpair. `SolveQ` accepts that approximation only if the independent
+physical generalized-eigenpair residual satisfies the requested tolerance;
+otherwise it refreshes the factors and retries once.
 
 The shift must remain fixed while updates are reused. Changing
 `Glob_ApproxEnergy` requires `factorize_fresh`; never silently retarget existing
@@ -409,20 +417,21 @@ change becomes quadratic through row/column updates.
 
 ### Other BBOP actions
 
-These routines must be audited after the three optimizer drivers:
+These routines were audited after the three optimizer drivers. The resulting
+implementation choices are:
 
 | BBOP | Existing implementation and Q work |
 | --- | --- |
-| `ELIM_LCFN` | `EliminateLittleContribFunc`: retain its coefficient-based selection policy; apply principal deletions in descending index order and compact every basis-indexed array consistently. |
-| `ELIM_LND1` | `EliminateLinDepFunc`: retain overlap-mask semantics; use principal deletion rather than rebuilding unaffected elements. Define behavior if every function would be deleted because qrlinalg has no order-zero state. |
-| `SEPR_LND1` | `SeparateLinDepFunc`: active indices are the selected mask; assemble replacements and solve in canonical order. |
-| `SEPR_FLCF` | `SeparateFuncLargeCoeff`: same replacement path for coefficient-selected indices. |
+| `ELIM_LCFN` | `EliminateLittleContribFunc`: retain its coefficient-based selection policy, compact the selected nonlinear parameters, rebuild canonical H/S for the compacted basis, and factorize fresh. A future performance-only refinement may pair `delete_symmetric` with in-place matrix compaction. |
+| `ELIM_LND1` | `EliminateLinDepFunc`: retain overlap-mask semantics, rebuild canonical H/S for the survivors, and factorize fresh. Define behavior if every function would be deleted before attempting qrlinalg order zero. |
+| `SEPR_LND1` | `SeparateLinDepFunc`: retain the selected mask and random perturbation policy, then rebuild canonical H/S and factorize fresh. A replacement-only path is a possible later optimization. |
+| `SEPR_FLCF` | `SeparateFuncLargeCoeff`: use the same full-rebuild policy for coefficient-selected functions. |
 | `EXPC_VALS`, `DENSITIES`, `MOMT_DENS` | `ExpectationValues`: build/solve Q once, retain normalized coefficients and existing operator calculations. Q returns one shift-selected root, unlike G's index selection. |
 | `SAVE_HSWF` | `SaveHSWF`: solve through Q but export physical unshifted H/S and coefficients in canonical order. |
 | `SAVE_FILE` | No eigenproblem. Confirm canonical parameter/history order and do not create Q factor state. |
 
-Elimination and separation currently dispatch only G and reject I. Adding Q is
-new behavior, not an alias to an existing iterative branch.
+Elimination and separation now dispatch G and Q and continue to reject I. Q is
+new behavior, not an alias to the existing iterative branch.
 
 ## 7. Required routine changes
 
@@ -433,14 +442,14 @@ omitted because this file will grow; search by routine name.
 | --- | --- |
 | `workproc.f90`: Q workspace/helpers | Add root factor lifecycle after qrlinalg build integration; keep active mapping, transaction, solve, acceptance, and BBOP orchestration here. |
 | `matform.f90`: `StoreHS` | Q storage is implemented: physical normalized H/S, including diagonals, go directly into the lower triangles and raw S norm remains in `Glob_diagS`. |
-| `workproc.f90`: `AssembleQTrial` | Non-derivative arbitrary-index staging is implemented. Add indexed derivative placement later without changing the suffix-oriented G/I loops. |
-| `workproc.f90`: `EnergyGA/GAM/GB` | Use as behavioral references. Fill `EnergyQA/QAM/QB`; do not change G until Q equivalence is demonstrated. |
-| `workproc.f90`: overlap penalty routines | Add active-index versions or generalize carefully. Current loops and gradient offsets assume a suffix. Count each unordered pair once. |
-| `workproc.f90`: swap routines | Treat Q like canonical unshifted G data but with physical diagonals already in H/S. Serialize through upper-triangle packing without changing the authoritative lower triangle. Rebuild factors after restart; never serialize private Q/R. |
+| `workproc.f90`: `AssembleQTrial` | Arbitrary-index H/S staging and derivative placement are implemented without changing the suffix-oriented G/I loops. |
+| `workproc.f90`: `EnergyGA/GAM/GB` | Behavioral references for implemented `EnergyQA/QAM/QB`; G is unchanged apart from an independent uninitialized-best-point correction in `BasisEnlG`. |
+| `workproc.f90`: overlap penalty routines | Indexed Q energy, gradient, and statistics variants enumerate each unordered pair touching the active map exactly once. |
+| `workproc.f90`: swap routines | Q uses canonical unshifted data with physical diagonals already in H/S. Serialization borrows the unused upper triangle without changing authoritative lower storage; private Q/R is always rebuilt. |
 | `workproc.f90`: permutation/sort helpers | Q optimization scheduling must not call them. If a user-visible operation truly reorders the basis, permute all basis-indexed arrays then factorize fresh. |
-| `workproc.f90`: `GetOverlapStatistics` | Add an active-index form for noncontiguous sets; the current `Nmin:Nmax` form remains suitable for contiguous FULL_OPT1. |
-| `workproc.f90`: `BasisEnlQ`, `OptCycleQ`, `FullOpt1Q` | Fill one driver per review chunk from its G counterpart. |
-| `main.f90` | Add Q cases only after the corresponding driver is operational. Unsupported BBOP/method combinations must produce an explicit error. |
+| `workproc.f90`: `GetOverlapStatistics` | `GetQOverlapStatistics` covers arbitrary active maps; the old contiguous routine remains unchanged for G/I. |
+| `workproc.f90`: `BasisEnlQ`, `OptCycleQ`, `FullOpt1Q` | All three drivers are implemented with stable canonical basis order. |
+| `main.f90` | Q dispatch is enabled for every method-taking BBOP after its implementation; I remains explicitly unsupported by the four legacy elimination/separation commands. |
 | `globvars.f90` | Update comments for Q physical matrix invariants if Q storage is selected. Avoid moving workproc-only transaction state into globals. |
 | `Makefile` | Compile qrupdate modules and qrlinalg in dependency order with preprocessing; select one BLAS/LAPACK provider; make workproc depend on qrlinalg. |
 | shared documentation | Document Q as shift-targeted and list exactly which BBOP actions are enabled. |
@@ -532,12 +541,14 @@ Each chunk stops for review and is committed only on explicit request.
 7. **Completed:** `OPT_CYCLE Q` preserves G scheduling/history semantics
    without physical permutations and supports final short blocks and swap
    restart.
-8. **BASIS_ENL Q:** append lifecycle, repeated candidate replacement, accepted
-   order versus tentative order, and rejection recovery.
-9. **FULL_OPT1 Q:** dense-change policy, Hessian ordering/restart, penalties,
-   and periodic saves.
-10. **Remaining BBOP actions and shared docs:** enable one operation only after
-    its explicit Q path is validated.
+8. **Completed:** `BASIS_ENL Q` append lifecycle, repeated candidate
+   replacement, accepted order versus tentative order, and rejection recovery.
+9. **Completed:** `FULL_OPT1 Q`, canonical Hessian ordering/restart, indexed
+   penalties, and periodic saves.
+10. **Completed in code:** remaining method-taking BBOP actions use Q. Runtime
+    validation is complete for `SAVE_HSWF`, `EXPC_VALS`, `ELIM_LCFN`, and
+    `ELIM_LND1`; the two separation commands await replay because the local
+    MPI execution approval service became unavailable after compilation.
 11. **Port to sibling real codes:** repeat the checklist below for each basis
     variant; treat CG_0S separately because Hermitian conjugation and complex
     gradients require their own derivation.
@@ -789,9 +800,14 @@ factorization, while the deterministic probe reported about `3.9e-16` and the
 physical eigenpair residual was about `2.6e-16`.
 
 A factor or physical residual beyond its precision-scaled tolerance causes one
-fresh-factorization and solve retry. Continued physical-residual failure is
-reported as `QR_ERR_NO_CONVERGENCE`; continued factor mismatch is reported as
-invalid state. Independently, a fresh factorization is forced after
+fresh-factorization and solve retry. qrlinalg's internal
+`QR_ERR_NO_CONVERGENCE` approximation is also checked against the physical
+residual and is accepted if that stronger condition passes. On a genuine
+physical-residual failure, retry iterations are raised to
+`max(120,Glob_MaxIterForGSEPIIS,4*n)` because an append can rotate the desired
+eigenvector substantially. Continued physical-residual failure is reported as
+`QR_ERR_NO_CONVERGENCE`; continued factor mismatch is reported as invalid
+state. Independently, a fresh factorization is forced after
 `max(64,8*n)` replacements. Because this guard is O(n), its O(n^3) refresh cost
 amortizes to O(n^2) per replacement. `LastEigenpairResidual`,
 `LastFactorResidual`, and `FreshFactorizations` preserve the latest diagnostics
@@ -858,9 +874,9 @@ upper triangle. Store borrows only the unused upper H triangle, so live lower
 H/S and QR factors remain consistent.
 
 `main.f90` dispatches `OPT_CYCLE Q` to `OptCycleQ` and reports a returned Q
-status. `BASIS_ENL Q` and `FULL_OPT1 Q` print explicit unsupported messages
-instead of silently doing nothing. Their workproc entry points remain
-fail-closed stubs.
+status. At the historical boundary recorded by this section, `BASIS_ENL Q`
+and `FULL_OPT1 Q` were still unsupported. They are implemented in the next
+review chunk documented in sections 15 and 16.
 
 The accepted input line has the same fields as G and I, with method `Q`:
 
@@ -905,3 +921,199 @@ End-to-end release runs on the same basis completed for:
 
 No sample input was modified. All calculation inputs and gradient harnesses
 used for these checks were disposable files under `/tmp`.
+
+## 15. BASIS_ENL Q and FULL_OPT1 Q implementation log
+
+This is the first uncommitted review chunk after `4b07fa4`. It completes the
+two optimizer drivers that were intentionally left fail-closed in the
+OPT_CYCLE chunk.
+
+### Step 1: suffix order transactions for basis growth
+
+`TrimQFactors(TargetOrder,...)` and `AppendQTrial(...)` separate accepted basis
+order from tentative trial order.
+
+- Rejected suffixes are removed from the factor state in descending order by
+  repeated `delete_symmetric(last)`. Their obsolete physical slots remain
+  outside `MatrixOrder` and are overwritten by the next candidate.
+- An accepted nonempty prefix is grown one column at a time with
+  `append_symmetric`. Each canonical physical column is committed only after
+  the corresponding factor update succeeds.
+- qrlinalg has no valid order-zero factorization. The first candidate block is
+  therefore staged completely, committed to physical H/S, and factorized
+  fresh. Later candidates at the same order use replacements.
+- A failed structural update restores the accepted physical generation and
+  constructs fresh factors rather than reusing an uncertain partial state.
+- When a calculation starts from the conventional enormous energy sentinel,
+  the first exact order-one energy retargets the fixed QR shift before order
+  two is attempted. This avoids loss of the physical energy in
+  `shift+(lambda-shift)`.
+
+`EvaluateQAppendedTrial(BaseOrder,TargetOrder,...)` composes trim, suffix map,
+staging, append, and solve. Keeping this lifecycle below the BBOP driver makes
+the accepted/tentative transition explicit and reusable in sibling ports.
+
+### Step 2: BasisEnlQ driver
+
+`BasisEnlQ` follows `BasisEnlG` for random generation, best-candidate choice,
+optional DRMNG refinement, overlap/coefficient acceptance, history, saving,
+and retry limits. The differences are deliberate:
+
+- H/S capacity is `Kstop`, while `Q_Workspace%MatrixOrder` is only the current
+  accepted or tentative order.
+- New functions always occupy a canonical suffix; existing functions are
+  never permuted.
+- Random candidates use delete/append order transactions. Nonlinear optimizer
+  trials use ordinary indexed replacement transactions.
+- If the configured number of candidate attempts is exhausted, Q returns a
+  failure instead of accepting the final rejected candidate. This prevents a
+  matrix/factor generation rejected by overlap, coefficients, or solver
+  status from leaking into the saved basis.
+- Q allocates neither `Glob_diagH` nor DSYGVX/GSEPIIS factor work arrays.
+
+While auditing the reference driver, `BasisEnlG` was given an initialization
+for `x_best` in `OptimizationType=0`; without it, that path could copy an
+undefined candidate vector. No other G numerical path was changed.
+
+### Step 3: indexed overlap penalty
+
+`ComputeQOverlapPenalty`, `ComputeQOverlapPenaltyAndAddGradient`, and
+`GetQOverlapStatistics` operate on the arbitrary canonical active map. A pair
+is included exactly once when either endpoint is active. For normalized
+overlap `S(i,j)`, the derivative contribution for an active endpoint uses the
+existing scaled derivative convention:
+
+```text
+dS_normalized = D_cross - 0.5*S(i,j)*D_diagonal
+```
+
+An active--active pair adds the appropriate derivative to both optimizer
+blocks but adds only one energy penalty. The gradient is accumulated before
+the final MPI all-reduce in `EnergyQB`, so it follows the existing distributed
+gradient ownership model.
+
+### Step 4: FullOpt1Q driver
+
+`FullOpt1Q` uses the ascending canonical map `InitFunc:FinalFunc`. This order is
+also the x vector, gradient, DRMNG Hessian, and Hessian-file order; there is no
+temporary suffix permutation to reverse during saving or restart.
+
+The initial physical matrix is restored or assembled once and factorized
+fresh. Each DRMNG trial is then staged and committed through the replacement
+transaction. A full-basis trial still has cubic asymptotic work because it
+contains O(n) symmetric column updates of O(n^2) each. This implementation
+prioritizes one correct transaction path for arbitrary subsets; a future
+benchmark may choose fresh factorization above a measured active-density
+crossover without changing matrix layout or driver semantics.
+
+Periodic basis saves, Hessian saves/restarts, overlap penalties, physical
+energy reporting, history updates, and final accepted-point restoration match
+the G driver. Output uses `Sort='no'` because Q never changes canonical order.
+
+### Validation performed
+
+The strict wp=8 debug build passed after each driver was added. Disposable
+end-to-end tests included:
+
+- basis growth from order zero to one, exercising exact order-one solution and
+  shift retargeting;
+- restart growth from one to three on one and two MPI ranks, exercising suffix
+  append, rejection trimming, and active order smaller than capacity;
+- a three-function `FULL_OPT1 Q` run optimizing interior canonical function 2
+  on one and two ranks, with two energy and one gradient evaluation;
+- indexed overlap penalty and gradient for noncontiguous active functions
+  `(100,50)` in the 100-function Li basis. All twelve analytic entries matched
+  central finite differences; the maximum relative discrepancy was
+  `6.7315e-10`, and factor/eigenpair residuals were of order `1e-16`.
+
+The append tests motivated the residual retry iteration floor described in
+section 14. A qrlinalg direction-change timeout was not automatically treated
+as success: the independent physical residual remained the acceptance test.
+
+## 16. Remaining Q BBOP and output-method implementation log
+
+### Step 1: SAVE_HSWF
+
+`SaveHSWF` accepts `Q`. Matrix assembly leaves canonical lower H/S untouched.
+When matrix text is requested, `QCanonicalMatrixElement` materializes each
+conceptual symmetric value only at the output boundary, so no full upper
+triangle is created in memory. When an eigenvector or wave function is
+requested, the routine constructs fresh factors, calls `SolveQ`, and exports
+the S-normalized canonical coefficient vector.
+
+### Step 2: EXPC_VALS, DENSITIES, and MOMT_DENS
+
+All three commands enter `ExpectationValues`; its Q branch performs one fresh
+canonical factorization and solve before the existing operator kernels run.
+The density commands therefore need no separate eigensolver implementation.
+As everywhere else, Q returns the root closest to the shift, not an eigenvalue
+selected by ordinal index.
+
+The first complete debug execution exposed the historical malformed format
+`'(a,i1,i1.1x)'` while writing `expvals.txt`. It was corrected to
+`'(a,i1,i1,1x)'`. This is independent of Q but was necessary for every debug
+expectation-value calculation to finish.
+
+### Step 3: elimination and separation
+
+`SolveEliminationGSEP` is the common local boundary for the four legacy
+save-and-stop routines. G retains its DSYGVX upper-triangle materialization.
+Q consumes the canonical lower triangles, constructs fresh qrlinalg factors,
+and returns an S-normalized coefficient vector. The routines take an optional
+method argument so all existing three-argument/four-argument G call sites keep
+their source behavior; `main.f90` passes `Q` explicitly on the new paths.
+
+After elimination or random separation, these routines deliberately retain
+their historical full `ComputeMatElem(1,cbs)` reconstruction and then call the
+common solver. This means their one-time linear-algebra step remains O(n^3),
+like DSYGVX. It is not an iterative optimizer bottleneck. Principal deletion
+for elimination and indexed replacement for separation are valid future
+performance refinements, but require careful in-place compaction and separate
+tests; they are not prerequisites for correct Q semantics.
+
+For Q overlap reporting, the lower element `Glob_S(j,i)`, `j>i`, is used
+directly. The former print statement read `Glob_S(i,j)` only because G had
+materialized the upper triangle; leaving that read in Q would observe
+unspecified storage.
+
+The same audit corrected two structural edge cases shared with G. `ELIM_LCFN`
+now stops without saving if its threshold would remove the entire basis,
+because neither a generalized eigenproblem nor a qrlinalg order-zero state
+exists. `ELIM_LND1` now sets the new order from the number of uniquely masked
+functions, not the number of offending pairs; one function may participate in
+several printed pairs but must be removed only once.
+
+### Validation performed and replay still required
+
+The wp=8 strict debug build compiles and links all new dispatch paths.
+Disposable one-rank executions produced:
+
+- `SAVE_HSWF Q 3 ...`: energy `-2.2487037512529300`, full H and S text,
+  eigenvector, and wave-function files;
+- `EXPC_VALS Q 3`: the same energy, `S=1.0000000000000002`, all expectation
+  values, symmetrized values, and output file completed;
+- `ELIM_LCFN Q 3 0.1 ...`: function 3 with coefficient
+  `0.089552928023` was removed; the rebuilt order-two energy was
+  `-2.2109294026962369`, and the reduced basis was saved;
+- `ELIM_LND1 Q 3 0.2 ...`: pair `(2,3)` with overlap
+  `0.32073776366828` was detected; the rebuilt order-two result had the same
+  energy and was saved.
+
+The elimination routines intentionally call `MPI_Abort` after saving, exactly
+as their G implementations do, so exit status 1 is expected after the success
+messages and output file.
+
+The environment approval service became unavailable before the two final MPI
+runs could start. After review, replay these disposable tests (the final exit
+status is again expected to be 1):
+
+```text
+SEPR_LND1 Q 3 0.2 0.1 separated-lnd-q.txt
+SEPR_FLCF Q 3 0.7 0.1 separated-flcf-q.txt
+```
+
+Optimized Netlib builds compiled and linked at wp=8, wp=10, and wp=16. The
+build directory was cleaned between precisions so module/object reuse could
+not mix working kinds. After the final elimination edge-case correction, the
+strict wp=8 debug build was repeated successfully. No sample input or tracked
+generated output was modified.

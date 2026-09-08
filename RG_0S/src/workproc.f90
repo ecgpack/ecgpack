@@ -6,8 +6,9 @@ module workproc
   use linalg
   use iso_fortran_env, only: int64
   use qrlinalg, only: qr_real_state,QR_SUCCESS,QR_ERR_INVALID_ARGUMENT, &
-    QR_ERR_ALLOCATION,QR_ERR_NOT_IMPLEMENTED,QR_ERR_INVALID_STATE, &
-    QR_ERR_DIMENSION_MISMATCH,QR_ERR_NO_CONVERGENCE
+    QR_ERR_ALLOCATION,QR_ERR_INVALID_STATE, &
+    QR_ERR_DIMENSION_MISMATCH,QR_ERR_NO_CONVERGENCE, &
+    QR_ERR_NONPOSITIVE_OVERLAP
   implicit none
 
 !The Q method keeps the physical basis in its canonical order. Unlike the G
@@ -21,11 +22,10 @@ module workproc
 !parameters, raw diagonal overlaps, derivatives, and linear coefficients
 !remain in their existing Glob_ arrays. Factors is initialized and used only
 !on rank zero because qrlinalg is serial; the physical matrices and the small
-!relationship flags remain under workproc's MPI-aware control. Numerical Q
-!entry points remain fail-closed until their individual transactions are
-!implemented and tested.
+!relationship flags remain under workproc's MPI-aware control. Each numerical
+!Q entry point constructs or updates that state through the transaction
+!helpers below before requesting an eigenpair.
   integer,parameter :: Q_METHOD_SUCCESS=QR_SUCCESS
-  integer,parameter :: Q_METHOD_NOT_IMPLEMENTED=QR_ERR_NOT_IMPLEMENTED
   integer,parameter :: Q_METHOD_INVALID_ARGUMENT=QR_ERR_INVALID_ARGUMENT
   integer,parameter :: Q_METHOD_ALLOCATION_ERROR=QR_ERR_ALLOCATION
   integer,parameter :: Q_METHOD_INVALID_STATE=QR_ERR_INVALID_STATE
@@ -3979,6 +3979,80 @@ contains
 
   end subroutine CaptureQMatrixParameters
 
+  subroutine TrimQFactors(TargetOrder,ErrorCode)
+!Subroutine TrimQFactors removes a rejected canonical suffix from the QR state.
+!BASIS_ENL repeatedly tests new functions in positions TargetOrder+1 onward;
+!deleting those last rows and columns restores the accepted prefix without any
+!basis permutation or cubic refactorization. The physical suffix may retain
+!obsolete trial values because it lies outside MatrixOrder and is overwritten
+!before it can become active again.
+!
+!qrlinalg intentionally has no valid order-zero factorization. When the first
+!basis block is being selected, trimming to zero therefore reinitializes an
+!empty capacity reservation. The next trial is constructed by a fresh
+!factorization after its complete physical block has been staged.
+!
+!Arguments:
+    integer,intent(in)  :: TargetOrder
+    integer,intent(out) :: ErrorCode
+!Local variables:
+    integer CurrentOrder,RootError,RecoveryError
+
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    CurrentOrder=Q_Workspace%MatrixOrder
+    if ((TargetOrder<0).or.(TargetOrder>CurrentOrder)) return
+    if (Q_Workspace%Capacity<max(1,CurrentOrder)) return
+
+    RootError=Q_METHOD_SUCCESS
+    if (Glob_ProcID==0) then
+      if (TargetOrder==0) then
+        call Q_Workspace%Factors%clear()
+        call Q_Workspace%Factors%initialize(Q_Workspace%Capacity,RootError)
+      else
+        if (.not.Q_Workspace%Factors%is_valid()) then
+          RootError=Q_METHOD_INVALID_STATE
+        else if (Q_Workspace%Factors%order()/=CurrentOrder) then
+          RootError=Q_METHOD_INVALID_STATE
+        endif
+        if (RootError==Q_METHOD_SUCCESS) then
+          do while (Q_Workspace%Factors%order()>TargetOrder)
+            call Q_Workspace%Factors%delete_symmetric( &
+              Q_Workspace%Factors%order(),RootError)
+            if (RootError/=Q_METHOD_SUCCESS) exit
+          enddo
+        endif
+      endif
+    endif
+    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+
+    !Publish the smaller physical order before recovery. Its leading principal
+    !block was never modified by appending or deleting a suffix, so it is a
+    !sound source for a fresh factorization if a structural operation failed.
+    Q_Workspace%MatrixOrder=TargetOrder
+    Q_Workspace%NumActive=0
+    Q_Workspace%ActiveFunction=0
+    Q_Workspace%ActivePosition=0
+    Q_Workspace%MatrixParametersAreStored=.false.
+    Q_Workspace%TrialIsReady=.false.
+    Q_Workspace%TrialHasDerivatives=.false.
+    Q_Workspace%AcceptedPointIsStored=.false.
+    Q_Workspace%FactorsMatchMatrices= &
+      (RootError==Q_METHOD_SUCCESS).and.(TargetOrder>0)
+
+    if ((RootError/=Q_METHOD_SUCCESS).and.(TargetOrder>0)) then
+      call FactorizeQFresh(RecoveryError)
+      if (RecoveryError/=Q_METHOD_SUCCESS) then
+        ErrorCode=RecoveryError
+      else
+        ErrorCode=RootError
+      endif
+      return
+    endif
+
+    ErrorCode=RootError
+
+  end subroutine TrimQFactors
+
   function QCanonicalMatrixElement(Matrix,i,j) result(MatrixElement)
 !Function QCanonicalMatrixElement reads a conceptual symmetric matrix element
 !from a matrix whose lower triangle, including the diagonal, is authoritative.
@@ -4093,7 +4167,6 @@ contains
     npt2=2*Glob_npt
     if (Glob_GSEPSolutionMethod/='Q') return
     if (.not.Q_Workspace%MatricesAreCanonical) return
-    if (.not.Q_Workspace%MatrixParametersAreStored) return
     if ((MatrixOrder<1).or.(NumActive<1)) return
     if (.not.allocated(Q_Workspace%ActiveFunction)) return
     if (.not.allocated(Q_Workspace%ActivePosition)) return
@@ -4284,6 +4357,183 @@ contains
       Q_Workspace%FreshFactorizations=Q_Workspace%FreshFactorizations+1
 
   end subroutine FactorizeQFresh
+
+  subroutine AppendQTrial(ErrorCode)
+!Subroutine AppendQTrial commits a staged suffix during BASIS_ENL. The active
+!map must be the consecutive canonical suffix BaseOrder+1:MatrixOrder. When an
+!accepted prefix exists, qrlinalg append_symmetric grows its factors one row
+!and column at a time. Each physical column is committed only after the
+!matching structural update succeeds.
+!
+!For BaseOrder=0 there is no valid factorization that can be appended to. The
+!routine first commits the complete staged block and then constructs the first
+!fresh factorization. This special case is confined to the first enlargement
+!step and therefore does not affect the asymptotic candidate-selection cost.
+!
+!On any append failure, the represented prefix is reconstructed from its
+!untouched leading physical block. The caller receives the original append
+!status when recovery succeeds, and a recovery status otherwise.
+!
+!Arguments:
+    integer,intent(out) :: ErrorCode
+!Local variables:
+    integer a,BaseOrder,FunctionIndex,MatrixOrder,NumActive
+    integer RootError,StoreError,RecoveryError
+
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    MatrixOrder=Q_Workspace%MatrixOrder
+    NumActive=Q_Workspace%NumActive
+    BaseOrder=MatrixOrder-NumActive
+    if (Glob_GSEPSolutionMethod/='Q') return
+    if (.not.Q_Workspace%MatricesAreCanonical) return
+    if (.not.Q_Workspace%TrialIsReady) return
+    if ((MatrixOrder<1).or.(NumActive<1).or.(BaseOrder<0)) return
+    if (.not.allocated(Q_Workspace%ActiveFunction)) return
+    if (.not.allocated(Q_Workspace%TrialH)) return
+    if (.not.allocated(Q_Workspace%TrialS)) return
+    if (.not.allocated(Q_Workspace%TrialDiagS)) return
+    do a=1,NumActive
+      if (Q_Workspace%ActiveFunction(a)/=BaseOrder+a) return
+    enddo
+
+    RootError=Q_METHOD_SUCCESS
+    if (BaseOrder==0) then
+      !Every pair in the new leading block touches an active function, so the
+      !staged columns together contain a complete symmetric problem.
+      do a=1,NumActive
+        FunctionIndex=a
+        call StoreQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
+          Q_Workspace%TrialH(1:MatrixOrder,a),StoreError)
+        if (StoreError/=Q_METHOD_SUCCESS) then
+          ErrorCode=StoreError
+          return
+        endif
+        call StoreQCanonicalColumn(Glob_S,MatrixOrder,FunctionIndex, &
+          Q_Workspace%TrialS(1:MatrixOrder,a),StoreError)
+        if (StoreError/=Q_METHOD_SUCCESS) then
+          ErrorCode=StoreError
+          return
+        endif
+        Glob_diagS(FunctionIndex)=Q_Workspace%TrialDiagS(a)
+      enddo
+      !An empty input basis carries a large placeholder CURRENT_ENERGY, not a
+      !meaningful inverse-iteration target. Replace such a remote shift by the
+      !lowest normalized diagonal estimate before constructing the first QR
+      !factorization. For the usual Kstep=1 start this is the exact energy.
+      if (abs(Glob_ApproxEnergy)> &
+          1000000*max(ONE,maxval(abs([(Glob_H(a,a),a=1,MatrixOrder)])))) then
+        Glob_ApproxEnergy=minval([(Glob_H(a,a),a=1,MatrixOrder)])* &
+          Glob_InvItParameter
+      endif
+      call FactorizeQFresh(RootError)
+    else
+      if (Glob_ProcID==0) then
+        if (.not.Q_Workspace%Factors%is_valid()) then
+          RootError=Q_METHOD_INVALID_STATE
+        else if (Q_Workspace%Factors%order()/=BaseOrder) then
+          RootError=Q_METHOD_INVALID_STATE
+        endif
+      endif
+      call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+      if (RootError==Q_METHOD_SUCCESS) then
+        do a=1,NumActive
+          FunctionIndex=BaseOrder+a
+          if (Glob_ProcID==0) then
+            call Q_Workspace%Factors%append_symmetric( &
+              Q_Workspace%TrialH(1:FunctionIndex,a), &
+              Q_Workspace%TrialS(1:FunctionIndex,a),RootError)
+          endif
+          call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+          if (RootError/=Q_METHOD_SUCCESS) exit
+
+          call StoreQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
+            Q_Workspace%TrialH(1:MatrixOrder,a),StoreError)
+          call StoreQCanonicalColumn(Glob_S,MatrixOrder,FunctionIndex, &
+            Q_Workspace%TrialS(1:MatrixOrder,a),StoreError)
+          Glob_diagS(FunctionIndex)=Q_Workspace%TrialDiagS(a)
+        enddo
+      endif
+    endif
+
+    if (RootError/=Q_METHOD_SUCCESS) then
+      !Only suffix rows and columns may have been committed. Re-expose the
+      !accepted leading block and rebuild its factors instead of retaining a
+      !partially appended generation.
+      Q_Workspace%MatrixOrder=BaseOrder
+      Q_Workspace%FactorsMatchMatrices=.false.
+      if (BaseOrder>0) then
+        call FactorizeQFresh(RecoveryError)
+      else
+        RecoveryError=Q_METHOD_SUCCESS
+        if (Glob_ProcID==0) then
+          call Q_Workspace%Factors%clear()
+          call Q_Workspace%Factors%initialize(Q_Workspace%Capacity,RecoveryError)
+        endif
+        call MPI_BCAST(RecoveryError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+      endif
+      if (RecoveryError/=Q_METHOD_SUCCESS) then
+        ErrorCode=RecoveryError
+      else
+        ErrorCode=RootError
+      endif
+      Q_Workspace%TrialIsReady=.false.
+      Q_Workspace%TrialHasDerivatives=.false.
+      return
+    endif
+
+    do a=1,NumActive
+      FunctionIndex=Q_Workspace%ActiveFunction(a)
+      Q_Workspace%MatrixParam(1:Glob_npt,a)= &
+        Glob_NonlinParam(1:Glob_npt,FunctionIndex)
+    enddo
+    Q_Workspace%FactorsMatchMatrices=.true.
+    Q_Workspace%MatrixParametersAreStored=.true.
+    Q_Workspace%TrialIsReady=.false.
+    ErrorCode=Q_METHOD_SUCCESS
+
+  end subroutine AppendQTrial
+
+  subroutine EvaluateQAppendedTrial(BaseOrder,TargetOrder,Evalue,ErrorCode)
+!Subroutine EvaluateQAppendedTrial performs one complete BASIS_ENL candidate
+!transaction. Any preceding candidate suffix is deleted, the new consecutive
+!suffix is assembled in canonical order, appended to the accepted QR prefix,
+!and solved. On success the active map remains installed so the selected
+!candidate can immediately enter ordinary replacement-based optimization.
+!
+!Arguments:
+    integer,intent(in)  :: BaseOrder,TargetOrder
+    real(wp),intent(out) :: Evalue
+    integer,intent(out) :: ErrorCode
+!Local variables:
+    integer a,NumActive
+    integer ActiveFunction(Q_Workspace%MaxActive)
+
+    Evalue=huge(Evalue)
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    NumActive=TargetOrder-BaseOrder
+    if ((BaseOrder<0).or.(TargetOrder>Q_Workspace%Capacity)) return
+    if ((NumActive<1).or.(NumActive>Q_Workspace%MaxActive)) return
+
+    call TrimQFactors(BaseOrder,ErrorCode)
+    if (ErrorCode/=Q_METHOD_SUCCESS) return
+
+    !The factors still represent BaseOrder while the assembly routines need to
+    !see the complete target problem. FactorsMatchMatrices remains false until
+    !AppendQTrial has installed every staged suffix column.
+    Q_Workspace%MatrixOrder=TargetOrder
+    Q_Workspace%FactorsMatchMatrices=.false.
+    do a=1,NumActive
+      ActiveFunction(a)=BaseOrder+a
+    enddo
+    call SetQActiveFunctions(ActiveFunction(1:NumActive),ErrorCode)
+    if (ErrorCode/=Q_METHOD_SUCCESS) return
+    call AssembleQTrial(.false.,ErrorCode)
+    if (ErrorCode/=Q_METHOD_SUCCESS) return
+    call AppendQTrial(ErrorCode)
+    if (ErrorCode/=Q_METHOD_SUCCESS) return
+    call SolveQ(Evalue,ErrorCode)
+
+  end subroutine EvaluateQAppendedTrial
 
   subroutine ApplyQTrial(ErrorCode)
 !Subroutine ApplyQTrial updates active columns in the exact order stored in
@@ -4483,14 +4733,16 @@ contains
 !Subroutine SolveQ calls qrlinalg inverse iteration on rank zero with
 !distinct input and output vectors and normalization mode zero, then broadcast
 !the physical energy, S-normalized Glob_c, convergence diagnostics, and status.
-!A QR_ERR_NO_CONVERGENCE result contains an approximation but is still an
-!unsuccessful optimizer evaluation unless the driver defines another policy.
+!A QR_ERR_NO_CONVERGENCE result contains a usable approximation. It is accepted
+!only when the independent physical generalized-eigenpair residual satisfies
+!the requested tolerance; otherwise one fresh-factorization retry is made.
 !
 !Arguments:
     real(wp),intent(out) :: Evalue
     integer,intent(out)  :: ErrorCode
 !Local variables:
-    integer i,MatrixOrder,NumOfIterations,RootError,RefreshError
+    integer i,MatrixOrder,NumOfIterations,RootError,RefreshError,SolveStatus
+    integer RetryMaxIterations
     integer(int64) UpdatesSinceFresh,RefreshLimit
     real(wp) AbsoluteResidual,RelativeResidual,FactorResidual
     real(wp) RefreshTolerance,SolveTolerance
@@ -4507,6 +4759,28 @@ contains
     if (size(Glob_c)<MatrixOrder) return
     if (.not.allocated(Q_Workspace%InitialVector)) return
     if (.not.allocated(Q_Workspace%SolvedVector)) return
+
+    !A one-function generalized problem has an exact closed-form solution.
+    !Besides avoiding unnecessary inverse iteration, this is essential when a
+    !calculation starts from the conventional enormous CURRENT_ENERGY sentinel:
+    !forming lambda as shift+(lambda-shift) would otherwise lose the physical
+    !diagonal energy by catastrophic cancellation. BASIS_ENL retargets the QR
+    !shift to this first accepted energy before attempting order two.
+    if (MatrixOrder==1) then
+      if (.not.(Glob_S(1,1)>tiny(ONE))) then
+        ErrorCode=QR_ERR_NONPOSITIVE_OVERLAP
+        return
+      endif
+      Evalue=Glob_H(1,1)/Glob_S(1,1)
+      Glob_c(1)=ONE/sqrt(Glob_S(1,1))
+      Q_Workspace%LastEigenpairResidual=ZERO
+      Q_Workspace%LastFactorResidual=ZERO
+      Glob_LastEigvalTol=ZERO
+      Glob_InvItTempCounter1=Glob_InvItTempCounter1+1
+      Glob_InvItTempCounter2=Glob_InvItTempCounter2+1
+      ErrorCode=Q_METHOD_SUCCESS
+      return
+    endif
 
     !A full refresh after O(n) replacements keeps the amortized cost of fresh
     !O(n**3) factorizations at O(n**2) per replacement. The residual check
@@ -4559,10 +4833,12 @@ contains
     call MPI_BCAST(RelativeResidual,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
     call MPI_BCAST(NumOfIterations,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
     call MPI_BCAST(Glob_c,MatrixOrder,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    SolveStatus=RootError
     Glob_LastEigvalTol=RelativeResidual
     Glob_InvItTempCounter1=Glob_InvItTempCounter1+1
     Glob_InvItTempCounter2=Glob_InvItTempCounter2+NumOfIterations
-    if (RootError/=Q_METHOD_SUCCESS) then
+    if ((SolveStatus/=Q_METHOD_SUCCESS).and. &
+        (SolveStatus/=QR_ERR_NO_CONVERGENCE)) then
       ErrorCode=RootError
       return
     endif
@@ -4572,8 +4848,12 @@ contains
     !dense probe. The eigenvector must not be used for the latter because it
     !is nearly a null vector of the deliberately near-eigenvalue shifted
     !matrix, which amplifies harmless factorization roundoff in the relative
-    !action ratio. Either diagnostic may request one fresh-factorization retry.
+    !action ratio. QR_ERR_NO_CONVERGENCE still contains an approximation; it is
+    !accepted only when this independent physical residual satisfies the
+    !caller tolerance. Either diagnostic may request one fresh-factorization
+    !retry.
     if (Glob_ProcID==0) then
+      RootError=Q_METHOD_SUCCESS
       call ComputeQEigenpairResidual(Evalue,Glob_c(1:MatrixOrder), &
         AbsoluteResidual,Q_Workspace%LastEigenpairResidual,RootError)
       if (RootError==Q_METHOD_SUCCESS) then
@@ -4593,8 +4873,8 @@ contains
       SolveTolerance=max(1000*epsilon(ONE)*MatrixOrder, &
                          100*abs(Glob_EigvalTol))
       RefreshNeeded=(RootError==Q_METHOD_SUCCESS).and. &
-        ((Q_Workspace%LastFactorResidual>RefreshTolerance).or. &
-         (Q_Workspace%LastEigenpairResidual>SolveTolerance))
+        ((.not.(Q_Workspace%LastFactorResidual<=RefreshTolerance)).or. &
+         (.not.(Q_Workspace%LastEigenpairResidual<=SolveTolerance)))
     endif
     call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
     call MPI_BCAST(RefreshNeeded,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
@@ -4613,12 +4893,17 @@ contains
         ErrorCode=RefreshError
         return
       endif
+      !The normal iteration cap is tuned for small optimizer displacements.
+      !A newly appended basis function can rotate the eigenvector much farther.
+      !Only after the independent residual has rejected the first approximation
+      !do we allow this larger cap; every additional iteration remains O(n**2).
+      RetryMaxIterations=max(120,max(Glob_MaxIterForGSEPIIS,4*MatrixOrder))
       if (Glob_ProcID==0) then
         Q_Workspace%InitialVector(1:MatrixOrder)=Glob_c(1:MatrixOrder)
         call Q_Workspace%Factors%solve(Glob_S, &
           Q_Workspace%InitialVector(1:MatrixOrder), &
           Q_Workspace%SolvedVector(1:MatrixOrder),Evalue,Glob_EigvalTol, &
-          Glob_MaxIterForGSEPIIS,0,RelativeResidual,NumOfIterations,RootError)
+          RetryMaxIterations,0,RelativeResidual,NumOfIterations,RootError)
         Glob_c(1:MatrixOrder)=Q_Workspace%SolvedVector(1:MatrixOrder)
       endif
       call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
@@ -4630,8 +4915,10 @@ contains
       Glob_InvItTempCounter1=Glob_InvItTempCounter1+1
       Glob_InvItTempCounter2=Glob_InvItTempCounter2+NumOfIterations
 
-      if (RootError==Q_METHOD_SUCCESS) then
+      if ((RootError==Q_METHOD_SUCCESS).or. &
+          (RootError==QR_ERR_NO_CONVERGENCE)) then
         if (Glob_ProcID==0) then
+          RootError=Q_METHOD_SUCCESS
           call ComputeQEigenpairResidual(Evalue,Glob_c(1:MatrixOrder), &
             AbsoluteResidual,Q_Workspace%LastEigenpairResidual,RootError)
           if (RootError==Q_METHOD_SUCCESS) then
@@ -4647,10 +4934,10 @@ contains
             Q_Workspace%LastFactorResidual=FactorResidual
           endif
           if ((RootError==Q_METHOD_SUCCESS).and. &
-              (Q_Workspace%LastEigenpairResidual>SolveTolerance)) &
+              (.not.(Q_Workspace%LastEigenpairResidual<=SolveTolerance))) &
             RootError=QR_ERR_NO_CONVERGENCE
           if ((RootError==Q_METHOD_SUCCESS).and. &
-              (Q_Workspace%LastFactorResidual>RefreshTolerance)) &
+              (.not.(Q_Workspace%LastFactorResidual<=RefreshTolerance))) &
             RootError=Q_METHOD_INVALID_STATE
         endif
         call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
@@ -4663,6 +4950,168 @@ contains
     ErrorCode=RootError
 
   end subroutine SolveQ
+
+  subroutine ComputeQOverlapPenalty(TotalPenalty,ErrorCode)
+!Subroutine ComputeQOverlapPenalty evaluates the FULL_OPT1 smooth pair-overlap
+!penalty without assuming that optimized functions form a trailing block. Each
+!unordered pair touching the explicit active map is visited exactly once and
+!assigned to one MPI rank. Glob_S is read only through its canonical lower
+!triangle.
+!
+!Arguments:
+    real(wp),intent(out) :: TotalPenalty
+    integer,intent(out)  :: ErrorCode
+!Local variables:
+    integer a,b,i,PairNumber,ActiveIndex
+    real(wp) PairOverlap,PairPenalty,LocalPenalty,PenaltyCoefficient
+
+    TotalPenalty=ZERO
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    if (Q_Workspace%NumActive<1) return
+    if (.not.Q_Workspace%MatricesAreCanonical) return
+    if (.not.allocated(Q_Workspace%ActiveFunction)) return
+    if (.not.allocated(Q_Workspace%ActivePosition)) return
+    if (.not.(Glob_OverlapPenaltyThreshold2<ONE)) return
+
+    PenaltyCoefficient=Glob_MaxOverlapPenalty/ &
+      (ONE-Glob_OverlapPenaltyThreshold2)
+    LocalPenalty=ZERO
+    PairNumber=0
+    do a=1,Q_Workspace%NumActive
+      ActiveIndex=Q_Workspace%ActiveFunction(a)
+      do i=1,Q_Workspace%MatrixOrder
+        if (i==ActiveIndex) cycle
+        b=Q_Workspace%ActivePosition(i)
+        if ((b>0).and.(b<a)) cycle
+        PairNumber=PairNumber+1
+        if (mod(PairNumber-1,Glob_NumOfProcs)/=Glob_ProcID) cycle
+        PairOverlap=QCanonicalMatrixElement(Glob_S,ActiveIndex,i)
+        if (PairOverlap*PairOverlap>Glob_OverlapPenaltyThreshold2) then
+          PairPenalty=PenaltyCoefficient* &
+            (PairOverlap*PairOverlap-Glob_OverlapPenaltyThreshold2)
+          LocalPenalty=LocalPenalty+PairPenalty
+        endif
+      enddo
+    enddo
+    call MPI_ALLREDUCE(LocalPenalty,TotalPenalty,1,MPI_WP,MPI_SUM, &
+      MPI_COMM_WORLD,Glob_MPIErrCode)
+    ErrorCode=Q_METHOD_SUCCESS
+
+  end subroutine ComputeQOverlapPenalty
+
+  subroutine ComputeQOverlapPenaltyAndAddGradient(TotalPenalty,WkGR,ErrorCode)
+!Subroutine ComputeQOverlapPenaltyAndAddGradient evaluates the same mapped
+!penalty as ComputeQOverlapPenalty and adds its analytic derivative to WkGR.
+!The derivative tensor produced by AssembleQTrial stores
+!
+!  d<Sraw_ij>/sqrt(Sraw_ii*Sraw_jj)
+!
+!for an active endpoint, while its active diagonal stores
+!dSraw_ii/Sraw_ii. Consequently the derivative of a normalized overlap is the
+!cross derivative minus one half of the overlap times the diagonal derivative.
+!For an active-active pair this expression is applied independently to both
+!endpoints. Pair ownership follows MPI rank, so the caller's subsequent
+!gradient MPI_ALLREDUCE combines both the energy-gradient and penalty pieces.
+!
+!Arguments:
+    real(wp),intent(out)   :: TotalPenalty
+    real(wp),intent(inout) :: WkGR(:)
+    integer,intent(out)    :: ErrorCode
+!Local variables:
+    integer a,b,i,m,PairNumber,ActiveIndex
+    real(wp) PairOverlap,LocalPenalty,PenaltyCoefficient
+    real(wp) GradientCoefficient,OverlapDerivative
+
+    TotalPenalty=ZERO
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    if (Q_Workspace%NumActive<1) return
+    if (.not.Q_Workspace%TrialHasDerivatives) return
+    if (size(WkGR)<Q_Workspace%NumActive*Glob_npt) return
+    if (.not.allocated(Glob_D)) return
+    if (.not.(Glob_OverlapPenaltyThreshold2<ONE)) return
+
+    PenaltyCoefficient=Glob_MaxOverlapPenalty/ &
+      (ONE-Glob_OverlapPenaltyThreshold2)
+    LocalPenalty=ZERO
+    PairNumber=0
+    do a=1,Q_Workspace%NumActive
+      ActiveIndex=Q_Workspace%ActiveFunction(a)
+      do i=1,Q_Workspace%MatrixOrder
+        if (i==ActiveIndex) cycle
+        b=Q_Workspace%ActivePosition(i)
+        if ((b>0).and.(b<a)) cycle
+        PairNumber=PairNumber+1
+        if (mod(PairNumber-1,Glob_NumOfProcs)/=Glob_ProcID) cycle
+        PairOverlap=QCanonicalMatrixElement(Glob_S,ActiveIndex,i)
+        if (PairOverlap*PairOverlap>Glob_OverlapPenaltyThreshold2) then
+          LocalPenalty=LocalPenalty+PenaltyCoefficient* &
+            (PairOverlap*PairOverlap-Glob_OverlapPenaltyThreshold2)
+          GradientCoefficient=TWO*PenaltyCoefficient*PairOverlap
+          do m=1,Glob_npt
+            OverlapDerivative=Glob_D(Glob_npt+m,a,i)-ONEHALF* &
+              PairOverlap*Glob_D(Glob_npt+m,a,ActiveIndex)
+            WkGR((a-1)*Glob_npt+m)=WkGR((a-1)*Glob_npt+m)+ &
+              GradientCoefficient*OverlapDerivative
+          enddo
+          if (b>0) then
+            do m=1,Glob_npt
+              OverlapDerivative=Glob_D(Glob_npt+m,b,ActiveIndex)-ONEHALF* &
+                PairOverlap*Glob_D(Glob_npt+m,b,i)
+              WkGR((b-1)*Glob_npt+m)=WkGR((b-1)*Glob_npt+m)+ &
+                GradientCoefficient*OverlapDerivative
+            enddo
+          endif
+        endif
+      enddo
+    enddo
+    call MPI_ALLREDUCE(LocalPenalty,TotalPenalty,1,MPI_WP,MPI_SUM, &
+      MPI_COMM_WORLD,Glob_MPIErrCode)
+    ErrorCode=Q_METHOD_SUCCESS
+
+  end subroutine ComputeQOverlapPenaltyAndAddGradient
+
+  subroutine GetQOverlapStatistics(MaxAbsOverlap,MinAbsOverlap, &
+                                   AverageAbsOverlap,ErrorCode)
+!Subroutine GetQOverlapStatistics reports statistics for all unordered pairs
+!touching the active map. It is the canonical-index counterpart of
+!GetOverlapStatistics, whose Nmin:Nmax interface assumes a trailing block.
+!
+!Arguments:
+    real(wp),intent(out) :: MaxAbsOverlap,MinAbsOverlap,AverageAbsOverlap
+    integer,intent(out)  :: ErrorCode
+!Local variables:
+    integer a,b,i,NumPairs,ActiveIndex
+    real(wp) PairOverlap,AbsPairOverlap
+
+    MaxAbsOverlap=ZERO
+    MinAbsOverlap=huge(ONE)
+    AverageAbsOverlap=ZERO
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    if (Q_Workspace%NumActive<1) return
+
+    NumPairs=0
+    do a=1,Q_Workspace%NumActive
+      ActiveIndex=Q_Workspace%ActiveFunction(a)
+      do i=1,Q_Workspace%MatrixOrder
+        if (i==ActiveIndex) cycle
+        b=Q_Workspace%ActivePosition(i)
+        if ((b>0).and.(b<a)) cycle
+        PairOverlap=QCanonicalMatrixElement(Glob_S,ActiveIndex,i)
+        AbsPairOverlap=abs(PairOverlap)
+        if (AbsPairOverlap>abs(MaxAbsOverlap)) MaxAbsOverlap=PairOverlap
+        if (AbsPairOverlap<abs(MinAbsOverlap)) MinAbsOverlap=PairOverlap
+        AverageAbsOverlap=AverageAbsOverlap+AbsPairOverlap
+        NumPairs=NumPairs+1
+      enddo
+    enddo
+    if (NumPairs>0) then
+      AverageAbsOverlap=AverageAbsOverlap/NumPairs
+    else
+      MinAbsOverlap=ZERO
+    endif
+    ErrorCode=Q_METHOD_SUCCESS
+
+  end subroutine GetQOverlapStatistics
 
   function EnergyQA(AreMatElemNeeded,ErrorCode)
 !Function EnergyQA provides the Q counterpart of EnergyGA. The active set
@@ -4685,13 +5134,10 @@ contains
     endif
     call SolveQ(EnergyQA,ErrorCode)
 
-    !OPT_CYCLE deliberately disables the smooth overlap penalty and applies
-    !its existing post-optimization overlap rejection instead. The indexed Q
-    !penalty gradient belongs to FULL_OPT1Q; fail closed if a future caller
-    !enables that policy before its mapped implementation is connected.
     if ((ErrorCode==Q_METHOD_SUCCESS).and.Glob_OverlapPenaltyAllowed) then
-      EnergyQA=huge(EnergyQA)
-      ErrorCode=Q_METHOD_NOT_IMPLEMENTED
+      call ComputeQOverlapPenalty(Glob_TotalOverlapPenalty,ErrorCode)
+      if (ErrorCode==Q_METHOD_SUCCESS) &
+        EnergyQA=EnergyQA+Glob_TotalOverlapPenalty
     endif
     Glob_EnergyGACounter=Glob_EnergyGACounter+1
 
@@ -4776,10 +5222,14 @@ contains
     enddo
 
     if (Glob_OverlapPenaltyAllowed) then
-      Evalue=huge(Evalue)
-      Gradient=huge(Evalue)
-      ErrorCode=Q_METHOD_NOT_IMPLEMENTED
-      return
+      call ComputeQOverlapPenaltyAndAddGradient(Glob_TotalOverlapPenalty, &
+        Glob_WkGR,ErrorCode)
+      if (ErrorCode/=Q_METHOD_SUCCESS) then
+        Evalue=huge(Evalue)
+        Gradient=huge(Evalue)
+        return
+      endif
+      Evalue=Evalue+Glob_TotalOverlapPenalty
     endif
     call MPI_ALLREDUCE(Glob_WkGR,Gradient,NumActive*npt,MPI_WP, &
       MPI_SUM,MPI_COMM_WORLD,Glob_MPIErrCode)
@@ -4789,17 +5239,430 @@ contains
 
   subroutine BasisEnlQ(Kstart,Kstop,Kstep,NTrials,OptimizationType,MaxEnergyEval, &
                        OverlapThreshold,LinCoeffThreshold,ErrorCode)
-!Subroutine BasisEnlQ will follow BasisEnlG's random generation, DRMNG,
-!acceptance, history, and output policy. Accepted functions are appended in
-!canonical order. Repeated candidates for the same tentative suffix replace
-!those rows and columns; they must not repeatedly grow the QR state.
+!Subroutine BasisEnlQ enlarges the canonical basis using the same random
+!candidate generation, optional DRMNG optimization, acceptance thresholds,
+!history, and output policy as BasisEnlG. Accepted functions are appended at
+!the end. Each rejected trial suffix is removed from the QR factors before the
+!next candidate is appended, so repeated trials do not repeatedly increase the
+!active matrix order.
 !
 !Arguments:
     integer,intent(in)  :: Kstart,Kstop,Kstep,NTrials,OptimizationType,MaxEnergyEval
     real(wp),intent(in) :: OverlapThreshold,LinCoeffThreshold
     integer,intent(out) :: ErrorCode
+!Local variables:
+    integer i,j,K,AttemptToGetGoodFunc,ii
+    integer npt,nfo,nfru,nv,nvmax
+    integer ErrCode,NumOfFailures,NumOfEnergyEval,NumOfGradEval
+    integer wbfu_t,wmu_t,wbfu,wmu,rgm1_counter,rgm2_counter
+    real(wp) ms1,ms2,Evalue,E_init,E_best,t
+    real(wp),allocatable :: ParSet(:,:),ParSetBest(:,:)
+    real(wp),allocatable :: x(:),x_best(:),grad(:)
+    real(wp),allocatable :: D(:),V(:),V_init(:)
+    integer,parameter :: LIV=60
+    integer IV(LIV),IV_init(LIV),LV,ALG
+    logical IsSwapFileOK,IsEnergyImproved,ExitNeeded
+    logical IsOverlapBad,IsAnyLinCoeffBad,IsEnergyBad
 
-    ErrorCode=Q_METHOD_NOT_IMPLEMENTED
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    if (Kstart/=Glob_CurrBasisSize+1) return
+    if ((Kstart<1).or.(Kstop<Kstart).or.(Kstep<1).or.(NTrials<1)) return
+    if ((OptimizationType<0).or.(OptimizationType>1)) return
+    if (MaxEnergyEval<0) return
+
+    if (Glob_ProcID==0) then
+      write(*,*)
+      write(*,*) 'Routine BasisEnlQ started'
+      write(*,'(1x,a,1x,i0)') 'Kstart =',Kstart
+      write(*,'(1x,a,1x,i0)') 'Kstop =',Kstop
+      write(*,'(1x,a,1x,i0)') 'Kstep =',Kstep
+      write(*,'(1x,a,1x,i0)') 'OptimizationType =',OptimizationType
+      write(*,'(1x,a,1x,i0)') 'MaxEnergyEval =',MaxEnergyEval
+    endif
+
+    Glob_GSEPSolutionMethod='Q'
+    Glob_OverlapPenaltyAllowed=.false.
+    Glob_HSLeadDim=Kstop
+    Glob_HSBuffLen=Kstop*Kstep
+    npt=Glob_npt
+    nvmax=Kstep*npt
+    wbfu_t=0
+    wmu_t=0
+    rgm1_counter=0
+    rgm2_counter=0
+    ms1=ZERO
+    ms2=ZERO
+
+!Reallocate basis metadata to final capacity before matrix storage is created.
+!The accepted prefix remains in its original canonical order.
+    call ReallocateBasisFuncData(Kstop,Glob_CurrBasisSize)
+
+    allocate(Glob_H(Kstop,Kstop))
+    allocate(Glob_S(Kstop,Kstop))
+    allocate(Glob_diagS(Kstop))
+    allocate(Glob_D(2*npt,Kstep,Kstop))
+    allocate(Glob_c(Kstop))
+    allocate(Glob_HklBuff1(Glob_HSBuffLen))
+    allocate(Glob_HklBuff2(Glob_HSBuffLen))
+    allocate(Glob_SklBuff1(Glob_HSBuffLen))
+    allocate(Glob_SklBuff2(Glob_HSBuffLen))
+    allocate(Glob_WkGR(nvmax))
+    allocate(ParSet(npt,Kstep))
+    allocate(ParSetBest(npt,Kstep))
+    allocate(x(nvmax))
+    allocate(x_best(nvmax))
+    allocate(grad(nvmax))
+    allocate(D(nvmax))
+    LV=71+nvmax*(nvmax+13)/2+1
+    allocate(V(LV))
+    allocate(V_init(LV))
+
+    call PrepareQWorkspace(Glob_CurrBasisSize,Kstop,Kstep,ErrCode)
+    if (ErrCode/=Q_METHOD_SUCCESS) then
+      if (Glob_ProcID==0) write(*,*) &
+        'Error EC0125 in BasisEnlQ: Q workspace cannot be allocated'
+      call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+    endif
+
+!Use exactly the same optimizer controls as BasisEnlG so comparisons isolate
+!the eigensolver and matrix-layout changes.
+    ALG=2
+    call DIVSET(ALG,IV_init,LIV,LV,V_init)
+    IV_init(17)=1000000
+    IV_init(18)=1000000
+    IV_init(19)=0
+    IV_init(20)=0; IV_init(22)=0; IV_init(23)=-1; IV_init(24)=0
+    V_init(31)=0.0_wp
+    V_init(32)=2*epsilon(V_init(32))
+    V_init(37)=2*epsilon(V_init(37))
+    V_init(35)=Glob_MaxScStepAllowedInOpt*ONE
+    IV_init(1)=12
+
+!Only the accepted prefix can be present in the swap file. Initialize unused
+!capacity before the full-capacity MPI broadcast performed by the shared swap
+!reader, then construct one fresh prefix factorization.
+    Glob_H=ZERO
+    Glob_S=ZERO
+    Glob_diagS=ZERO
+    Glob_c=ONE
+    call ReadSwapFileAndDistributeData(IsSwapFileOK)
+    Q_Workspace%MatricesAreCanonical=.true.
+    if (Glob_CurrBasisSize>0) then
+      if (.not.IsSwapFileOK) call ComputeMatElem(1,Glob_CurrBasisSize)
+      call FactorizeQFresh(ErrCode)
+      if (ErrCode==Q_METHOD_SUCCESS) call SolveQ(Glob_CurrEnergy,ErrCode)
+    else
+      Glob_CurrEnergy=huge(Glob_CurrEnergy)
+      call TrimQFactors(0,ErrCode)
+    endif
+    if (ErrCode/=Q_METHOD_SUCCESS) then
+      if (Glob_ProcID==0) write(*,'(1x,a,1x,i0)') &
+        'Error EC0126 in BasisEnlQ: initial Q state cannot be constructed, status',ErrCode
+      call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+    endif
+    if (Glob_ProcID==0) write(*,*) 'Initial energy ',Glob_CurrEnergy
+
+    K=Kstart-1
+    do while (K<Kstop)
+      nfru=K
+      nfo=min(Kstep,Kstop-K)
+      K=K+nfo
+      nv=nfo*npt
+      Glob_nfa=K
+      Glob_nfru=nfru
+      Glob_nfo=nfo
+      call linalg_setparam(K)
+      E_init=Glob_CurrEnergy
+
+      if (Glob_ProcID==0) then
+        write(*,*)
+        write(*,'(1x,a,1x,i0)') 'Current basis size is',Glob_CurrBasisSize
+        if (nfo>1) then
+          write(*,'(1x,a,1x,i0,a,i0)') 'Selecting functions',nfru+1,'-',K
+        else
+          write(*,'(1x,a,1x,i0)') 'Selecting function',K
+        endif
+      endif
+
+      IsOverlapBad=.true.
+      IsAnyLinCoeffBad=.true.
+      IsEnergyBad=.false.
+      AttemptToGetGoodFunc=1
+      do while ((IsOverlapBad.or.IsAnyLinCoeffBad.or.IsEnergyBad).and. &
+                (AttemptToGetGoodFunc<=Glob_BadOverlapOrLinCoeffLim))
+        NumOfFailures=0
+        IsEnergyImproved=.false.
+        wbfu=0
+        wmu=0
+
+!Random candidate selection uses append/delete transactions. Glob_CurrEnergy
+!tracks the best trial found so far, while ParSetBest owns its parameters.
+        do i=1,NTrials
+          if (Glob_ProcID==0) call GenerateTrialParam(nfo,ParSet,wbfu_t,wmu_t)
+          call MPI_BCAST(ParSet,npt*nfo,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+          Glob_NonlinParam(1:npt,nfru+1:K)=ParSet(1:npt,1:nfo)
+          call EvaluateQAppendedTrial(nfru,K,Evalue,ErrCode)
+          if (ErrCode==Q_METHOD_SUCCESS) then
+            if (Evalue<Glob_CurrEnergy) then
+              Glob_CurrEnergy=Evalue
+              ParSetBest(1:npt,1:nfo)=ParSet(1:npt,1:nfo)
+              IsEnergyImproved=.true.
+              wbfu=wbfu_t
+              wmu=wmu_t
+            endif
+          else
+            NumOfFailures=NumOfFailures+1
+            if (Glob_ProcID==0) write(*,'(1x,a,1x,i0,1x,a,1x,i0)') &
+              'Warning WC0114 in BasisEnlQ: candidate',i,'failed with Q status',ErrCode
+          endif
+        enddo
+        if (NumOfFailures*ONE/NTrials>Glob_MaxFracOfTrialFailsAllowed) then
+          if (Glob_ProcID==0) then
+            write(*,*) 'Error EC0127 in BasisEnlQ: Q candidate solve failures exceeded limit'
+            write(*,'(1x,a28,f7.3,a1)') 'The fraction of failures is ', &
+              (100*NumOfFailures*ONE)/NTrials,'%'
+          endif
+          call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+        endif
+        if (.not.IsEnergyImproved) then
+          if (Glob_ProcID==0) write(*,*) &
+            'Error EC0128 in BasisEnlQ: random selection produced no energy improvement'
+          call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+        endif
+
+!Rebuild the winning candidate because the final random trial need not be the
+!winner. A successful append captures the matrix parameter generation needed
+!by the ordinary EnergyQA/EnergyQB replacement transactions below.
+        Glob_NonlinParam(1:npt,nfru+1:K)=ParSetBest(1:npt,1:nfo)
+        call EvaluateQAppendedTrial(nfru,K,Glob_CurrEnergy,ErrCode)
+        if (ErrCode/=Q_METHOD_SUCCESS) then
+          if (Glob_ProcID==0) write(*,*) &
+            'Error EC0129 in BasisEnlQ: selected Q candidate cannot be reconstructed'
+          call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+        endif
+        if (Glob_ProcID==0) then
+          write(*,'(1x,a)',advance='no') 'E='
+          call writereal(6,Glob_CurrEnergy)
+          write(*,'(5x,a,1x,i0)') 'prototype function is',wbfu
+          do i=1,nfo
+            write(*,'(1x,i6,a1)',advance='no') nfru+i,':'
+            call writerealarradv(6,ParSetBest(1:npt,i),npt)
+          enddo
+          write(*,*) 'Optimizing nonlinear parameters'
+        endif
+
+        do i=1,nfo
+          x((i-1)*npt+1:i*npt)=Glob_NonlinParam(1:npt,nfru+i)
+        enddo
+        x_best(1:nv)=x(1:nv)
+        NumOfEnergyEval=0
+        NumOfGradEval=0
+
+        select case (OptimizationType)
+        case(0)
+          !The selected candidate is already the best optimizer point.
+        case(1)
+          IV(1:LIV)=IV_init(1:LIV)
+          V(1:LV)=V_init(1:LV)
+          if (nfru>=nfo) then
+            t=max(abs((E_init-Glob_CurrEnergy))/(abs(E_init)+abs(Glob_CurrEnergy)), &
+                  10000*epsilon(Glob_CurrEnergy))
+          else
+            t=ONE
+          endif
+          D(1:nv)=t
+          ExitNeeded=(MaxEnergyEval<=0)
+          NumOfFailures=0
+          E_best=Glob_CurrEnergy
+
+          do while (.not.ExitNeeded)
+            if (Glob_ProcID==0) call DRMNG(D,Glob_CurrEnergy,grad,IV,LIV,LV,nv,V,x)
+            call MPI_BCAST(IV,LIV,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+            select case (IV(1))
+            case (1)
+              call MPI_BCAST(x,nv,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+              do i=1,nfo
+                Glob_NonlinParam(1:npt,nfru+i)=x((i-1)*npt+1:i*npt)
+              enddo
+              Evalue=EnergyQA(.true.,ErrCode)
+              NumOfEnergyEval=NumOfEnergyEval+1
+              if (ErrCode/=Q_METHOD_SUCCESS) then
+                NumOfFailures=NumOfFailures+1
+                IV(2)=0
+              else
+                Glob_CurrEnergy=Evalue
+                if (Evalue<E_best) then
+                  E_best=Evalue
+                  x_best(1:nv)=x(1:nv)
+                endif
+              endif
+            case (2)
+              call MPI_BCAST(x,nv,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+              do i=1,nfo
+                Glob_NonlinParam(1:npt,nfru+i)=x((i-1)*npt+1:i*npt)
+              enddo
+              call EnergyQB(Evalue,grad,.true.,ErrCode)
+              NumOfGradEval=NumOfGradEval+1
+              if (ErrCode/=Q_METHOD_SUCCESS) then
+                NumOfFailures=NumOfFailures+1
+                IV(2)=0
+              else if (Evalue<E_best) then
+                E_best=Evalue
+                x_best(1:nv)=x(1:nv)
+              endif
+            case (3:10)
+              ExitNeeded=.true.
+            endselect
+            if (NumOfFailures==Glob_MaxEnergyFailsAllowed) then
+              if (Glob_ProcID==0) write(*,*) &
+                'Warning WC0112 in BasisEnlQ: Q evaluation failures reached the limit'
+            endif
+            if (NumOfEnergyEval>=MaxEnergyEval) ExitNeeded=.true.
+          enddo
+        endselect
+
+        do i=1,nfo
+          Glob_NonlinParam(1:npt,nfru+i)=x_best((i-1)*npt+1:i*npt)
+        enddo
+        IsEnergyBad=.false.
+        Evalue=EnergyQAM(.true.,ErrCode)
+        if (ErrCode==Q_METHOD_SUCCESS) then
+          Glob_CurrEnergy=Evalue
+        else
+          IsEnergyBad=.true.
+          Glob_CurrEnergy=E_init
+          if (Glob_ProcID==0) write(*,*) &
+            'Warning WC0113 in BasisEnlQ: optimized candidate is rejected after a failed solve'
+        endif
+
+        IsOverlapBad=.false.
+        if ((ErrCode==Q_METHOD_SUCCESS).and.(OverlapThreshold>ZERO)) then
+          ii=0
+          do i=nfru+1,K
+            do j=1,i-1
+              if (abs(QCanonicalMatrixElement(Glob_S,i,j))>OverlapThreshold) then
+                ii=ii+1
+                IsOverlapBad=.true.
+                Glob_CurrEnergy=E_init
+                if (Glob_ProcID==0) then
+                  if (ii==1) write(*,*) &
+                    'Warning WC0110: overlap threshold exceeded; Q candidate is rejected'
+                  write(*,'(1x,i6,a1,i6,i6,a6)',advance='no') &
+                    ii,':',i,j,'    S='
+                  call writerealadv(6,QCanonicalMatrixElement(Glob_S,i,j))
+                endif
+              endif
+            enddo
+          enddo
+        endif
+
+        IsAnyLinCoeffBad=.false.
+        if ((ErrCode==Q_METHOD_SUCCESS).and.(LinCoeffThreshold>ZERO)) then
+          ii=0
+          do i=1,K
+            if (abs(Glob_c(i))>LinCoeffThreshold) then
+              ii=ii+1
+              IsAnyLinCoeffBad=.true.
+              Glob_CurrEnergy=E_init
+              if (Glob_ProcID==0) then
+                if (ii==1) write(*,*) &
+                  'Warning WC0111: linear-coefficient threshold exceeded; Q candidate is rejected'
+                write(*,'(1x,i6,a1,i6,a6)',advance='no') ii,':',i,'    c='
+                call writerealadv(6,Glob_c(i))
+              endif
+            endif
+          enddo
+        endif
+        AttemptToGetGoodFunc=AttemptToGetGoodFunc+1
+      enddo
+
+      if (IsOverlapBad.or.IsAnyLinCoeffBad.or.IsEnergyBad) then
+        if (Glob_ProcID==0) write(*,*) &
+          'Error EC0130 in BasisEnlQ: unable to construct an acceptable candidate block'
+        call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+      endif
+
+      if (Glob_ProcID==0) then
+        write(*,'(1x,a,1x,i0,a,i0)') &
+          'Number of energy/gradient evaluations',NumOfEnergyEval,'/',NumOfGradEval
+        write(*,*) 'E=',Glob_CurrEnergy
+        do i=1,nfo
+          write(*,'(1x,i6,a1)',advance='no') nfru+i,':'
+          call writerealarradv(6,Glob_NonlinParam(1:npt,nfru+i),npt)
+        enddo
+        if (wmu==1) then
+          rgm1_counter=rgm1_counter+1
+          if (nfru>nfo) then
+            do i=1,nfo
+              do j=1,npt
+                t=(Glob_NonlinParam(j,wbfu+i-1)-Glob_NonlinParam(j,nfru+i))/ &
+                  Glob_NonlinParam(j,wbfu+i-1)
+                ms1=ms1+abs(t)
+              enddo
+            enddo
+          endif
+        endif
+        if (wmu==2) then
+          rgm2_counter=rgm2_counter+1
+          if (nfru>nfo) then
+            do i=1,nfo
+              do j=1,npt
+                t=(Glob_NonlinParam(j,wbfu+i-1)-Glob_NonlinParam(j,nfru+i))/ &
+                  Glob_NonlinParam(j,wbfu+i-1)
+                ms2=ms2+abs(t)
+              enddo
+            enddo
+          endif
+        endif
+      endif
+
+      Glob_CurrBasisSize=K
+      do i=1,nfo
+        Glob_History(nfru+i)%Energy=Glob_CurrEnergy
+        Glob_History(nfru+i)%CyclesDone=0
+        Glob_History(nfru+i)%InitFuncAtLastStep=0
+        Glob_History(nfru+i)%NumOfEnergyEvalDuringFullOpt=0
+        Glob_FuncNum(nfru+i)=nfru+i
+      enddo
+      if (Glob_ProcID==0) call SaveResults(Sort='no')
+    enddo
+
+    call StoreMatricesInSwapFile()
+    call ClearQWorkspace()
+
+    deallocate(V_init)
+    deallocate(V)
+    deallocate(D)
+    deallocate(grad)
+    deallocate(x_best)
+    deallocate(x)
+    deallocate(ParSetBest)
+    deallocate(ParSet)
+    deallocate(Glob_WkGR)
+    deallocate(Glob_SklBuff2)
+    deallocate(Glob_SklBuff1)
+    deallocate(Glob_HklBuff2)
+    deallocate(Glob_HklBuff1)
+    deallocate(Glob_D)
+    deallocate(Glob_c)
+    deallocate(Glob_diagS)
+    deallocate(Glob_S)
+    deallocate(Glob_H)
+
+    if (Glob_ProcID==0) then
+      write(*,*) 'Random selection statistics:'
+      write(*,'(1x,a,1x,i0,1x,a)') &
+        'Method 1 of generating basis functions was used',rgm1_counter,'times'
+      if (rgm1_counter/=0) write(*,'(1x,a48,e13.6)') &
+        'Average shift factor from prototype function is ',ms1/(npt*rgm1_counter)
+      write(*,'(1x,a,1x,i0,1x,a)') &
+        'Method 2 of generating basis functions was used',rgm2_counter,'times'
+      if (rgm2_counter/=0) write(*,'(1x,a48,e13.6)') &
+        'Average shift factor from prototype function is ',ms2/(npt*rgm2_counter)
+      write(*,*)
+      write(*,*) 'Routine BasisEnlQ finished'
+    endif
+    ErrorCode=Q_METHOD_SUCCESS
 
   end subroutine BasisEnlQ
 
@@ -5232,11 +6095,13 @@ contains
 
   subroutine FullOpt1Q(InitFunc,FinalFunc,MaxEnergyEval,OverlapThreshold,MaxOverlapPenalty, &
                        DataSaveMinTimeInterv,HessianSaveMinTimeInterv,HessFileName,ErrorCode)
-!Subroutine FullOpt1Q will follow FullOpt1G's DRMNG, overlap-penalty, Hessian,
-!saving, and history policy. The active map is InitFunc:FinalFunc in canonical
-!order. No basis or matrix permutation is needed when FinalFunc is not the last
-!basis function. Large active sets may use a fresh QR factorization instead of
-!a sequence of quadratic replacements after the crossover is benchmarked.
+!Subroutine FullOpt1Q simultaneously optimizes the nonlinear parameters of
+!canonical functions InitFunc:FinalFunc. It follows FullOpt1G's DRMNG controls,
+!smooth overlap penalty, Hessian restart/save policy, timed data saves, and
+!history accounting. The active range is represented by an explicit map and is
+!never moved to the end of the basis; consequently QR factors, H, S,
+!coefficients, function identities, and Hessian blocks remain in one stable
+!ordering throughout the operation.
 !
 !Arguments:
     integer,intent(in)     :: InitFunc,FinalFunc,MaxEnergyEval
@@ -5244,8 +6109,326 @@ contains
     real(4),intent(in)     :: DataSaveMinTimeInterv,HessianSaveMinTimeInterv
     character(*),intent(in) :: HessFileName
     integer,intent(out)    :: ErrorCode
+!Local variables:
+    integer i,j,npt,nfo,nfa,nv,ErrCode
+    integer NumOfEnergyEval,NumOfGradEval,NumOfFailures
+    integer NumOfEnergyEvalDuringFullOpt_Init
+    integer,allocatable :: ActiveFunction(:)
+    logical IsSwapFileOK,ExitNeeded,SaveHessian,IsHessFileOK,IsHessSaveSuccess
+    real(wp) Evalue,CurrentEnergy,t
+    real(wp) MaxAbsOverlap,MinAbsOverlap,AverageAbsOverlap
+    real(4) TimeOfLastSave,TimeOfLastHessSave
+    real(wp),allocatable :: x(:),grad(:),D(:),V(:)
+    integer,parameter :: LIV=60
+    integer IV(LIV),LV,ALG,IVLMAT
 
-    ErrorCode=Q_METHOD_NOT_IMPLEMENTED
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    nfa=Glob_CurrBasisSize
+    if ((InitFunc<1).or.(FinalFunc<InitFunc).or.(FinalFunc>nfa)) return
+    if (MaxEnergyEval<0) return
+    nfo=FinalFunc-InitFunc+1
+    npt=Glob_npt
+    nv=nfo*npt
+
+    if (OverlapThreshold>=ONE) then
+      Glob_OverlapPenaltyAllowed=.false.
+    else
+      Glob_OverlapPenaltyAllowed=.true.
+      Glob_OverlapPenaltyThreshold2=OverlapThreshold*OverlapThreshold
+      Glob_MaxOverlapPenalty=MaxOverlapPenalty
+    endif
+
+    if (Glob_ProcID==0) then
+      write(*,*)
+      write(*,*) 'Routine FullOpt1Q started'
+      write(*,*) 'Simultaneous optimization of nonlinear parameters of basis functions'
+      write(*,*) InitFunc,'  through',FinalFunc,'  will be attempted'
+      if (Glob_OverlapPenaltyAllowed) then
+        write(*,*) 'Overlap threshold is ',abs(OverlapThreshold)
+        write(*,*) 'Max value of a pair overlap penalty is ',Glob_MaxOverlapPenalty
+        write(*,*) 'Displayed optimizer objectives include the overlap penalty'
+      else
+        write(*,*) 'No constraints on overlaps will be imposed'
+      endif
+    endif
+
+    Glob_GSEPSolutionMethod='Q'
+    Glob_nfa=nfa
+    Glob_nfo=nfo
+    Glob_nfru=nfa-nfo
+    Glob_HSLeadDim=nfa
+    Glob_HSBuffLen=max(min(nfa*(nfa+1)/2,1000),30*nfa)
+
+    allocate(Glob_H(nfa,nfa))
+    allocate(Glob_S(nfa,nfa))
+    allocate(Glob_diagS(nfa))
+    allocate(Glob_D(2*npt,nfo,nfa))
+    allocate(Glob_c(nfa))
+    allocate(Glob_HklBuff1(Glob_HSBuffLen))
+    allocate(Glob_HklBuff2(Glob_HSBuffLen))
+    allocate(Glob_SklBuff1(Glob_HSBuffLen))
+    allocate(Glob_SklBuff2(Glob_HSBuffLen))
+    allocate(Glob_WkGR(nv))
+    allocate(x(nv))
+    allocate(grad(nv))
+    allocate(ActiveFunction(nfo))
+    LV=71+nv*(nv+13)/2+1
+    if (Glob_ProcID==0) then
+      allocate(D(nv))
+      allocate(V(LV))
+    endif
+
+    call PrepareQWorkspace(nfa,nfa,nfo,ErrCode)
+    if (ErrCode/=Q_METHOD_SUCCESS) then
+      if (Glob_ProcID==0) write(*,*) &
+        'Error EC0160 in FullOpt1Q: Q workspace cannot be allocated'
+      call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+    endif
+    do i=1,nfo
+      ActiveFunction(i)=InitFunc+i-1
+    enddo
+
+    if ((HessFileName==' ').or.(HessFileName=='none').or. &
+        (HessFileName=='NONE').or.(HessFileName=='None')) then
+      SaveHessian=.false.
+    else
+      SaveHessian=.true.
+    endif
+    IsHessFileOK=.false.
+
+!Restore or assemble the full canonical physical problem once, then install
+!the active map and construct the initial factors. No temporary permutations
+!or SaveResults sorting workspace are required for an interior active range.
+    Glob_H=ZERO
+    Glob_S=ZERO
+    Glob_diagS=ZERO
+    Glob_c=ONE
+    call ReadSwapFileAndDistributeData(IsSwapFileOK)
+    if (.not.IsSwapFileOK) call ComputeMatElem(1,nfa)
+    Q_Workspace%MatricesAreCanonical=.true.
+    call SetQActiveFunctions(ActiveFunction,ErrCode)
+    if (ErrCode==Q_METHOD_SUCCESS) call CaptureQMatrixParameters(ErrCode)
+    if (ErrCode==Q_METHOD_SUCCESS) call FactorizeQFresh(ErrCode)
+    if (ErrCode==Q_METHOD_SUCCESS) Glob_CurrEnergy=EnergyQA(.false.,ErrCode)
+    if (ErrCode/=Q_METHOD_SUCCESS) then
+      if (Glob_ProcID==0) write(*,'(1x,a,1x,i0)') &
+        'Error EC0161 in FullOpt1Q: initial Q energy cannot be computed, status',ErrCode
+      call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+    endif
+
+    call GetQOverlapStatistics(MaxAbsOverlap,MinAbsOverlap, &
+      AverageAbsOverlap,ErrCode)
+    if (Glob_ProcID==0) then
+      if (Glob_OverlapPenaltyAllowed) then
+        write(*,*) 'Initial energy (without overlap penalty)  ', &
+          Glob_CurrEnergy-Glob_TotalOverlapPenalty
+        write(*,*) 'Overlap penalty                           ',Glob_TotalOverlapPenalty
+        write(*,*) 'Initial energy (including overlap penalty)',Glob_CurrEnergy
+      else
+        write(*,*) 'Initial energy                            ',Glob_CurrEnergy
+      endif
+      write(*,*) 'Maximal overlap                           ',MaxAbsOverlap
+      write(*,*) 'Minimal overlap                           ',MinAbsOverlap
+      write(*,*) 'Average abs value of overlap              ',AverageAbsOverlap
+    endif
+
+    call CPU_TIME(Glob_TimeSinceStart)
+    TimeOfLastSave=Glob_TimeSinceStart
+    TimeOfLastHessSave=Glob_TimeSinceStart
+
+!Initialize DRMNG and preserve its packed Hessian ordering as
+![parameters of InitFunc, parameters of InitFunc+1, ...]. This is exactly the
+!Q active-map order and therefore remains stable across restarts.
+    ALG=2
+    if (Glob_ProcID==0) then
+      call DIVSET(ALG,IV,LIV,LV,V)
+      IV(17)=1000000; IV(18)=1000000
+      IV(19)=-1
+      IV(20)=0; IV(22)=0; IV(23)=-1; IV(24)=0
+      V(31)=0.0_wp
+      V(32)=2*epsilon(V(32))
+      V(37)=2*epsilon(V(37))
+      V(35)=Glob_MaxScStepAllowedInOpt
+      IV(1)=12
+    endif
+    do i=1,nfo
+      x((i-1)*npt+1:i*npt)= &
+        Glob_NonlinParam(1:npt,ActiveFunction(i))
+    enddo
+
+    if (Glob_ProcID==0) then
+      if (SaveHessian) then
+        IVLMAT=IV(42)
+        call ReadHessianFile(V,IVLMAT,D,nv,HessFileName,IsHessFileOK)
+        if (IsHessFileOK) IV(25)=0
+      endif
+      if ((.not.Glob_FullOptSaveD).or.(.not.IsHessFileOK).or. &
+          (.not.SaveHessian)) then
+        t=max(ONE/(nfa*nfa*sqrt(ONE*nfa)),10000*epsilon(Glob_CurrEnergy))
+        D(1:nv)=t
+      endif
+    endif
+
+    ExitNeeded=(MaxEnergyEval<=0)
+    NumOfFailures=0
+    NumOfEnergyEval=0
+    NumOfGradEval=0
+    CurrentEnergy=Glob_CurrEnergy
+    NumOfEnergyEvalDuringFullOpt_Init= &
+      Glob_History(nfa)%NumOfEnergyEvalDuringFullOpt
+
+    do while (.not.ExitNeeded)
+      if (Glob_ProcID==0) call DRMNG(D,CurrentEnergy,grad,IV,LIV,LV,nv,V,x)
+      call MPI_BCAST(IV,LIV,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+      select case (IV(1))
+      case (1)
+        call MPI_BCAST(x,nv,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+        do i=1,nfo
+          Glob_NonlinParam(1:npt,ActiveFunction(i))= &
+            x((i-1)*npt+1:i*npt)
+        enddo
+        Evalue=EnergyQA(.true.,ErrCode)
+        NumOfEnergyEval=NumOfEnergyEval+1
+        if (ErrCode/=Q_METHOD_SUCCESS) then
+          NumOfFailures=NumOfFailures+1
+          IV(2)=1
+        else
+          CurrentEnergy=Evalue
+        endif
+
+        if ((Glob_ProcID==0).and.(ErrCode==Q_METHOD_SUCCESS)) then
+          if (Evalue<Glob_CurrEnergy) then
+            call CPU_TIME(Glob_TimeSinceStart)
+            if (Glob_TimeSinceStart-TimeOfLastSave>DataSaveMinTimeInterv) then
+              if (Glob_OverlapPenaltyAllowed) then
+                Glob_CurrEnergy=Evalue-Glob_TotalOverlapPenalty
+              else
+                Glob_CurrEnergy=Evalue
+              endif
+              Glob_History(nfa)%Energy=Glob_CurrEnergy
+              Glob_History(nfa)%NumOfEnergyEvalDuringFullOpt= &
+                NumOfEnergyEvalDuringFullOpt_Init+NumOfEnergyEval
+              call SaveResults(Sort='no')
+              write(*,*) 'Data file has been updated'
+              call GetQOverlapStatistics(MaxAbsOverlap,MinAbsOverlap, &
+                AverageAbsOverlap,ErrCode)
+              write(*,*) 'Some current statistics:'
+              if (Glob_OverlapPenaltyAllowed) then
+                write(*,*) 'Energy (without overlap penalty)  ', &
+                  Evalue-Glob_TotalOverlapPenalty
+                write(*,*) 'Overlap penalty                   ',Glob_TotalOverlapPenalty
+                write(*,*) 'Energy (including overlap penalty)',Evalue
+              else
+                write(*,*) 'Energy                            ',Evalue
+              endif
+              write(*,*) 'Maximal overlap                   ',MaxAbsOverlap
+              write(*,*) 'Minimal overlap                   ',MinAbsOverlap
+              write(*,*) 'Average abs value of overlap      ',AverageAbsOverlap
+              TimeOfLastSave=Glob_TimeSinceStart
+            endif
+            if ((Glob_TimeSinceStart-TimeOfLastHessSave> &
+                 HessianSaveMinTimeInterv).and.SaveHessian) then
+              call SaveHessianFile(V,IVLMAT,D,nv,HessFileName,IsHessSaveSuccess)
+              TimeOfLastHessSave=Glob_TimeSinceStart
+            endif
+          endif
+        endif
+      case (2)
+        call MPI_BCAST(x,nv,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+        do i=1,nfo
+          Glob_NonlinParam(1:npt,ActiveFunction(i))= &
+            x((i-1)*npt+1:i*npt)
+        enddo
+        call EnergyQB(Evalue,grad,.true.,ErrCode)
+        NumOfGradEval=NumOfGradEval+1
+        if (ErrCode/=Q_METHOD_SUCCESS) then
+          NumOfFailures=NumOfFailures+1
+          IV(2)=0
+        endif
+      case (3:10)
+        ExitNeeded=.true.
+      endselect
+
+      if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
+        if (Glob_ProcID==0) write(*,*) &
+          'Error EC0162 in FullOpt1Q: Q evaluation failures exceeded limit'
+        call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+      endif
+      if (NumOfEnergyEval>=MaxEnergyEval) then
+        if (Glob_ProcID==0) then
+          write(*,*) 'Warning WC0130 in FullOpt1Q: number of energy evaluations reached limit'
+          write(*,*) 'Optimization is terminated'
+        endif
+        ExitNeeded=.true.
+      endif
+    enddo
+
+!DRMNG returns its current accepted x. Re-evaluate it transactionally so the
+!saved physical matrices, QR factors, coefficients, and parameters all belong
+!to the same final generation.
+    do i=1,nfo
+      Glob_NonlinParam(1:npt,ActiveFunction(i))=x((i-1)*npt+1:i*npt)
+    enddo
+    Evalue=EnergyQA(.true.,ErrCode)
+    if (ErrCode/=Q_METHOD_SUCCESS) then
+      if (Glob_ProcID==0) write(*,'(1x,a,1x,i0)') &
+        'Error EC0163 in FullOpt1Q: final Q energy cannot be computed, status',ErrCode
+      call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+    endif
+    if (Glob_OverlapPenaltyAllowed) then
+      Glob_CurrEnergy=Evalue-Glob_TotalOverlapPenalty
+    else
+      Glob_CurrEnergy=Evalue
+    endif
+
+    call GetQOverlapStatistics(MaxAbsOverlap,MinAbsOverlap, &
+      AverageAbsOverlap,ErrCode)
+    if (Glob_ProcID==0) then
+      write(*,*)
+      write(*,'(1x,a,1x,i0,a,i0)') &
+        'Number of energy/gradient evaluations',NumOfEnergyEval,'/',NumOfGradEval
+      write(*,*) 'Final energy and overlap statistics:'
+      if (Glob_OverlapPenaltyAllowed) then
+        write(*,*) 'Energy (without overlap penalty)  ', &
+          Evalue-Glob_TotalOverlapPenalty
+        write(*,*) 'Overlap penalty                   ',Glob_TotalOverlapPenalty
+        write(*,*) 'Energy (including overlap penalty)',Evalue
+      else
+        write(*,*) 'Energy                            ',Evalue
+      endif
+      write(*,*) 'Maximal overlap                   ',MaxAbsOverlap
+      write(*,*) 'Minimal overlap                   ',MinAbsOverlap
+      write(*,*) 'Average abs value of overlap      ',AverageAbsOverlap
+    endif
+
+    Glob_History(nfa)%Energy=Glob_CurrEnergy
+    Glob_History(nfa)%NumOfEnergyEvalDuringFullOpt= &
+      NumOfEnergyEvalDuringFullOpt_Init+NumOfEnergyEval
+    if (Glob_ProcID==0) call SaveResults(Sort='no')
+    call StoreMatricesInSwapFile()
+    Glob_OverlapPenaltyAllowed=.false.
+    call ClearQWorkspace()
+
+    deallocate(ActiveFunction)
+    deallocate(grad)
+    deallocate(x)
+    if (Glob_ProcID==0) then
+      deallocate(V)
+      deallocate(D)
+    endif
+    deallocate(Glob_WkGR)
+    deallocate(Glob_SklBuff2)
+    deallocate(Glob_SklBuff1)
+    deallocate(Glob_HklBuff2)
+    deallocate(Glob_HklBuff1)
+    deallocate(Glob_c)
+    deallocate(Glob_D)
+    deallocate(Glob_diagS)
+    deallocate(Glob_S)
+    deallocate(Glob_H)
+
+    ErrorCode=Q_METHOD_SUCCESS
+    if (Glob_ProcID==0) write(*,*) 'Routine FullOpt1Q finished'
 
   end subroutine FullOpt1Q
 
@@ -8505,7 +9688,74 @@ contains
 
   end subroutine FullOpt1I
 
-  subroutine EliminateLittleContribFunc(LinCoeffThreshold,FileName,PrintInfoSpec)
+  subroutine SolveEliminationGSEP(GSEPSolMethod,MatrixOrder,Evalue,ErrorCode)
+!Subroutine SolveEliminationGSEP provides the common eigensolver boundary used
+!by the elimination and separation BBOP routines. These routines rebuild the
+!whole physical matrix after changing the basis, so Q intentionally performs a
+!fresh factorization here. Rank-one QR updates would add complexity without
+!saving work because all matrix elements have just been recomputed.
+!
+!The G path preserves the historical DSYGVX layout: it materializes the upper
+!triangle and restores Hamiltonian and overlap diagonals before calling LAPACK.
+!The Q path must not do that. StoreHS has already placed normalized, unshifted H
+!and S in their canonical lower triangles, including their physical diagonals.
+!qrlinalg receives that representation directly and owns only its factors.
+!
+!Arguments:
+    character(1),intent(in) :: GSEPSolMethod
+    integer,intent(in)      :: MatrixOrder
+    real(wp),intent(out)    :: Evalue
+    integer,intent(out)     :: ErrorCode
+!Local variables:
+    integer i,j,IFAIL(1),NumOfEigvalsFound
+    real(wp) EVs(1)
+
+    Evalue=huge(Evalue)
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+
+    select case (GSEPSolMethod)
+    case('G')
+      do i=1,MatrixOrder
+        do j=1,i-1
+          Glob_H(j,i)=Glob_H(i,j)
+        enddo
+        Glob_H(i,i)=Glob_diagH(i)
+      enddo
+      do i=1,MatrixOrder
+        do j=1,i-1
+          Glob_S(j,i)=Glob_S(i,j)
+        enddo
+        Glob_S(i,i)=ONE
+      enddo
+
+      if (Glob_ProcID==0) then
+        call DSYGVX(1,'V','I','U',MatrixOrder,Glob_H,Glob_HSLeadDim, &
+          Glob_S,Glob_HSLeadDim,ZERO,ZERO,Glob_WhichEigenvalue, &
+          Glob_WhichEigenvalue,Glob_AbsTolForDSYGVX,NumOfEigvalsFound, &
+          EVs,Glob_c,MatrixOrder,Glob_WorkForDSYGVX, &
+          Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
+        Evalue=EVs(1)
+      endif
+      call MPI_BCAST(ErrorCode,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+      call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+      call MPI_BCAST(Glob_c,MatrixOrder,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+
+    case('Q')
+      !There is no useful previous vector after a structural elimination or a
+      !random separation. ONE gives inverse iteration a deterministic nonzero
+      !starting vector and SolveQ returns an S-normalized coefficient vector.
+      Glob_c(1:MatrixOrder)=ONE
+      call PrepareQWorkspace(MatrixOrder,MatrixOrder,1,ErrorCode)
+      if (ErrorCode==Q_METHOD_SUCCESS) then
+        Q_Workspace%MatricesAreCanonical=.true.
+        call FactorizeQFresh(ErrorCode)
+      endif
+      if (ErrorCode==Q_METHOD_SUCCESS) call SolveQ(Evalue,ErrorCode)
+    endselect
+
+  end subroutine SolveEliminationGSEP
+
+  subroutine EliminateLittleContribFunc(LinCoeffThreshold,FileName,PrintInfoSpec,GSEPSolMethod)
 !Subroutine EliminateLittleContribFunc eliminates basis
 !functions whose contribution to the energy is small. More
 !precisely, it eliminates functions that have linear coefficients
@@ -8522,24 +9772,27 @@ contains
 !                   regarding linear coefficients.
 ! PrintInfoSpec=2   : the subroutine prints linear coefficients
 !                     of all functions
+! GSEPSolMethod     : optional solver selection. It defaults to G so existing
+!                     callers retain their behavior; main passes Q explicitly.
 
 !Arguments:
     real(wp),intent(in)                    :: LinCoeffThreshold
     character(Glob_FileNameLength),intent(in) :: FileName
     integer,intent(in)                        :: PrintInfoSpec
+    character(1),intent(in),optional          :: GSEPSolMethod
 
 !Local variables:
     integer      i,j
     integer      np,npt,cbs
-    integer      OpenFileErr,ErrorCode,IFAIL(1)
+    integer      OpenFileErr,ErrorCode
     logical      IsSwapFileOK
     integer      BlockSizeForDSYGVX
-    integer      NumOfEigvalsFound
-    real(wp)  Evalue, EVs(1)
+    real(wp)  Evalue
     real(wp)  Min_c,Max_c
     real(wp)  Aver_c
     real(wp),allocatable,dimension(:,:)   :: NonlinParamTemp
     character(Glob_FileNameLength)           :: ch_temp
+    character(1)                              :: Method
 
     if (Glob_ProcID==0) then
       write(*,*)
@@ -8548,7 +9801,9 @@ contains
     endif
 
 !Setting the values of some global variables
-    Glob_GSEPSolutionMethod='G'
+    Method='G'
+    if (present(GSEPSolMethod)) Method=GSEPSolMethod
+    Glob_GSEPSolutionMethod=Method
     Glob_OverlapPenaltyAllowed=.false.
     Glob_HSLeadDim=Glob_CurrBasisSize
     np=Glob_np
@@ -8559,7 +9814,7 @@ contains
 !Allocate some global arrays
     allocate(Glob_H(cbs,cbs))
     allocate(Glob_S(cbs,cbs))
-    allocate(Glob_diagH(cbs))
+    if (Method=='G') allocate(Glob_diagH(cbs))
     allocate(Glob_diagS(cbs))
     allocate(Glob_c(cbs))
     allocate(Glob_HklBuff1(Glob_HSBuffLen))
@@ -8568,10 +9823,12 @@ contains
     allocate(Glob_SklBuff2(Glob_HSBuffLen))
 
 !Allocate workspace for DSYGVX
-    BlockSizeForDSYGVX=ILAENV(1,'DSYTRD','VIU',cbs,cbs,cbs,cbs)
-    Glob_LWorkForDSYGVX=max((BlockSizeForDSYGVX+3)*cbs,8*cbs)
-    allocate(Glob_WorkForDSYGVX(Glob_LWorkForDSYGVX))
-    allocate(Glob_IWorkForDSYGVX(5*cbs))
+    if (Method=='G') then
+      BlockSizeForDSYGVX=ILAENV(1,'DSYTRD','VIU',cbs,cbs,cbs,cbs)
+      Glob_LWorkForDSYGVX=max((BlockSizeForDSYGVX+3)*cbs,8*cbs)
+      allocate(Glob_WorkForDSYGVX(Glob_LWorkForDSYGVX))
+      allocate(Glob_IWorkForDSYGVX(5*cbs))
+    endif
 
 !Reading data from swap file
     call ReadSwapFileAndDistributeData(IsSwapFileOK)
@@ -8585,38 +9842,12 @@ contains
       if (Glob_ProcID==0) write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
     endif
 
-    do i=1,cbs
-      do j=1,i-1
-        Glob_H(j,i)=Glob_H(i,j)
-      enddo
-      Glob_H(i,i)=Glob_diagH(i)
-    enddo
-    do i=1,cbs
-      do j=1,i-1
-        Glob_S(j,i)=Glob_S(i,j)
-      enddo
-      Glob_S(i,i)=ONE
-    enddo
-
-    if (Glob_ProcID==0) then
-      call   DSYGVX(1,'V','I','U',cbs,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
-                    ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForDSYGVX, &
-                    NumOfEigvalsFound,EVs,Glob_c,cbs,Glob_WorkForDSYGVX,  &
-                    Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
-      ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
-!$    VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
-!$    LWORK, IWORK, IFAIL, INFO )
-      Evalue=EVs(1)
-    endif
-    call MPI_BCAST(ErrorCode,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     if (ErrorCode/=0) then
       if (Glob_ProcID==0) write(*,*) &
         'Error EC0170 in EliminateLittleContribFunc: initial energy cannot be computed'
       call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
     endif
-    Evalue=EVs(1)
-    call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(Glob_c,cbs,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
       write(*,*) ' done'
@@ -8669,6 +9900,17 @@ contains
       call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
     endif
 
+    !An empty basis has no generalized eigenproblem and qrlinalg intentionally
+    !has no valid order-zero state. Fail before changing the published basis
+    !size or overwriting the input/output data with an unusable result.
+    if (j==cbs) then
+      if (Glob_ProcID==0) then
+        write(*,*) 'All basis functions are below the coefficient threshold'
+        write(*,*) 'No output file has been written. Program will now stop'
+      endif
+      call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+    endif
+
     if (Glob_ProcID==0) then
       write(*,*) 'Basis size before elimination',cbs
       write(*,*) 'Energy before elimination    ',Evalue
@@ -8684,37 +9926,12 @@ contains
     endif
     call ComputeMatElem(1,cbs)
 
-    do i=1,cbs
-      do j=1,i-1
-        Glob_H(j,i)=Glob_H(i,j)
-      enddo
-      Glob_H(i,i)=Glob_diagH(i)
-    enddo
-    do i=1,cbs
-      do j=1,i-1
-        Glob_S(j,i)=Glob_S(i,j)
-      enddo
-      Glob_S(i,i)=ONE
-    enddo
-
-    if (Glob_ProcID==0) then
-      call   DSYGVX(1,'V','I','U',cbs,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
-                    ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForDSYGVX, &
-                    NumOfEigvalsFound,EVs,Glob_c,cbs,Glob_WorkForDSYGVX,  &
-                    Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
-      ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
-!$    VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
-!$    LWORK, IWORK, IFAIL, INFO )
-      Evalue=EVs(1)
-    endif
-    call MPI_BCAST(ErrorCode,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     if (ErrorCode/=0) then
       if (Glob_ProcID==0) write(*,*) &
         'Error EC0171 in EliminateLittleContribFunc: energy cannot be computed'
       call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
     endif
-    Evalue=EVs(1)
-    call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
       write(*,*) 'Basis size after elimination ',cbs
@@ -8748,13 +9965,17 @@ contains
     deallocate(Glob_HklBuff1)
     deallocate(Glob_c)
     deallocate(Glob_diagS)
-    deallocate(Glob_diagH)
+    if (Method=='G') deallocate(Glob_diagH)
     deallocate(Glob_S)
     deallocate(Glob_H)
 
 !Deallocate workspace for DSYGVX
-    deallocate(Glob_IWorkForDSYGVX)
-    deallocate(Glob_WorkForDSYGVX)
+    if (Method=='G') then
+      deallocate(Glob_IWorkForDSYGVX)
+      deallocate(Glob_WorkForDSYGVX)
+    else
+      call ClearQWorkspace()
+    endif
 
     if (Glob_ProcID==0) then
       i=len_trim(FileName)
@@ -8766,7 +9987,7 @@ contains
 
   end subroutine EliminateLittleContribFunc
 
-  subroutine EliminateLinDepFunc(LinDepThreshold,FileName,PrintInfoSpec)
+  subroutine EliminateLinDepFunc(LinDepThreshold,FileName,PrintInfoSpec,GSEPSolMethod)
 !Subroutine EliminateLinDepFunc eliminates linearly dependent
 !functions. It checks for pair linear dependency only. It
 !removes those functions from the basis whose overlap (absolute value)
@@ -8784,26 +10005,29 @@ contains
 !                   linearly dependent functions.
 ! PrintInfoSpec=2 : same as the previous case, but in addition it also prints the
 !                   nonlinear parameters of linearly dependent functions.
+! GSEPSolMethod   : optional solver selection. It defaults to G so existing
+!                   callers retain their behavior; main passes Q explicitly.
 
 !Arguments:
     real(wp),intent(in)                    :: LinDepThreshold
     character(Glob_FileNameLength),intent(in) :: FileName
     integer,intent(in)                        :: PrintInfoSpec
+    character(1),intent(in),optional          :: GSEPSolMethod
 
 !Local variables:
     integer        i,j,k
     integer        np,npt,cbs
-    integer        OpenFileErr,ErrorCode,IFAIL(1)
+    integer        OpenFileErr,ErrorCode
     logical        IsSwapFileOK
     integer        BlockSizeForDSYGVX
-    integer        NumOfEigvalsFound
-    real(wp)    Evalue, EVs(1)
+    real(wp)    Evalue
     real(wp)    MaxOverlap,MinOverlap
     real(wp)    AverOverlap
     real(wp)    Min_c,Max_c
     real(wp)    Average_c
     integer,allocatable,dimension(:)    :: MaskArray
     character(Glob_FileNameLength)      :: ch_temp
+    character(1)                        :: Method
 
     if (Glob_ProcID==0) then
       write(*,*)
@@ -8812,7 +10036,9 @@ contains
     endif
 
 !Setting the values of some global variables
-    Glob_GSEPSolutionMethod='G'
+    Method='G'
+    if (present(GSEPSolMethod)) Method=GSEPSolMethod
+    Glob_GSEPSolutionMethod=Method
     Glob_OverlapPenaltyAllowed=.false.
     Glob_HSLeadDim=Glob_CurrBasisSize
     np=Glob_np
@@ -8823,7 +10049,7 @@ contains
 !Allocate some global arrays
     allocate(Glob_H(cbs,cbs))
     allocate(Glob_S(cbs,cbs))
-    allocate(Glob_diagH(cbs))
+    if (Method=='G') allocate(Glob_diagH(cbs))
     allocate(Glob_diagS(cbs))
     allocate(Glob_c(cbs))
     allocate(Glob_HklBuff1(Glob_HSBuffLen))
@@ -8832,10 +10058,12 @@ contains
     allocate(Glob_SklBuff2(Glob_HSBuffLen))
 
 !Allocate workspace for DSYGVX
-    BlockSizeForDSYGVX=ILAENV(1,'DSYTRD','VIU',cbs,cbs,cbs,cbs)
-    Glob_LWorkForDSYGVX=max((BlockSizeForDSYGVX+3)*cbs,8*cbs)
-    allocate(Glob_WorkForDSYGVX(Glob_LWorkForDSYGVX))
-    allocate(Glob_IWorkForDSYGVX(5*cbs))
+    if (Method=='G') then
+      BlockSizeForDSYGVX=ILAENV(1,'DSYTRD','VIU',cbs,cbs,cbs,cbs)
+      Glob_LWorkForDSYGVX=max((BlockSizeForDSYGVX+3)*cbs,8*cbs)
+      allocate(Glob_WorkForDSYGVX(Glob_LWorkForDSYGVX))
+      allocate(Glob_IWorkForDSYGVX(5*cbs))
+    endif
 
 !Allocate local workspace
     allocate(MaskArray(1:cbs))
@@ -8850,59 +10078,19 @@ contains
       if (Glob_ProcID==0) write(*,*) ' done'
     endif
 
-    do i=1,cbs
-      do j=1,i-1
-        Glob_H(j,i)=Glob_H(i,j)
-      enddo
-      Glob_H(i,i)=Glob_diagH(i)
-    enddo
-    do i=1,cbs
-      do j=1,i-1
-        Glob_S(j,i)=Glob_S(i,j)
-      enddo
-      Glob_S(i,i)=ONE
-    enddo
-
     if (Glob_ProcID==0) write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
-
-    if (Glob_ProcID==0) then
-      call   DSYGVX(1,'V','I','U',cbs,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
-                    ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForDSYGVX, &
-                    NumOfEigvalsFound,EVs,Glob_c,cbs,Glob_WorkForDSYGVX,  &
-                    Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
-      ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
-!$    VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
-!$    LWORK, IWORK, IFAIL, INFO )
-      Evalue=EVs(1)
-    endif
-    call MPI_BCAST(ErrorCode,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     if (ErrorCode/=0) then
       if (Glob_ProcID==0) write(*,*) &
         'Error EC0175 in EliminateLinDepFunc: initial energy cannot be computed'
       call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
     endif
-    Evalue=EVs(1)
-    call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(Glob_c,cbs,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
       write(*,*) ' done'
       write(*,*) 'Pair linear dependency check:'
       write(*,*)
     endif
-    do i=1,cbs
-      do j=1,i-1
-        Glob_H(j,i)=Glob_H(i,j)
-      enddo
-      Glob_H(i,i)=Glob_diagH(i)
-    enddo
-    do i=1,cbs
-      do j=1,i-1
-        Glob_S(j,i)=Glob_S(i,j)
-      enddo
-      Glob_S(i,i)=ONE
-    enddo
-
 !Check overlap
     MaskArray(1:cbs)=0
     MaxOverlap=ZERO
@@ -8915,7 +10103,7 @@ contains
           MaskArray(j)=MaskArray(j)+1
           k=k+1
           if (Glob_ProcID==0) then
-            if (PrintInfoSpec>0) write(*,'(i6,a1,i6,i6,a5,f17.14)') k,':',i,j,'   S=',Glob_S(i,j)
+            if (PrintInfoSpec>0) write(*,'(i6,a1,i6,i6,a5,f17.14)') k,':',i,j,'   S=',Glob_S(j,i)
             if (PrintInfoSpec==2) then
               write(*,'(1x,i6)',advance='no') i
               call writerealarradv(6,Glob_NonlinParam(1:Glob_npt,i),Glob_npt)
@@ -8979,7 +10167,11 @@ contains
       endif
     enddo
 
-    Glob_CurrBasisSize=cbs-k
+    !k counts offending pairs for the diagnostic list. One later function can
+    !overlap several earlier functions, but MaskArray removes that function
+    !only once. j is the number of unique masked functions actually skipped by
+    !the compaction loop and therefore defines the new basis order.
+    Glob_CurrBasisSize=cbs-j
     cbs=Glob_CurrBasisSize
 
     if (Glob_ProcID==0) write(*,'(1x,a28)',advance='no') 'Computing matrix elements...'
@@ -8989,38 +10181,12 @@ contains
       write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
     endif
 
-    do i=1,cbs
-      do j=1,i-1
-        Glob_H(j,i)=Glob_H(i,j)
-      enddo
-      Glob_H(i,i)=Glob_diagH(i)
-    enddo
-    do i=1,cbs
-      do j=1,i-1
-        Glob_S(j,i)=Glob_S(i,j)
-      enddo
-      Glob_S(i,i)=ONE
-    enddo
-
-    if (Glob_ProcID==0) then
-      call   DSYGVX(1,'V','I','U',cbs,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
-                    ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForDSYGVX, &
-                    NumOfEigvalsFound,EVs,Glob_c,cbs,Glob_WorkForDSYGVX,  &
-                    Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
-      ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
-!$    VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
-!$    LWORK, IWORK, IFAIL, INFO )
-      Evalue=EVs(1)
-    endif
-    call MPI_BCAST(ErrorCode,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     if (ErrorCode/=0) then
       if (Glob_ProcID==0) write(*,*) &
         'Error EC0176 in EliminateLinDepFunc: energy cannot be computed'
       call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
     endif
-    Evalue=EVs(1)
-    call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(Glob_c,cbs,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
 !Check overlap
     MaxOverlap=ZERO
@@ -9085,8 +10251,12 @@ contains
     deallocate(MaskArray)
 
 !Deallocate workspace for DSYGVX
-    deallocate(Glob_IWorkForDSYGVX)
-    deallocate(Glob_WorkForDSYGVX)
+    if (Method=='G') then
+      deallocate(Glob_IWorkForDSYGVX)
+      deallocate(Glob_WorkForDSYGVX)
+    else
+      call ClearQWorkspace()
+    endif
 
 !deallocate global arrays
     deallocate(Glob_SklBuff2)
@@ -9095,7 +10265,7 @@ contains
     deallocate(Glob_HklBuff1)
     deallocate(Glob_c)
     deallocate(Glob_diagS)
-    deallocate(Glob_diagH)
+    if (Method=='G') deallocate(Glob_diagH)
     deallocate(Glob_S)
     deallocate(Glob_H)
 
@@ -9109,28 +10279,30 @@ contains
 
   end subroutine EliminateLinDepFunc
 
-  subroutine SeparateLinDepFunc(LinDepThreshold,SeparationParam,FileName,PrintInfoSpec)
+  subroutine SeparateLinDepFunc(LinDepThreshold,SeparationParam,FileName,PrintInfoSpec,GSEPSolMethod)
 !Subroutine SeparateLinDepFunc does exactly the same thing as
 !subroutine EliminateLinDepFunc does, but without throwing away
 !linearly dependent functions. Instead, it changes the parameters
 !of such functions randomly (the random shift is controlled by
 !argument SeparationParam, so that a_new lies within
 !interval [a_old*(1-SeparationParam),a_old*(1+SeparationParam)]).
+!Optional GSEPSolMethod defaults to G for source compatibility. The Q path
+!keeps the basis canonical and consumes only the lower H/S triangles.
 
 !Arguments:
     real(wp),intent(in)                    :: LinDepThreshold
     real(wp),intent(in)                    :: SeparationParam
     character(Glob_FileNameLength),intent(in) :: FileName
     integer,intent(in)                        :: PrintInfoSpec
+    character(1),intent(in),optional          :: GSEPSolMethod
 
 !Local variables:
     integer        i,j,k
     integer        np,npt,cbs
-    integer        OpenFileErr,ErrorCode,IFAIL(1)
+    integer        OpenFileErr,ErrorCode
     logical        IsSwapFileOK
     integer        BlockSizeForDSYGVX
-    integer        NumOfEigvalsFound
-    real(wp)    Evalue, EVs(1), r
+    real(wp)    Evalue, r
     real(8)        r8
     real(wp)    MaxOverlap,MinOverlap
     real(wp)    AverOverlap
@@ -9138,6 +10310,7 @@ contains
     real(wp)    Average_c
     integer,allocatable,dimension(:)    :: MaskArray
     character(Glob_FileNameLength)      :: ch_temp
+    character(1)                        :: Method
 
     if (Glob_ProcID==0) then
       write(*,*)
@@ -9147,7 +10320,9 @@ contains
     endif
 
 !Setting the values of some global variables
-    Glob_GSEPSolutionMethod='G'
+    Method='G'
+    if (present(GSEPSolMethod)) Method=GSEPSolMethod
+    Glob_GSEPSolutionMethod=Method
     Glob_OverlapPenaltyAllowed=.false.
     Glob_HSLeadDim=Glob_CurrBasisSize
     np=Glob_np
@@ -9158,7 +10333,7 @@ contains
 !Allocate some global arrays
     allocate(Glob_H(cbs,cbs))
     allocate(Glob_S(cbs,cbs))
-    allocate(Glob_diagH(cbs))
+    if (Method=='G') allocate(Glob_diagH(cbs))
     allocate(Glob_diagS(cbs))
     allocate(Glob_c(cbs))
     allocate(Glob_HklBuff1(Glob_HSBuffLen))
@@ -9167,10 +10342,12 @@ contains
     allocate(Glob_SklBuff2(Glob_HSBuffLen))
 
 !Allocate workspace for DSYGVX
-    BlockSizeForDSYGVX=ILAENV(1,'DSYTRD','VIU',cbs,cbs,cbs,cbs)
-    Glob_LWorkForDSYGVX=max((BlockSizeForDSYGVX+3)*cbs,8*cbs)
-    allocate(Glob_WorkForDSYGVX(Glob_LWorkForDSYGVX))
-    allocate(Glob_IWorkForDSYGVX(5*cbs))
+    if (Method=='G') then
+      BlockSizeForDSYGVX=ILAENV(1,'DSYTRD','VIU',cbs,cbs,cbs,cbs)
+      Glob_LWorkForDSYGVX=max((BlockSizeForDSYGVX+3)*cbs,8*cbs)
+      allocate(Glob_WorkForDSYGVX(Glob_LWorkForDSYGVX))
+      allocate(Glob_IWorkForDSYGVX(5*cbs))
+    endif
 
 !Allocate local workspace
     allocate(MaskArray(1:cbs))
@@ -9185,59 +10362,19 @@ contains
       if (Glob_ProcID==0) write(*,*) ' done'
     endif
 
-    do i=1,cbs
-      do j=1,i-1
-        Glob_H(j,i)=Glob_H(i,j)
-      enddo
-      Glob_H(i,i)=Glob_diagH(i)
-    enddo
-    do i=1,cbs
-      do j=1,i-1
-        Glob_S(j,i)=Glob_S(i,j)
-      enddo
-      Glob_S(i,i)=ONE
-    enddo
-
     if (Glob_ProcID==0) write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
-
-    if (Glob_ProcID==0) then
-      call DSYGVX(1,'V','I','U',cbs,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
-                  ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForDSYGVX, &
-                  NumOfEigvalsFound,EVs,Glob_c,cbs,Glob_WorkForDSYGVX,  &
-                  Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
-      ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
-!$    VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
-!$    LWORK, IWORK, IFAIL, INFO )
-      Evalue=EVs(1)
-    endif
-    call MPI_BCAST(ErrorCode,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     if (ErrorCode/=0) then
       if (Glob_ProcID==0) write(*,*) &
         'Error EC0180 in SeparateLinDepFunc: initial energy cannot be computed'
       call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
     endif
-    Evalue=EVs(1)
-    call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(Glob_c,cbs,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
       write(*,*) ' done'
       write(*,*) 'Pair linear dependency check:'
       write(*,*)
     endif
-    do i=1,cbs
-      do j=1,i-1
-        Glob_H(j,i)=Glob_H(i,j)
-      enddo
-      Glob_H(i,i)=Glob_diagH(i)
-    enddo
-    do i=1,cbs
-      do j=1,i-1
-        Glob_S(j,i)=Glob_S(i,j)
-      enddo
-      Glob_S(i,i)=ONE
-    enddo
-
 !Check overlap
     MaskArray(1:cbs)=0
     MaxOverlap=ZERO
@@ -9250,7 +10387,7 @@ contains
           MaskArray(j)=MaskArray(j)+1
           k=k+1
           if (Glob_ProcID==0) then
-            if (PrintInfoSpec>0) write(*,'(i6,a1,i6,i6,a5,f17.14)') k,':',i,j,'   S=',Glob_S(i,j)
+            if (PrintInfoSpec>0) write(*,'(i6,a1,i6,i6,a5,f17.14)') k,':',i,j,'   S=',Glob_S(j,i)
             if (PrintInfoSpec==2) then
               write(*,'(1x,i6)',advance='no') i
               call writerealarradv(6,Glob_NonlinParam(1:Glob_npt,i),Glob_npt)
@@ -9323,38 +10460,12 @@ contains
       write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
     endif
 
-    do i=1,cbs
-      do j=1,i-1
-        Glob_H(j,i)=Glob_H(i,j)
-      enddo
-      Glob_H(i,i)=Glob_diagH(i)
-    enddo
-    do i=1,cbs
-      do j=1,i-1
-        Glob_S(j,i)=Glob_S(i,j)
-      enddo
-      Glob_S(i,i)=ONE
-    enddo
-
-    if (Glob_ProcID==0) then
-      call DSYGVX(1,'V','I','U',cbs,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
-                  ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForDSYGVX, &
-                  NumOfEigvalsFound,EVs,Glob_c,cbs,Glob_WorkForDSYGVX,  &
-                  Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
-      ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
-!$    VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
-!$    LWORK, IWORK, IFAIL, INFO )
-      Evalue=EVs(1)
-    endif
-    call MPI_BCAST(ErrorCode,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     if (ErrorCode/=0) then
       if (Glob_ProcID==0) write(*,*) &
         'Error EC0181 in EliminateLinDepFunc: energy cannot be computed'
       call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
     endif
-    Evalue=EVs(1)
-    call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(Glob_c,cbs,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
 !Check overlap
     MaxOverlap=ZERO
@@ -9419,8 +10530,12 @@ contains
     deallocate(MaskArray)
 
 !Deallocate workspace for DSYGVX
-    deallocate(Glob_IWorkForDSYGVX)
-    deallocate(Glob_WorkForDSYGVX)
+    if (Method=='G') then
+      deallocate(Glob_IWorkForDSYGVX)
+      deallocate(Glob_WorkForDSYGVX)
+    else
+      call ClearQWorkspace()
+    endif
 
 !deallocate global arrays
     deallocate(Glob_SklBuff2)
@@ -9429,7 +10544,7 @@ contains
     deallocate(Glob_HklBuff1)
     deallocate(Glob_c)
     deallocate(Glob_diagS)
-    deallocate(Glob_diagH)
+    if (Method=='G') deallocate(Glob_diagH)
     deallocate(Glob_S)
     deallocate(Glob_H)
 
@@ -9443,7 +10558,7 @@ contains
 
   end subroutine SeparateLinDepFunc
 
-  subroutine SeparateFuncLargeCoeff(LCThreshold,SeparationParam,FileName,PrintInfoSpec)
+  subroutine SeparateFuncLargeCoeff(LCThreshold,SeparationParam,FileName,PrintInfoSpec,GSEPSolMethod)
 !Subroutine SeparateFuncLargeCoeff changes linear parameters of
 !those basis functions whose linear coefficients (more precisely their
 !absolute values) exceed LCThreshold. It is important to note that this
@@ -9461,27 +10576,30 @@ contains
 !                   nonlinear parameters of bad functions.
 ! PrintInfoSpec=2 : same as the previous case, but in addition it also prints
 !                   the linear parameters of all basis functions.
+! GSEPSolMethod   : optional solver selection. It defaults to G so existing
+!                   callers retain their behavior; main passes Q explicitly.
 
 !Arguments:
     real(wp),intent(in)                    :: LCThreshold
     real(wp),intent(in)                    :: SeparationParam
     character(Glob_FileNameLength),intent(in) :: FileName
     integer,intent(in)                        :: PrintInfoSpec
+    character(1),intent(in),optional          :: GSEPSolMethod
 
 !Local variables:
     integer        i,j,k
     integer        np,npt,cbs
-    integer        OpenFileErr,ErrorCode,IFAIL(1)
+    integer        OpenFileErr,ErrorCode
     logical        IsSwapFileOK
     integer        BlockSizeForDSYGVX
-    integer        NumOfEigvalsFound
-    real(wp)    Evalue, EVs(1), r
+    real(wp)    Evalue, r
     real(8)        r8
     real(wp)    MaxOverlap,MinOverlap
     real(wp)    AverOverlap
     real(wp)    Min_c,Max_c
     real(wp)    Average_c
     character(Glob_FileNameLength)  :: ch_temp
+    character(1)                    :: Method
 
     if (Glob_ProcID==0) then
       write(*,*)
@@ -9491,7 +10609,9 @@ contains
     endif
 
 !Setting the values of some global variables
-    Glob_GSEPSolutionMethod='G'
+    Method='G'
+    if (present(GSEPSolMethod)) Method=GSEPSolMethod
+    Glob_GSEPSolutionMethod=Method
     Glob_OverlapPenaltyAllowed=.false.
     Glob_HSLeadDim=Glob_CurrBasisSize
     np=Glob_np
@@ -9502,7 +10622,7 @@ contains
 !Allocate some global arrays
     allocate(Glob_H(cbs,cbs))
     allocate(Glob_S(cbs,cbs))
-    allocate(Glob_diagH(cbs))
+    if (Method=='G') allocate(Glob_diagH(cbs))
     allocate(Glob_diagS(cbs))
     allocate(Glob_c(cbs))
     allocate(Glob_HklBuff1(Glob_HSBuffLen))
@@ -9511,10 +10631,12 @@ contains
     allocate(Glob_SklBuff2(Glob_HSBuffLen))
 
 !Allocate workspace for DSYGVX
-    BlockSizeForDSYGVX=ILAENV(1,'DSYTRD','VIU',cbs,cbs,cbs,cbs)
-    Glob_LWorkForDSYGVX=max((BlockSizeForDSYGVX+3)*cbs,8*cbs)
-    allocate(Glob_WorkForDSYGVX(Glob_LWorkForDSYGVX))
-    allocate(Glob_IWorkForDSYGVX(5*cbs))
+    if (Method=='G') then
+      BlockSizeForDSYGVX=ILAENV(1,'DSYTRD','VIU',cbs,cbs,cbs,cbs)
+      Glob_LWorkForDSYGVX=max((BlockSizeForDSYGVX+3)*cbs,8*cbs)
+      allocate(Glob_WorkForDSYGVX(Glob_LWorkForDSYGVX))
+      allocate(Glob_IWorkForDSYGVX(5*cbs))
+    endif
 
 !Reading data from swap file
     call ReadSwapFileAndDistributeData(IsSwapFileOK)
@@ -9525,40 +10647,13 @@ contains
       if (Glob_ProcID==0) write(*,*) ' done'
     endif
 
-    do i=1,cbs
-      do j=1,i-1
-        Glob_H(j,i)=Glob_H(i,j)
-      enddo
-      Glob_H(i,i)=Glob_diagH(i)
-    enddo
-    do i=1,cbs
-      do j=1,i-1
-        Glob_S(j,i)=Glob_S(i,j)
-      enddo
-      Glob_S(i,i)=ONE
-    enddo
-
     if (Glob_ProcID==0) write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
-
-    if (Glob_ProcID==0) then
-      call DSYGVX(1,'V','I','U',cbs,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
-                  ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForDSYGVX, &
-                  NumOfEigvalsFound,EVs,Glob_c,cbs,Glob_WorkForDSYGVX,  &
-                  Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
-      ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
-!$    VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
-!$    LWORK, IWORK, IFAIL, INFO )
-      Evalue=EVs(1)
-    endif
-    call MPI_BCAST(ErrorCode,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     if (ErrorCode/=0) then
       if (Glob_ProcID==0) write(*,*) &
         'Error EC0185 in SeparateFuncLargeCoeff: initial energy cannot be computed'
       call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
     endif
-    Evalue=EVs(1)
-    call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(Glob_c,cbs,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
       write(*,*) ' done'
@@ -9648,37 +10743,11 @@ contains
       write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
     endif
 
-    do i=1,cbs
-      do j=1,i-1
-        Glob_H(j,i)=Glob_H(i,j)
-      enddo
-      Glob_H(i,i)=Glob_diagH(i)
-    enddo
-    do i=1,cbs
-      do j=1,i-1
-        Glob_S(j,i)=Glob_S(i,j)
-      enddo
-      Glob_S(i,i)=ONE
-    enddo
-
-    if (Glob_ProcID==0) then
-      call DSYGVX(1,'V','I','U',cbs,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
-                  ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForDSYGVX, &
-                  NumOfEigvalsFound,EVs,Glob_c,cbs,Glob_WorkForDSYGVX,  &
-                  Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
-      ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
-!$    VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
-!$    LWORK, IWORK, IFAIL, INFO )
-      Evalue=EVs(1)
-    endif
-    call MPI_BCAST(ErrorCode,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     if (ErrorCode/=0) then
       if (Glob_ProcID==0) write(*,*) 'Error EC0186 in SeparateFuncLargeCoeff: energy cannot be computed'
       call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
     endif
-    Evalue=EVs(1)
-    call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(Glob_c,cbs,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
 !Check overlap
     MaxOverlap=ZERO
@@ -9738,8 +10807,12 @@ contains
     Glob_DataFileName=ch_temp
 
 !Deallocate workspace for DSYGVX
-    deallocate(Glob_IWorkForDSYGVX)
-    deallocate(Glob_WorkForDSYGVX)
+    if (Method=='G') then
+      deallocate(Glob_IWorkForDSYGVX)
+      deallocate(Glob_WorkForDSYGVX)
+    else
+      call ClearQWorkspace()
+    endif
 
 !deallocate global arrays
     deallocate(Glob_SklBuff2)
@@ -9748,7 +10821,7 @@ contains
     deallocate(Glob_HklBuff1)
     deallocate(Glob_c)
     deallocate(Glob_diagS)
-    deallocate(Glob_diagH)
+    if (Method=='G') deallocate(Glob_diagH)
     deallocate(Glob_S)
     deallocate(Glob_H)
 
@@ -9780,7 +10853,7 @@ contains
 !  FileName4 - the name of the file where the entire wave function (both
 !              linear and nonlinear variational parameters) will be saved. If
 !              FileName4 is equal to 'none','NONE',or 'None' then nothing is saved.
-!  GSEPsolMethod - can be either 'G' or 'I'. It defines the method used to solve GSEP
+!  GSEPsolMethod - can be 'G', 'I', or 'Q'. It defines the method used to solve GSEP
 !The format of the files that contains the Hamiltonian and overlap is such that each
 !matrix element is placed in a separate line and is preceded by two integer indices, e.g.
 !    23  78   0.123456789E+02
@@ -9820,7 +10893,8 @@ contains
       write(*,*) 'Number of basis functions',Glob_CurrBasisSize
       write(*,*) 'GSEP solution method ',GSEPsolMethod
     endif
-    if ((GSEPsolMethod/='G').and.(GSEPsolMethod/='I')) then
+    if ((GSEPsolMethod/='G').and.(GSEPsolMethod/='I').and. &
+        (GSEPsolMethod/='Q')) then
       if (Glob_ProcID==0) then
         write(*,*) 'Error EC0190 in SaveHSWF: wrong GSEP solution method'
       endif
@@ -9838,6 +10912,7 @@ contains
     cbs=Glob_CurrBasisSize
     if (GSEPsolMethod=='G') NumOfEigvecs=min(cbs,Glob_WhichEigenvalue+10)
     if (GSEPsolMethod=='I') NumOfEigvecs=1
+    if (GSEPsolMethod=='Q') NumOfEigvecs=1
 
 !Setting logical variables that determine if everything (H, S, eigenvector, wave function)
 !needs to be saved
@@ -10064,6 +11139,61 @@ contains
       endif
     endif
 
+    if (GSEPSolMethod=='Q') then
+      !Q physical matrices already use the canonical normalized lower
+      !triangle. Materialize conceptual symmetry only while writing text; do
+      !not overwrite the unused upper triangles in memory.
+      if (Glob_ProcID==0) then
+        if (IsHNeeded) then
+          write(*,'(1x,a)',advance='no') 'Saving Hamiltonian matrix...'
+          open(2,file=FileName1)
+          do i=1,cbs
+            do j=1,cbs
+              write(2,'(1x,i6,1x,i6,1x)',advance='no') i,j
+              call writerealadv(2,QCanonicalMatrixElement(Glob_H,i,j))
+            enddo
+          enddo
+          close(2)
+          write(*,*) 'done'
+        endif
+        if (IsSNeeded) then
+          write(*,'(1x,a)',advance='no') 'Saving overlap matrix...'
+          open(2,file=FileName2)
+          do i=1,cbs
+            do j=1,cbs
+              write(2,'(1x,i6,1x,i6,1x)',advance='no') i,j
+              call writerealadv(2,QCanonicalMatrixElement(Glob_S,i,j))
+            enddo
+          enddo
+          close(2)
+          write(*,*) 'done'
+        endif
+      endif
+
+      if (IsEVNeeded.or.IsWFNeeded) then
+        if (Glob_ProcID==0) write(*,'(1x,a29)',advance='no') &
+          'Solving eigenvalue problem...'
+        Glob_c=ONE
+        call PrepareQWorkspace(cbs,cbs,1,ErrorCode)
+        Q_Workspace%MatricesAreCanonical=.true.
+        if (ErrorCode==Q_METHOD_SUCCESS) call FactorizeQFresh(ErrorCode)
+        if (ErrorCode==Q_METHOD_SUCCESS) call SolveQ(Evalue,ErrorCode)
+        if (ErrorCode/=Q_METHOD_SUCCESS) then
+          if (Glob_ProcID==0) then
+            write(*,*) 'failed'
+            write(*,'(1x,a,1x,i0)') &
+              'Error EC0193 in SaveHSWF: Q energy cannot be computed, status',ErrorCode
+          endif
+          call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+        endif
+        Glob_CurrEnergy=Evalue
+        if (Glob_ProcID==0) then
+          write(*,*) 'done'
+          write(*,*) 'Energy: ',Evalue
+        endif
+      endif
+    endif
+
 !Saving the eigenvector
     if ((IsEVNeeded).and.(Glob_ProcID==0)) then
       write(*,'(1x,a)',advance='no') 'Saving eigenvector...'
@@ -10115,6 +11245,7 @@ contains
       deallocate(Glob_LastEigvector)
       deallocate(Glob_WorkForGSEPIIS)
     endif
+    if (GSEPSolMethod=='Q') call ClearQWorkspace()
 
 !deallocate workspace for DSYGVX
     if (GSEPSolMethod=='G') then
@@ -10164,7 +11295,7 @@ contains
 !              If FileName3 is equal to 'none','NONE', or 'None' then particle
 !              densities are not computed.
 !  FileName4 - the name of the file where particle densities will be stored
-!  GSEPsolMethod - can be either 'G' or 'I'. It defines the method used to solve GSEP
+!  GSEPsolMethod - can be 'G', 'I', or 'Q'. It defines the method used to solve GSEP
 
 !Parameters:
     character(9),intent(in) ::    Action
@@ -10236,7 +11367,8 @@ contains
       write(*,*) 'Number of basis functions',Glob_CurrBasisSize
       write(*,*) 'GSEP solution method ',GSEPsolMethod
     endif
-    if ((GSEPsolMethod/='G').and.(GSEPsolMethod/='I')) then
+    if ((GSEPsolMethod/='G').and.(GSEPsolMethod/='I').and. &
+        (GSEPsolMethod/='Q')) then
       if (Glob_ProcID==0) then
         write(*,*) 'Error EC0195 in ExpectationValues: wrong GSEP solution method'
       endif
@@ -10254,6 +11386,7 @@ contains
     cbs=Glob_CurrBasisSize
     if (GSEPsolMethod=='G') NumOfEigvecs=min(cbs,Glob_WhichEigenvalue+10)
     if (GSEPsolMethod=='I') NumOfEigvecs=1
+    if (GSEPsolMethod=='Q') NumOfEigvecs=1
 
 !Setting logical variables that determine whether correlation
 !functions and particle densities need to be computed
@@ -10613,6 +11746,29 @@ contains
         call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
       endif
       !print the energy
+      if (Glob_ProcID==0) then
+        write(*,*) 'done'
+        write(*,*) 'Energy: ',Evalue
+      endif
+    endif
+
+    if (GSEPSolMethod=='Q') then
+      if (Glob_ProcID==0) write(*,'(1x,a29)',advance='no') &
+        'Solving eigenvalue problem...'
+      Glob_c=ONE
+      call PrepareQWorkspace(cbs,cbs,1,ErrorCode)
+      Q_Workspace%MatricesAreCanonical=.true.
+      if (ErrorCode==Q_METHOD_SUCCESS) call FactorizeQFresh(ErrorCode)
+      if (ErrorCode==Q_METHOD_SUCCESS) call SolveQ(Evalue,ErrorCode)
+      if (ErrorCode/=Q_METHOD_SUCCESS) then
+        if (Glob_ProcID==0) then
+          write(*,*) 'failed'
+          write(*,'(1x,a,1x,i0)') &
+            'Error EC0202 in ExpectationValues: Q energy cannot be computed, status',ErrorCode
+        endif
+        call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+      endif
+      Glob_CurrEnergy=Evalue
       if (Glob_ProcID==0) then
         write(*,*) 'done'
         write(*,*) 'Energy: ',Evalue
@@ -11552,7 +12708,7 @@ contains
           !write to file
           a=Glob_EqvPairList(1,1,i)
           b=Glob_EqvPairList(2,1,i)
-          if (a/=b) write(2,'(a,i1,i1.1x)',advance='no') '                 r^2_',a,b
+          if (a/=b) write(2,'(a,i1,i1,1x)',advance='no') '                 r^2_',a,b
           if (a==b) write(2,'(a,i1,1x)',advance='no')    '                  r^2_',a
           call writerealadv(2,beta/k)
         enddo
@@ -11743,6 +12899,7 @@ contains
       deallocate(Glob_LastEigvector)
       deallocate(Glob_WorkForGSEPIIS)
     endif
+    if (GSEPSolMethod=='Q') call ClearQWorkspace()
 
 !deallocate workspace for DSYGVX
     if (GSEPSolMethod=='G') then
