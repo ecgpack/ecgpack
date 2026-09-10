@@ -7,7 +7,7 @@ usage_print() {
   echo "Missing arguments or invalid arguments."
   echo ""  
   echo "PROPER USAGE:"
-  echo "$0 machine=<machinename> toolchain=<toolchainnames> config=<confignames> code=<codenames> nparticles=<nparticles> precision=<precisions> linalg=<linalgnames>"
+  echo "$0 machine=<machinename> toolchain=<toolchainnames> config=<confignames> code=<codenames> nparticles=<nparticles> precision=<precisions> linalg=<linalgnames> openmp=<0,1>"
   echo ""
   echo "NOTE:"
   echo "All arguments are optional except nparticles. If multiple values are specified for an argument, they must be separated by a comma."
@@ -21,6 +21,7 @@ usage_print() {
   echo "<nparticles> defines for how many particles each code must be build for. There is no default value. This argument must be present."
   echo "<precisions> is the kind parameter for real type. 8 corresponds to double precision (fp64), 10 corresponds to extended precision (fp80), 16 corresponds to quadruple precision. Different compilers/toolchain support different kinds. For example, Intel compilers supports only 8 and 16, while modern GNU compilers support 8, 10, and 16. The default value is 8."
   echo "<linalgnames> specifies which BLAS/LAPACK implementation to link against. Possible values are: netlib (default; non-optimized reference BLAS/LAPACK built from the bundled source), mkl (Intel Math Kernel Library), lblas (optimized BLAS/LAPACK exposed through the -lblas/-llapack symbolic links), openblas (OpenBLAS), and aocl (AMD AOCL-BLAS and AOCL-LAPACK). For precision=10 and precision=16 only netlib is available, so any other value is skipped because optimized BLAS/LAPACK is unavailable for these two precisions."
+  echo "<0,1> selects serial or OpenMP builds. The default is 0. Multiple values may be requested as openmp=0,1. OpenMP is currently supported by RG_0S, RG_1P, RG_2D, and RG_2P. OpenMP binaries are stored under a debug-omp or release-omp output directory."
   echo "" 
   echo "Supported toolchains on different machines are listed below."
   echo ""   
@@ -53,7 +54,7 @@ usage_print() {
   echo ""  
   echo "EXECUTION EXAMPLES:"
   echo ""  
-  echo "    $0 machine=linux-generic toolchain=foss-2025b config=release code=RG_0S,RG_1P,RG_2D,RG_2P nparticles=3,4,5,6,7,8 precision=8,10,16 linalg=netlib"
+  echo "    $0 machine=linux-generic toolchain=foss-2025b config=release code=RG_0S,RG_1P,RG_2D,RG_2P nparticles=3,4,5,6,7,8 precision=8,10,16 linalg=netlib openmp=1"
   echo ""
   echo "    $0 machine=linux-generic toolchain=foss-2025a config=release code=RG_0S,RG_1P,RG_2D,RG_2P,RG_0S-1P,RG_1P-2D,RG_1P-2P,RG_0S-2D,RG_0S-2P,RG_1P-1P,RG_2D-2D,RG_2P-2D,RG_2P-2P nparticles=3,4,5,6,7,8 precision=8 linalg=openblas"
   echo ""
@@ -80,6 +81,7 @@ code="RG_0S, RG_1P, RG_2D, RG_2P, RG_0S-1P, RG_1P-2D, RG_1P-2P, RG_0S-2D, RG_0S-
 nparticles=""
 precision="8"
 linalg="netlib"
+openmp="0"
 
 # Parse the arguments
 for arg in "$@"; do
@@ -91,6 +93,7 @@ for arg in "$@"; do
     nparticles=*) nparticles="${arg#*=}" ;;
     precision=*) precision="${arg#*=}" ;;
     linalg=*) linalg="${arg#*=}" ;;
+    openmp=*) openmp="${arg#*=}" ;;
     *) echo "ERROR, INVALID ARGUMENT: $arg" ; echo "" ; usage_print ;;
   esac
 done
@@ -110,6 +113,7 @@ IFS=',' read -ra code_list <<< $code
 IFS=',' read -ra nparticles_list <<< $nparticles
 IFS=',' read -ra precision_list <<< $precision
 IFS=',' read -ra linalg_list <<< $linalg
+IFS=',' read -ra openmp_list <<< $openmp
 
 # Check if machine is set properly. Only a single machine can be used as an argument
 if [[ " linux-generic ubuntu-generic irgetas shabyt muon puma ocelote elgato " != *" $machine "* ]]; then
@@ -163,6 +167,15 @@ done
 for linalg_value in ${linalg_list[@]}; do
   if [[ " netlib mkl lblas openblas aocl " != *" $linalg_value "* ]]; then
     echo "ERROR, WRONG VALUE(S) OF ARGUMENT: linalg"
+    usage_print
+    exit 1
+  fi
+done
+
+# Check if OpenMP selection is set properly
+for openmp_value in ${openmp_list[@]}; do
+  if [[ " 0 1 " != *" $openmp_value "* ]]; then
+    echo "ERROR, WRONG VALUE(S) OF ARGUMENT: openmp"
     usage_print
     exit 1
   fi
@@ -302,7 +315,19 @@ for toolchain_value in ${toolchain_list[@]}; do
           fi
           # Loop over all values of linalg, but for precision=10,16 only netlib is allowed
           for linalg_value in ${linalg_list[@]}; do
-            binsubdirname=${bindirname}/${machinedirname}${toolchain_value}/${config_value}
+            # Build serial and OpenMP configurations independently. Only the
+            # four real-ECG energy codes currently provide OPENMP-aware
+            # Makefiles; skip unsupported code/OpenMP combinations explicitly.
+            for openmp_value in ${openmp_list[@]}; do
+            if [[ "$openmp_value" = "1" && " RG_0S RG_1P RG_2D RG_2P " != *" $code_value "* ]]; then
+              echo "Skipping code=$code_value with openmp=1: its Makefile does not support OpenMP builds."
+              continue
+            fi
+            openmp_suffix=""
+            if [[ "$openmp_value" = "1" ]]; then
+              openmp_suffix="-omp"
+            fi
+            binsubdirname=${bindirname}/${machinedirname}${toolchain_value}/${config_value}${openmp_suffix}
             binaryfilename=${code_value}_N${nparticles_value}_P${precision_value}
             # For precision=10 and precision=16 only netlib is available, so skip any other linalg value
             if [[ "$precision_value" != "8" && "$linalg_value" != "netlib" ]]; then
@@ -313,7 +338,7 @@ for toolchain_value in ${toolchain_list[@]}; do
             echo ""
             echo "════════════════════════ Starting a new build ═════════════════════════"
             echo "machine="$machine "   toolchain="$toolchain_value "   config="$config_value
-            echo "code="$code_value "   nparticles="$nparticles_value "   precision="$precision_value "   linalg="$linalg_value
+            echo "code="$code_value "   nparticles="$nparticles_value "   precision="$precision_value "   linalg="$linalg_value "   openmp="$openmp_value
             echo "───────────────────────────── make output ─────────────────────────────"
             # Check if file ${code_value}/src/wp_def_${precision_value}.f90 exists. This way
             # we also automtically test if the directory ${code_value} for this specific code exists
@@ -332,13 +357,13 @@ for toolchain_value in ${toolchain_list[@]}; do
             sed -i "s/MPI_DPREC=[^ ][^ ]*/MPI_DPREC=${MPI_REALX_name}/g" src/wp_def_${precision_value}.f90
             # Build the code
             make clean > /dev/null 2>&1
-            make ${config_value} COMPILER=${compiler} MACHINE=${machine} PREC=${precision_value} LINALG=${linalg_value} EXEFILE=ecg
+            make ${config_value} COMPILER=${compiler} MACHINE=${machine} PREC=${precision_value} LINALG=${linalg_value} OPENMP=${openmp_value} EXEFILE=ecg
             # Check if the build was successful
             if [ $? -eq 0 ]; then
               echo "═════════════════════ Build finished succesfully ══════════════════════"
               # Copy the code to the bin directory
               mkdir -p ../${binsubdirname}
-              mv ${config_value}/ecg ../${binsubdirname}/${binaryfilename}
+              mv ${config_value}${openmp_suffix}/ecg ../${binsubdirname}/${binaryfilename}
               counter_successful_builds=$((counter_successful_builds+1))
             else
               echo "════════════════════════════ Build failed ═════════════════════════════"
@@ -348,6 +373,7 @@ for toolchain_value in ${toolchain_list[@]}; do
             mv -f src/wp_def_temporary.f90 src/wp_def_${precision_value}.f90
             # Go back to upper level ecg directory, where the script is located
             cd ../
+            done
           done
         done
       done
