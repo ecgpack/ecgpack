@@ -26,6 +26,15 @@ cd RG_2P
 make release COMPILER=nvfortran LINALG=lblas EXEFILE=mybinaryfile 
 ```
 
+The four real-ECG energy codes (`RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`) also provide an opt-in OpenMP build. For example:
+
+```bash
+cd RG_0S
+make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib OPENMP=1 EXEFILE=ecg
+```
+
+`OPENMP=0` is the default. Serial objects and executables are written under `debug/` or `release/`; OpenMP builds use `debug-omp/` or `release-omp/`. The executable name itself is not changed, so the command above produces `release-omp/ecg`.
+
 Note that even though the option `COMPILER` here specifies a Fortran compiler name, what is actually called under the hood is the corresponding MPI wrapper (`mpif90`, `mpiifort`, etc).  
 
 To clean the source directory of any object and module files one can run `make clean` or `make cleaner` commands.
@@ -71,13 +80,26 @@ To use Fortran compilers and MPI wrappers other than those listed above, the use
 
 All energy codes (`CG_0S`, `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`) as an option can invoke the slow eigenvalue solver from standard LAPACK. This requires linking of these codes against some BLAS/LAPACK library. The choice of this library can be controlled with the `LINALG` argument of the `make` command:
 
-* `LINALG=netlib` (default) - The bundled, lightly modified netlib reference BLAS/LAPACK subroutines are compiled from source (files `src/BLAS.f` and `src/LAPACK.f`). No external LAPACK/BLAS library is required in this case.
+* `LINALG=netlib` (default) - The bundled, lightly modified netlib reference BLAS/LAPACK subroutines are compiled from source. The real-ECG energy codes use `src/qrupdate/BLAS.f` and `src/qrupdate/LAPACK.f`, which satisfy both ECGPACK and qrlinalg; other energy codes use their local `src/BLAS.f` and `src/LAPACK.f`. No external LAPACK/BLAS library is required in this case.
 * `LINALG=mkl` - Intel Math Kernel Library (MKL).
 * `LINALG=lblas` - An optimized BLAS/LAPACK exposed through the `-llapack -lblas` symbolic links. For example, if an NVHPC module is loaded last, this will lead to linking against BLAS/LAPACK that comes with NVIDIA HPC SDK. If an Easybuild's module `foss/2025b` is loaded last it will result in routing through FlexiBLAS, which will back-end directly into OpenBLAS.
 * `LINALG=openblas` - OpenBLAS library is used through the `-lopenblas` link flag.
 * `LINALG=aocl` - AMD Optimizing CPU Libraries (AOCL-BLAS and AOCL-LAPACK).
 
 Note that an optimized BLAS/LAPACK library can be used only when `PREC=8`. For `PREC=10` and `PREC=16` only the `LINALG=netlib` option is available, because vendor-provided optimized BLAS/LAPACK libraries do not support extended or quadruple precision. In the off-diagonal matrix-element codes the `LINALG` argument is accepted for convenience in the `make` command but it has no effect because those codes do not use and do not link any BLAS/LAPACK library.
+
+### OpenMP
+
+OpenMP support is currently provided by the Makefiles of `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`. The compiler flag is selected automatically (`-fopenmp` for gfortran, `-qopenmp` for ifort and ifx, and `-mp` for nvfortran). In `LINALG=netlib` builds, OpenMP parallelizes sufficiently large operations in the bundled BLAS used by qrlinalg. When an external BLAS/LAPACK provider is selected, its own threading configuration also applies and should be checked separately.
+
+The number of threads is selected at runtime with `OMP_NUM_THREADS`. Every MPI process may create its own OpenMP team, so the approximate CPU demand is the number of MPI ranks multiplied by the number of threads per rank. For example, two MPI ranks with four threads each may use eight CPU cores:
+
+```bash
+OMP_NUM_THREADS=4 OMP_PLACES=cores OMP_PROC_BIND=close \
+  mpirun -np 2 /path/to/release-omp/ecg
+```
+
+MPI rank placement must grant each rank enough CPU cores for its thread team. The exact mapping option is MPI-implementation and cluster dependent. Avoid unintentionally enabling a second independent thread pool in an external BLAS library, since nested threading can oversubscribe the node.
 
 ### Number of particles
 
@@ -87,13 +109,21 @@ The number of particles is hardcoded in files `src/wp_def_*.f90` (here `*` stand
 
 ### Batch compilation of multiple code variants
 
-The easiest way to compile all or some number of selected codes (basis type, number of particles, precisions, external libraries, etc.) in **one step** on a specific machine/OS using specific toolchains is to invoke the `build.bash` script located in the root directory. This script requires arguments. **Please read its source or run it with no arguments** to see instructions regarding how to run it properly. When this script is run, it will automatically move all individual binaries built to directory `ecgpack/bin/<toolchainname>/<configuration>`, where `<toolchainname>` (e.g. `systemdefault`) is the name of the toolchain specified and `<configuration>` can be either `debug` (slow and unoptimized binary suitable for debugging) or `release` (fast and optimized binary suitable for production work). The binary files will be named `<code_name>_N<particle_number>_P<precision>_<linalg>` (e.g. `RG_0S_N4_P8_netlib` - for `RG_0S` code, 4 particles, double precision, bundled netlib BLAS/LAPACK). The `<linalg>` suffix stands for the selected linear algebra library (`netlib`, `mkl`, `lblas`, `openblas`, or `aocl`) and is always present.
+The easiest way to compile all or some number of selected codes (basis type, number of particles, precisions, external libraries, etc.) in **one step** on a specific machine/OS using specific toolchains is to invoke the `build.bash` script located in the root directory. This script requires arguments. **Please read its source or run it with no arguments** to see instructions regarding how to run it properly. When this script is run, it will automatically move all individual binaries built to directory `ecgpack/bin/<toolchainname>/<configuration>`, where `<toolchainname>` (e.g. `systemdefault`) is the name of the toolchain specified and `<configuration>` is `debug` or `release` for a serial build and `debug-omp` or `release-omp` for an OpenMP build. The binary files are named `<code_name>_N<particle_number>_P<precision>_<linalg>` (e.g. `RG_0S_N4_P8_netlib` for `RG_0S`, 4 particles, double precision, and bundled netlib BLAS/LAPACK). The `<linalg>` suffix identifies the selected linear algebra library (`netlib`, `mkl`, `lblas`, `openblas`, or `aocl`) and is always present.
 
 An example of executing the `build.bash` script to build production (optimized) binaries for `RG_0S` and `RG_1P` codes using double and extended precision and bundled BLAS/LAPACK source for the case of 4, 5, and 6 particles:
 
 ```bash
 ./build.bash machine=linux-generic toolchain=systemdefault config=release code=RG_0S,RG_1P nparticles=4,5,6 precision=8,10 linalg=netlib
 ```
+
+The optional `openmp` argument accepts `0` (serial, the default), `1` (OpenMP), or a comma-separated list such as `openmp=0,1` to build both forms. OpenMP requests are supported for the four real-ECG energy codes and are skipped explicitly for other codes. For example:
+
+```bash
+./build.bash machine=linux-generic toolchain=systemdefault config=release code=RG_0S,RG_1P nparticles=4 precision=8 linalg=netlib openmp=1
+```
+
+This command creates `bin/systemdefault/release-omp/RG_0S_N4_P8_netlib` and `bin/systemdefault/release-omp/RG_1P_N4_P8_netlib`.
 
 Note that `systemdefault` toolchain assumes that the system's default `mpif90` wrapper is accessible out of the box without loading any environment modules - regardless of the underlying compiler or MPI implementation it wraps.
 
