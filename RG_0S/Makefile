@@ -2,6 +2,7 @@
 # This is a Makefile to compile an ECGPACK code. Here are some examples of compilations
 # with this Makefile:
 #    make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=openblas EXEFILE=ecg
+#    make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib OPENMP=1 EXEFILE=ecg
 #    make release COMPILER=gfortran MACHINE=ubuntu-generic PREC=8 LINALG=lblas EXEFILE=ecg
 #    make debug COMPILER=gfortran MACHINE=irgetas PREC=10 LINALG=netlib EXEFILE=ecg
 #    make release COMPILER=ifort MACHINE=puma PREC=8 LINALG=mkl EXEFILE=ecg
@@ -44,6 +45,20 @@ PREC=8
 # quadruple precision. For PREC=10 and PREC=16 the value of LINALG must be netlib.
 LINALG=netlib
 
+# Enable OpenMP in the bundled qrlinalg BLAS kernels. This is opt-in so the
+# existing serial build remains the default. OpenMP and serial objects use
+# different directories; changing OPENMP therefore cannot silently reuse
+# objects compiled with incompatible flags.
+# Supported values: 0 (serial, default), 1 (OpenMP).
+OPENMP ?= 0
+
+ifneq ($(OPENMP),$(filter $(OPENMP),0 1))
+  $(error OPENMP must be 0 or 1)
+endif
+
+OPENMP_SUFFIX := $(if $(filter 1,$(OPENMP)),-omp)
+BUILD_DIR := $(CONFIG)$(OPENMP_SUFFIX)
+
 # Set the default name for the generated executable file
 EXEFILE=ecg
 
@@ -60,8 +75,9 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
     QR_PREPROCESS_FLAGS=-cpp
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
-    export FCFLAGS=-J$(CONFIG)
-    export LINKFLAGS=-J$(CONFIG)
+    OPENMP_FLAG=-fopenmp
+    export FCFLAGS=-J$(BUILD_DIR)
+    export LINKFLAGS=-J$(BUILD_DIR)
     ifeq ($(CONFIG), debug)
       export FCFLAGS+=-C -O0 -g -fbounds-check -fbacktrace -finit-real=nan -fcheck=all -fimplicit-none -ffpe-trap=invalid,zero,overflow
       export LINKFLAGS+=-C -O0 -g -fbounds-check -fbacktrace -finit-real=nan -fcheck=all -fimplicit-none -ffpe-trap=invalid,zero,overflow
@@ -91,8 +107,9 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
     QR_PREPROCESS_FLAGS=-fpp
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
-    export FCFLAGS=-module $(CONFIG)
-    export LINKFLAGS=-module $(CONFIG)
+    OPENMP_FLAG=-qopenmp
+    export FCFLAGS=-module $(BUILD_DIR)
+    export LINKFLAGS=-module $(BUILD_DIR)
     ifeq ($(CONFIG), debug)
       export FCFLAGS+=-C -O0 -g -check bounds -check all -check uninit -traceback -ftrapuv -debug full -fpe0
       export LINKFLAGS+=-C -O0 -g -check bounds -check all -check uninit -traceback -ftrapuv -debug full -fpe0
@@ -117,8 +134,9 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
     QR_PREPROCESS_FLAGS=-fpp
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
-    export FCFLAGS=-module $(CONFIG)
-    export LINKFLAGS=-module $(CONFIG)
+    OPENMP_FLAG=-qopenmp
+    export FCFLAGS=-module $(BUILD_DIR)
+    export LINKFLAGS=-module $(BUILD_DIR)
     ifeq ($(CONFIG), debug)
       export FCFLAGS+=-O0 -g -check all -check uninit -traceback -ftrapuv -fpe0
       export LINKFLAGS+=-O0 -g -check all -check uninit -traceback -ftrapuv -fpe0
@@ -143,8 +161,9 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
     QR_PREPROCESS_FLAGS=-Mpreprocess
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
-    export FCFLAGS=-module $(CONFIG)
-    export LINKFLAGS=-module $(CONFIG)
+    OPENMP_FLAG=-mp
+    export FCFLAGS=-module $(BUILD_DIR)
+    export LINKFLAGS=-module $(BUILD_DIR)
     ifeq ($(CONFIG), debug)
       export FCFLAGS+=-O0 -g -Mbounds -Ktrap=fp -traceback
       export LINKFLAGS+=-O0 -g -Mbounds -Ktrap=fp -traceback
@@ -162,6 +181,11 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
     ifeq ($(PREC), 16)
       COMPILER_SUPPORTED=no
     endif
+  endif
+
+  ifeq ($(OPENMP), 1)
+    export FCFLAGS+=$(OPENMP_FLAG)
+    export LINKFLAGS+=$(OPENMP_FLAG)
   endif
 
   # Add linker flags for the selected optimized linear algebra library (PREC=8 only).
@@ -207,52 +231,54 @@ ifeq ($(LINALG), netlib)
 else
   export BARE_OBJS_LPKBLS=
 endif
-export OBJS_LPKBLS=$(addprefix $(CONFIG)/,$(BARE_OBJS_LPKBLS))
+export OBJS_LPKBLS=$(addprefix $(BUILD_DIR)/,$(BARE_OBJS_LPKBLS))
 
 export BARE_OBJS=wp_def_$(PREC).o X1MACH.o dmng.o globvars.o misc.o linalg.o \
               matelem.o matform.o qrupdate_linalg.o qrupdate_error.o \
               qrupdate_real.o qrupdate_complex.o qrupdate.o qrlinalg.o \
               workproc.o main.o spin.o
-export OBJS=$(addprefix $(CONFIG)/,$(BARE_OBJS))
+export OBJS=$(addprefix $(BUILD_DIR)/,$(BARE_OBJS))
 export OBJS+=$(OBJS_LPKBLS)
 
 .PHONY: release debug all clean cleaner cleanest cleandebug cleanrelease ptarg
 
 release:
 ifndef CONFIG
-	-@mkdir -p $(@)
+	-@mkdir -p $(@)$(OPENMP_SUFFIX)
 	@$(MAKE) $(MAKEFILE) --no-print-directory $(@) CONFIG=$(@)
 else
-	@$(MAKE) $(MAKEFILE) --no-print-directory $(CONFIG)/$(EXEFILE)
+	@$(MAKE) $(MAKEFILE) --no-print-directory $(BUILD_DIR)/$(EXEFILE)
 endif
 
 debug:
 ifndef CONFIG
-	-@mkdir -p $(@)
+	-@mkdir -p $(@)$(OPENMP_SUFFIX)
 	@$(MAKE) $(MAKEFILE) --no-print-directory $(@) CONFIG=$(@)
 else
-	@$(MAKE) $(MAKEFILE) --no-print-directory $(CONFIG)/$(EXEFILE)
+	@$(MAKE) $(MAKEFILE) --no-print-directory $(BUILD_DIR)/$(EXEFILE)
 endif
 
 all: release debug
 
 cleanrelease:
-	-rm -rf release/*.o release/*.mod
+	-rm -rf release/*.o release/*.mod release-omp/*.o release-omp/*.mod
 cleandebug:
-	-rm -rf debug/*.o debug/*.mod
+	-rm -rf debug/*.o debug/*.mod debug-omp/*.o debug-omp/*.mod
 clean: cleanrelease cleandebug
 cleaner:
 	-rm -rf debug/*.o debug/*.mod debug/$(EXEFILE)
+	-rm -rf debug-omp/*.o debug-omp/*.mod debug-omp/$(EXEFILE)
 	-rm -rf release/*.o release/*.mod release/$(EXEFILE)
+	-rm -rf release-omp/*.o release-omp/*.mod release-omp/$(EXEFILE)
 cleanest:
-	-rm -rf debug release
+	-rm -rf debug debug-omp release release-omp
 
 # This phony target is just used to output some info and error check
 
 ptarg:
 	@echo CONFIG=$(CONFIG)
 ifeq ($(COMPILER_SUPPORTED), yes)
-	@echo Using COMPILER=$(COMPILER) MACHINE=$(MACHINE) PREC=$(PREC) LINALG=$(LINALG) EXEFILE=$(CONFIG)/$(EXEFILE)
+	@echo Using COMPILER=$(COMPILER) MACHINE=$(MACHINE) PREC=$(PREC) LINALG=$(LINALG) OPENMP=$(OPENMP) EXEFILE=$(BUILD_DIR)/$(EXEFILE)
 else
 	@echo Error - there is no support for COMPILER=$(COMPILER) MACHINE=$(MACHINE) PREC=$(PREC) LINALG=$(LINALG)
 	@false
@@ -260,63 +286,63 @@ endif
 
 # The real targets
 
-$(CONFIG)/$(EXEFILE): ptarg $(OBJS)
-	$(FC) $(OBJS) -o $(CONFIG)/$(EXEFILE) $(LINKFLAGS) $(MPILINKFLAGS)
+$(BUILD_DIR)/$(EXEFILE): ptarg $(OBJS)
+	$(FC) $(OBJS) -o $(BUILD_DIR)/$(EXEFILE) $(LINKFLAGS) $(MPILINKFLAGS)
 
-$(CONFIG)/wp_def_$(PREC).o: $(SRC_DIR)/wp_def_$(PREC).f90
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/wp_def_$(PREC).f90 -o $(CONFIG)/wp_def_$(PREC).o
+$(BUILD_DIR)/wp_def_$(PREC).o: $(SRC_DIR)/wp_def_$(PREC).f90
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/wp_def_$(PREC).f90 -o $(BUILD_DIR)/wp_def_$(PREC).o
 
-$(CONFIG)/BLAS.o: $(SRC_DIR)/qrupdate/BLAS.f $(CONFIG)/wp_def_$(PREC).o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_FIXED_FLAGS) $(QR_PREPROCESS_FLAGS) -DQRLINALG_WP=$(PREC) -c $(SRC_DIR)/qrupdate/BLAS.f -o $(CONFIG)/BLAS.o
+$(BUILD_DIR)/BLAS.o: $(SRC_DIR)/qrupdate/BLAS.f $(BUILD_DIR)/wp_def_$(PREC).o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_FIXED_FLAGS) $(QR_PREPROCESS_FLAGS) -DQRLINALG_WP=$(PREC) -c $(SRC_DIR)/qrupdate/BLAS.f -o $(BUILD_DIR)/BLAS.o
 
-$(CONFIG)/LAPACK.o: $(SRC_DIR)/qrupdate/LAPACK.f $(CONFIG)/BLAS.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_FIXED_FLAGS) -c $(SRC_DIR)/qrupdate/LAPACK.f -o $(CONFIG)/LAPACK.o
+$(BUILD_DIR)/LAPACK.o: $(SRC_DIR)/qrupdate/LAPACK.f $(BUILD_DIR)/BLAS.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_FIXED_FLAGS) -c $(SRC_DIR)/qrupdate/LAPACK.f -o $(BUILD_DIR)/LAPACK.o
 
-$(CONFIG)/X1MACH.o: $(SRC_DIR)/X1MACH.f90 $(CONFIG)/wp_def_$(PREC).o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/X1MACH.f90 -o $(CONFIG)/X1MACH.o
+$(BUILD_DIR)/X1MACH.o: $(SRC_DIR)/X1MACH.f90 $(BUILD_DIR)/wp_def_$(PREC).o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/X1MACH.f90 -o $(BUILD_DIR)/X1MACH.o
 
-$(CONFIG)/dmng.o: $(SRC_DIR)/dmng.f $(CONFIG)/X1MACH.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/dmng.f -o $(CONFIG)/dmng.o
+$(BUILD_DIR)/dmng.o: $(SRC_DIR)/dmng.f $(BUILD_DIR)/X1MACH.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/dmng.f -o $(BUILD_DIR)/dmng.o
 
-$(CONFIG)/globvars.o: $(SRC_DIR)/globvars.f90 $(CONFIG)/wp_def_$(PREC).o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/globvars.f90 -o $(CONFIG)/globvars.o
+$(BUILD_DIR)/globvars.o: $(SRC_DIR)/globvars.f90 $(BUILD_DIR)/wp_def_$(PREC).o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/globvars.f90 -o $(BUILD_DIR)/globvars.o
 
-$(CONFIG)/linalg.o: $(SRC_DIR)/linalg.f90 $(CONFIG)/globvars.o $(OBJ_LPKBLS)
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/linalg.f90 -o $(CONFIG)/linalg.o
+$(BUILD_DIR)/linalg.o: $(SRC_DIR)/linalg.f90 $(BUILD_DIR)/globvars.o $(OBJ_LPKBLS)
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/linalg.f90 -o $(BUILD_DIR)/linalg.o
 
-$(CONFIG)/spin.o: $(SRC_DIR)/spin.f90 $(CONFIG)/wp_def_$(PREC).o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/spin.f90 -o $(CONFIG)/spin.o
+$(BUILD_DIR)/spin.o: $(SRC_DIR)/spin.f90 $(BUILD_DIR)/wp_def_$(PREC).o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/spin.f90 -o $(BUILD_DIR)/spin.o
 
-$(CONFIG)/misc.o: $(SRC_DIR)/misc.f90 $(CONFIG)/globvars.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/misc.f90 -o $(CONFIG)/misc.o
+$(BUILD_DIR)/misc.o: $(SRC_DIR)/misc.f90 $(BUILD_DIR)/globvars.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/misc.f90 -o $(BUILD_DIR)/misc.o
 
-$(CONFIG)/matelem.o: $(SRC_DIR)/matelem.f90 $(CONFIG)/globvars.o $(CONFIG)/spin.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/matelem.f90 -o $(CONFIG)/matelem.o
+$(BUILD_DIR)/matelem.o: $(SRC_DIR)/matelem.f90 $(BUILD_DIR)/globvars.o $(BUILD_DIR)/spin.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/matelem.f90 -o $(BUILD_DIR)/matelem.o
 
-$(CONFIG)/matform.o: $(SRC_DIR)/matform.f90 $(CONFIG)/matelem.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/matform.f90 -o $(CONFIG)/matform.o
+$(BUILD_DIR)/matform.o: $(SRC_DIR)/matform.f90 $(BUILD_DIR)/matelem.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/matform.f90 -o $(BUILD_DIR)/matform.o
 
-$(CONFIG)/qrupdate_linalg.o: $(SRC_DIR)/qrupdate/qrupdate_linalg.f90 $(CONFIG)/wp_def_$(PREC).o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate_linalg.f90 -o $(CONFIG)/qrupdate_linalg.o
+$(BUILD_DIR)/qrupdate_linalg.o: $(SRC_DIR)/qrupdate/qrupdate_linalg.f90 $(BUILD_DIR)/wp_def_$(PREC).o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate_linalg.f90 -o $(BUILD_DIR)/qrupdate_linalg.o
 
-$(CONFIG)/qrupdate_error.o: $(SRC_DIR)/qrupdate/qrupdate_error.f90 $(CONFIG)/qrupdate_linalg.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate_error.f90 -o $(CONFIG)/qrupdate_error.o
+$(BUILD_DIR)/qrupdate_error.o: $(SRC_DIR)/qrupdate/qrupdate_error.f90 $(BUILD_DIR)/qrupdate_linalg.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate_error.f90 -o $(BUILD_DIR)/qrupdate_error.o
 
-$(CONFIG)/qrupdate_real.o: $(SRC_DIR)/qrupdate/qrupdate_real.f90 $(CONFIG)/qrupdate_error.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate_real.f90 -o $(CONFIG)/qrupdate_real.o
+$(BUILD_DIR)/qrupdate_real.o: $(SRC_DIR)/qrupdate/qrupdate_real.f90 $(BUILD_DIR)/qrupdate_error.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate_real.f90 -o $(BUILD_DIR)/qrupdate_real.o
 
-$(CONFIG)/qrupdate_complex.o: $(SRC_DIR)/qrupdate/qrupdate_complex.f90 $(CONFIG)/qrupdate_error.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate_complex.f90 -o $(CONFIG)/qrupdate_complex.o
+$(BUILD_DIR)/qrupdate_complex.o: $(SRC_DIR)/qrupdate/qrupdate_complex.f90 $(BUILD_DIR)/qrupdate_error.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate_complex.f90 -o $(BUILD_DIR)/qrupdate_complex.o
 
-$(CONFIG)/qrupdate.o: $(SRC_DIR)/qrupdate/qrupdate.f90 $(CONFIG)/qrupdate_real.o $(CONFIG)/qrupdate_complex.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate.f90 -o $(CONFIG)/qrupdate.o
+$(BUILD_DIR)/qrupdate.o: $(SRC_DIR)/qrupdate/qrupdate.f90 $(BUILD_DIR)/qrupdate_real.o $(BUILD_DIR)/qrupdate_complex.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate.f90 -o $(BUILD_DIR)/qrupdate.o
 
-$(CONFIG)/qrlinalg.o: $(SRC_DIR)/qrlinalg.f90 $(CONFIG)/qrupdate.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_PREPROCESS_FLAGS) -c $(SRC_DIR)/qrlinalg.f90 -o $(CONFIG)/qrlinalg.o
+$(BUILD_DIR)/qrlinalg.o: $(SRC_DIR)/qrlinalg.f90 $(BUILD_DIR)/qrupdate.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_PREPROCESS_FLAGS) -c $(SRC_DIR)/qrlinalg.f90 -o $(BUILD_DIR)/qrlinalg.o
 
-$(CONFIG)/workproc.o: $(SRC_DIR)/workproc.f90 $(CONFIG)/misc.o $(CONFIG)/linalg.o $(CONFIG)/matform.o $(CONFIG)/matelem.o $(CONFIG)/dmng.o $(CONFIG)/qrlinalg.o $(OBJS_LPKBLS)
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/workproc.f90 -o $(CONFIG)/workproc.o
+$(BUILD_DIR)/workproc.o: $(SRC_DIR)/workproc.f90 $(BUILD_DIR)/misc.o $(BUILD_DIR)/linalg.o $(BUILD_DIR)/matform.o $(BUILD_DIR)/matelem.o $(BUILD_DIR)/dmng.o $(BUILD_DIR)/qrlinalg.o $(OBJS_LPKBLS)
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/workproc.f90 -o $(BUILD_DIR)/workproc.o
 
-$(CONFIG)/main.o: $(SRC_DIR)/main.f90 $(CONFIG)/workproc.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/main.f90 -o $(CONFIG)/main.o
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.f90 $(BUILD_DIR)/workproc.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/main.f90 -o $(BUILD_DIR)/main.o
 

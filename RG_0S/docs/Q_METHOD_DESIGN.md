@@ -1302,3 +1302,184 @@ deletion and `SEPR_LND1 Q` selected-column replacement. Both completed their
 save-and-stop paths without bounds, allocation, floating-point, or collective
 errors. Their final MPI status remains intentionally nonzero because the
 legacy routines call `MPI_Abort` after saving.
+
+## 19. Port to RG_1P, RG_2D, and RG_2P
+
+The complete committed RG_0S Q implementation through `846120a` was ported to
+the three remaining real-basis energy codes. The upstream sequence used as the
+port specification was:
+
+1. `8561b61 Establish Q method QR architecture`;
+2. `4b07fa4 Implement Q cyclic optimization`;
+3. `f872103 Implement remaining Q methods`; and
+4. `846120a Optimize Q cleanup updates`.
+
+The port deliberately did not copy the whole final RG_0S `workproc.f90` over a
+sibling. Each sibling contains basis-specific generation, discrete angular
+indices, matrix-element signatures, saved-data formats, and operator code. The
+repeatable procedure was instead:
+
+1. use the pre-Q RG_0S file at `154145b` as the merge base;
+2. use the RG_0S file at `846120a` as the changed reference;
+3. perform a three-way file merge with the unchanged sibling as the current
+   side, thereby transferring only the RG_0S Q changes;
+4. resolve overlap at the insertion point in favor of the new Q routines while
+   retaining the sibling's existing `BasisEnlG` routine;
+5. restore the sibling's discrete-index declarations and allocations in that
+   retained G routine;
+6. adapt indexed Q assembly and Q basis enlargement as described below; and
+7. compile each sibling before attempting runtime validation.
+
+This merge method also carries the small G/I-independent corrections made
+during the RG_0S implementation, including the shared reallocation helper,
+order-one overlap-statistics guards, solver-aware save/cleanup routing, and the
+final optimized delete/replace paths. It avoids trying to reconstruct those
+changes from the final file by hand.
+
+### Basis-specific indexed assembly
+
+The canonical H/S layout, Q transaction state, qrlinalg lifecycle, MPI pair
+ownership, normalization, and derivative contraction are unchanged across the
+four real codes. Only the local basis metadata and matrix-element call differ:
+
+| Code | Metadata for function `i` | Q matrix-element call |
+| --- | --- | --- |
+| RG_0S | none | `MatrixElementsHS_RG_0S(ParamActive,ParamOther,...)` |
+| RG_1P | `Glob_ZIndex(i)` | `MatrixElementsHS_RG_1P(mActive,mOther,ParamActive,ParamOther,...)` |
+| RG_2D | `Glob_Index(i,1:2)` | `MatrixElementsHS_RG_2D(mActive,mmActive,mOther,mmOther,ParamActive,ParamOther,...,Tkl,Vkl,...)` |
+| RG_2P | `Glob_Index(i,1:2)` | `MatrixElementsHS_RG_2P(mActive,mOther,mmActive,mmOther,ParamActive,ParamOther,...)` |
+
+The RG_2D ordering and its extra `Tkl,Vkl` outputs must not be inferred from
+the RG_2P call: the two interfaces are intentionally different. The indexed Q
+assembler passes the active function as the first basis argument so
+`DActive` always denotes the derivative with respect to the active optimizer
+block. `DOther` is requested only for a second active endpoint, exactly as in
+RG_0S.
+
+### Discrete metadata during Q basis enlargement
+
+`BasisEnlQ` must reproduce more than the continuous RG_0S candidate logic:
+
+- RG_1P generates, broadcasts, saves, restores, prints, and optionally
+  optimizes one `Z` index per candidate;
+- RG_2D does the same for two independently selectable indices;
+- RG_2P does the same for two indices while preserving the local requirement
+  that the two indices of one basis function differ.
+
+These indices are not DRMNG variables and are not stored in
+`Q_Workspace%MatrixParam`. Every discrete trial therefore uses
+`EvaluateQAppendedTrial`, which trims the previous suffix, assembles the new
+physical columns, and appends them transactionally. After scanning the index
+alternatives, `BasisEnlQ` explicitly evaluates the winning metadata again
+before continuous optimization. Omitting this final reconstruction is a
+subtle correctness bug: unchanged nonlinear parameters could make a
+parameter-only cache appear current while H/S and the QR factors still belong
+to the last discrete index tested.
+
+Deletion must compact this metadata together with nonlinear parameters. The
+coefficient-based elimination uses a temporary `ZIndTemp` in RG_1P or
+`IndTemp(:,1:2)` in RG_2D/RG_2P. Pair-overlap elimination copies
+`Glob_ZIndex` or `Glob_Index` in its existing in-place survivor loop. Q then
+deletes the same canonical mask from the factors and physical matrices.
+Separation changes only continuous parameters, so its existing metadata stays
+at the same canonical indices.
+
+### Files changed in each sibling
+
+- `Makefile`: compile and link the vendored qrupdate modules and qrlinalg in
+  dependency order;
+- `src/qrlinalg.f90` and `src/qrupdate/`: exact basis-independent copies of the
+  tested RG_0S sources;
+- `src/matform.f90`: canonical normalized physical lower-triangle storage for
+  `StoreHS` when the method is Q;
+- `src/workproc.f90`: Q workspace, indexed assembly, solve/update/refresh
+  lifecycle, Q BBOP drivers, canonical swap handling, and optimized cleanup;
+- `src/main.f90`: Q dispatch for enlargement, cyclic/full optimization,
+  elimination, separation, expectation values, densities, and `SAVE_HSWF`.
+
+No Q state was added to `globvars.f90`, and no basis-specific matrix-element
+kernel was modified. This keeps the transaction lifetime local to
+`workproc.f90` and preserves the existing no-gradient fast paths.
+
+### Port validation
+
+All three codes compiled with their strict debug configuration at wp=8 and
+the bundled Netlib provider:
+
+```bash
+make -C RG_1P debug COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib EXEFILE=ecg
+make -C RG_2D debug COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib EXEFILE=ecg
+make -C RG_2P debug COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib EXEFILE=ecg
+```
+
+Disposable two-function tests then ran
+`BASIS_ENL Q -> OPT_CYCLE Q -> FULL_OPT1 Q -> SAVE_HSWF Q` for every basis.
+They exercised random candidate replacement, analytic derivatives, swap-file
+restart, and fresh reconstruction. The RG_2P test used distinct indices
+`(1,2)`, confirming its basis restriction survives Q generation.
+
+Fresh `EXPC_VALS` solves on identical physical bases gave:
+
+| Code | G energy | Q energy |
+| --- | ---: | ---: |
+| RG_1P | -1.3310389787913615 | -1.3310389787913615 |
+| RG_2D | -1.2280425657520879 | -1.2280425657520877 |
+| RG_2P | -0.68944369998577426 | -0.68944369998577426 |
+
+The same Q expectation-value calculations produced those values with one and
+two MPI ranks. Starting from identical parameters, one additional
+single-function `OPT_CYCLE` step ended at:
+
+| Code | G energy | Q energy |
+| --- | ---: | ---: |
+| RG_1P | -1.3701373791941440 | -1.3701373791941438 |
+| RG_2D | -1.2703194840595440 | -1.2703194840595440 |
+| RG_2P | -0.69397612924302121 | -0.69397612924302110 |
+
+A two-active-function `FULL_OPT1` comparison, which exercises the shared
+active-active matrix intersection and both derivative endpoints, ended at:
+
+| Code | G energy | Q energy |
+| --- | ---: | ---: |
+| RG_1P | -1.8517391069433500 | -1.8517391069433526 |
+| RG_2D | -1.6632568058517927 | -1.6632568058517949 |
+| RG_2P | -0.69601080430469697 | -0.69601080430469742 |
+
+Finally, all four save-and-stop cleanup routines were executed with Q in all
+three siblings. `ELIM_LCFN` and `ELIM_LND1` reduced the disposable bases from
+two functions to one using QR deletion. `SEPR_LND1` and `SEPR_FLCF` replaced
+the selected canonical columns and saved the perturbed bases. The saved
+one-function files retained, respectively, RG_1P index `1`, RG_2D indices
+`(1,1)`, and RG_2P indices `(1,2)`. Exit status 1 is expected for these legacy
+routines because they intentionally call `MPI_Abort` after a successful save.
+
+## 20. OpenMP builds for the real-ECG Q variants
+
+The Makefiles in RG_0S, RG_1P, RG_2D, and RG_2P accept an opt-in `OPENMP=1`
+setting. Each supported compiler uses its native OpenMP flag: `-fopenmp` for
+gfortran, `-qopenmp` for ifort and ifx, and `-mp` for nvfortran. The flag is
+used for both compilation and linking so the OpenMP-enabled qrupdate kernels
+and runtime are connected consistently.
+
+Serial and OpenMP objects must never share a build directory. The normal
+targets remain `debug/` and `release/`; OpenMP targets use `debug-omp/` and
+`release-omp/`. The executable name remains exactly the requested `EXEFILE`
+(normally `ecg`), for example:
+
+```bash
+make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib OPENMP=1 EXEFILE=ecg
+OMP_NUM_THREADS=4 mpirun -np 2 release-omp/ecg
+```
+
+OpenMP is process-local: every MPI rank loads the OpenMP runtime and may form
+its own team. Consequently the approximate CPU demand is MPI ranks multiplied
+by `OMP_NUM_THREADS`. Set thread affinity and rank placement for the target
+machine, and avoid assigning more total runnable threads than available CPU
+cores unless oversubscription is intentional.
+
+Some historical LAPACK signature comments began with `!$`. In free-form
+Fortran that prefix is an OpenMP conditional/directive sentinel once OpenMP is
+enabled, so the compiler attempted to parse the commented argument lists as
+directives. Those lines now use ordinary `!` comments in every real-ECG
+variant; this is a source-compatibility correction and does not alter the
+serial or numerical code path.

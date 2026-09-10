@@ -2189,8 +2189,8 @@ contains
                     NumOfEigvalsFound,EVs,Z,Nmax,Glob_WorkForDSYGVX,  &
                     Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
         ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
-!$      VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
-!$      LWORK, IWORK, IFAIL, INFO )
+!       VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
+!       LWORK, IWORK, IFAIL, INFO )
         Evalue=EVs(1)
       endif
       if (Glob_OverlapPenaltyAllowed) call ComputeOverlapPenalty(Glob_MaxOverlapPenalty, &
@@ -2252,8 +2252,8 @@ contains
                       NumOfEigvalsFound,EVs,Glob_c,Nmax,Glob_WorkForDSYGVX,  &
                       Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
         ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
-!$      VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
-!$      LWORK, IWORK, IFAIL, INFO )
+!       VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
+!       LWORK, IWORK, IFAIL, INFO )
         Evalue=EVs(1)
       endif
       if (Glob_OverlapPenaltyAllowed) call ComputeOverlapPenalty(Glob_MaxOverlapPenalty, &
@@ -2345,8 +2345,8 @@ contains
                       NumOfEigvalsFound,EVs,Glob_c,nfa,Glob_WorkForDSYGVX,  &
                       Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
         ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
-!$      VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
-!$      LWORK, IWORK, IFAIL, INFO )
+!       VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
+!       LWORK, IWORK, IFAIL, INFO )
         Evalue=EVs(1)
       endif
       call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
@@ -11372,9 +11372,9 @@ contains
                       NumOfEigvalsFound,Eigvals,Eigvecs,cbs,Glob_WorkForDSYGVX,Glob_LWorkForDSYGVX, &
                       Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
           !SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
-!$        VL, VU, IL, IU, ABSTOL,
-!$        M, W, Z, LDZ, WORK, LWORK,
-!$        IWORK, IFAIL, INFO )
+!         VL, VU, IL, IU, ABSTOL,
+!         M, W, Z, LDZ, WORK, LWORK,
+!         IWORK, IFAIL, INFO )
         endif
         call MPI_BCAST(ErrorCode,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
         if (ErrorCode/=0) then
@@ -12017,9 +12017,9 @@ contains
                     NumOfEigvalsFound,Eigvals,Eigvecs,cbs,Glob_WorkForDSYGVX,Glob_LWorkForDSYGVX, &
                     Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
         !SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
-!$      VL, VU, IL, IU, ABSTOL,
-!$      M, W, Z, LDZ, WORK, LWORK,
-!$      IWORK, IFAIL, INFO )
+!       VL, VU, IL, IU, ABSTOL,
+!       M, W, Z, LDZ, WORK, LWORK,
+!       IWORK, IFAIL, INFO )
       endif
       call MPI_BCAST(ErrorCode,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
       if (ErrorCode/=0) then
