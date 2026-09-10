@@ -3850,6 +3850,89 @@ contains
 
   end subroutine PrepareQWorkspace
 
+  subroutine EnsureQActiveCapacity(RequiredActive,ErrorCode)
+!Subroutine EnsureQActiveCapacity enlarges only the transaction part of an
+!existing Q workspace. The QR factors and the full-order vector workspace are
+!deliberately preserved. Cleanup routines initially reserve one active column
+!because that is sufficient for elimination, but a separation test discovers
+!the number of columns to replace only after the first eigenvector or overlap
+!matrix has been inspected. Rebuilding the complete Q workspace at that point
+!would discard the factorization whose reuse is the purpose of the Q method.
+!
+!This operation is valid only between transactions. No previous, trial, or
+!accepted point is copied: cleanup routines call it before selecting their
+!first active set. Allocating every replacement array before move_alloc makes
+!allocation failure transactional as well; the original workspace remains
+!usable when any allocation fails.
+!
+!Arguments:
+    integer,intent(in)  :: RequiredActive
+    integer,intent(out) :: ErrorCode
+!Local variables:
+    integer AllocationStatus
+    integer,allocatable :: NewActiveFunction(:)
+    real(wp),allocatable :: NewPreviousH(:,:),NewPreviousS(:,:)
+    real(wp),allocatable :: NewTrialH(:,:),NewTrialS(:,:)
+    real(wp),allocatable :: NewPreviousDiagS(:),NewTrialDiagS(:)
+    real(wp),allocatable :: NewMatrixParam(:,:),NewPreviousParam(:,:)
+    real(wp),allocatable :: NewAcceptedParam(:,:)
+
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    if (RequiredActive<1) return
+    if (RequiredActive>Q_Workspace%Capacity) return
+    if (Q_Workspace%MatrixOrder<1) return
+    if (Q_Workspace%NumActive/=0) return
+    if (Q_Workspace%MatrixParametersAreStored) return
+    if (Q_Workspace%TrialIsReady) return
+    if (Q_Workspace%AcceptedPointIsStored) return
+    if (.not.allocated(Q_Workspace%ActiveFunction)) return
+    if (RequiredActive<=Q_Workspace%MaxActive) then
+      ErrorCode=Q_METHOD_SUCCESS
+      return
+    endif
+
+    allocate(NewActiveFunction(RequiredActive), &
+             NewPreviousH(Q_Workspace%Capacity,RequiredActive), &
+             NewPreviousS(Q_Workspace%Capacity,RequiredActive), &
+             NewTrialH(Q_Workspace%Capacity,RequiredActive), &
+             NewTrialS(Q_Workspace%Capacity,RequiredActive), &
+             NewPreviousDiagS(RequiredActive), &
+             NewTrialDiagS(RequiredActive), &
+             NewMatrixParam(Glob_npt,RequiredActive), &
+             NewPreviousParam(Glob_npt,RequiredActive), &
+             NewAcceptedParam(Glob_npt,RequiredActive), &
+             stat=AllocationStatus)
+    if (AllocationStatus/=0) then
+      ErrorCode=Q_METHOD_ALLOCATION_ERROR
+      return
+    endif
+
+    NewActiveFunction=0
+    NewPreviousH=ZERO
+    NewPreviousS=ZERO
+    NewTrialH=ZERO
+    NewTrialS=ZERO
+    NewPreviousDiagS=ZERO
+    NewTrialDiagS=ZERO
+    NewMatrixParam=ZERO
+    NewPreviousParam=ZERO
+    NewAcceptedParam=ZERO
+
+    call move_alloc(NewActiveFunction,Q_Workspace%ActiveFunction)
+    call move_alloc(NewPreviousH,Q_Workspace%PreviousH)
+    call move_alloc(NewPreviousS,Q_Workspace%PreviousS)
+    call move_alloc(NewTrialH,Q_Workspace%TrialH)
+    call move_alloc(NewTrialS,Q_Workspace%TrialS)
+    call move_alloc(NewPreviousDiagS,Q_Workspace%PreviousDiagS)
+    call move_alloc(NewTrialDiagS,Q_Workspace%TrialDiagS)
+    call move_alloc(NewMatrixParam,Q_Workspace%MatrixParam)
+    call move_alloc(NewPreviousParam,Q_Workspace%PreviousParam)
+    call move_alloc(NewAcceptedParam,Q_Workspace%AcceptedParam)
+    Q_Workspace%MaxActive=RequiredActive
+    ErrorCode=Q_METHOD_SUCCESS
+
+  end subroutine EnsureQActiveCapacity
+
   subroutine ClearQWorkspace()
 !Subroutine ClearQWorkspace releases workproc-owned Q storage. It intentionally
 !does not deallocate the existing Glob_ arrays, because their lifetime belongs
@@ -4694,8 +4777,8 @@ contains
     real(wp),intent(out) :: AbsoluteResidual,RelativeResidual
     integer,intent(out)  :: ErrorCode
 !Local variables:
-    integer i,j,MatrixOrder
-    real(wp) HAction,SAction,HNorm2,SNorm2,ResidualNorm2
+    integer MatrixOrder
+    real(wp) HNorm2,SNorm2,ResidualNorm2
 
     AbsoluteResidual=ZERO
     RelativeResidual=ZERO
@@ -4706,22 +4789,25 @@ contains
     if (.not.allocated(Q_Workspace%DeltaH)) return
     if (.not.allocated(Q_Workspace%DeltaS)) return
 
-    HNorm2=ZERO
-    SNorm2=ZERO
-    ResidualNorm2=ZERO
-    do i=1,MatrixOrder
-      HAction=ZERO
-      SAction=ZERO
-      do j=1,MatrixOrder
-        HAction=HAction+QCanonicalMatrixElement(Glob_H,i,j)*Eigenvector(j)
-        SAction=SAction+QCanonicalMatrixElement(Glob_S,i,j)*Eigenvector(j)
-      enddo
-      Q_Workspace%DeltaH(i)=HAction
-      Q_Workspace%DeltaS(i)=SAction
-      HNorm2=HNorm2+HAction*HAction
-      SNorm2=SNorm2+SAction*SAction
-      ResidualNorm2=ResidualNorm2+(HAction-Evalue*SAction)**2
-    enddo
+    !The earlier scalar double loop performed the same two symmetric products
+    !but left optimized BLAS performance unused. DSYMV reads exactly the
+    !authoritative lower triangles, handles the physical leading dimension,
+    !and is substantially faster for the residual that follows every Q solve.
+    !This helper is called only on rank zero, so calling BLAS directly is also
+    !important: the MPI-routing MTMVL wrapper is collective for some calibrated
+    !matrix sizes and therefore cannot be entered by the root alone.
+    call DSYMV('L',MatrixOrder,ONE,Glob_H,size(Glob_H,1),Eigenvector,1, &
+      ZERO,Q_Workspace%DeltaH,1)
+    call DSYMV('L',MatrixOrder,ONE,Glob_S,size(Glob_S,1),Eigenvector,1, &
+      ZERO,Q_Workspace%DeltaS,1)
+    HNorm2=dot_product(Q_Workspace%DeltaH(1:MatrixOrder), &
+                      Q_Workspace%DeltaH(1:MatrixOrder))
+    SNorm2=dot_product(Q_Workspace%DeltaS(1:MatrixOrder), &
+                      Q_Workspace%DeltaS(1:MatrixOrder))
+    Q_Workspace%DeltaH(1:MatrixOrder)=Q_Workspace%DeltaH(1:MatrixOrder)- &
+      Evalue*Q_Workspace%DeltaS(1:MatrixOrder)
+    ResidualNorm2=dot_product(Q_Workspace%DeltaH(1:MatrixOrder), &
+                             Q_Workspace%DeltaH(1:MatrixOrder))
     AbsoluteResidual=sqrt(ResidualNorm2)
     RelativeResidual=AbsoluteResidual/ &
       (sqrt(HNorm2)+abs(Evalue)*sqrt(SNorm2)+tiny(ONE))
@@ -9690,10 +9776,10 @@ contains
 
   subroutine SolveEliminationGSEP(GSEPSolMethod,MatrixOrder,Evalue,ErrorCode)
 !Subroutine SolveEliminationGSEP provides the common eigensolver boundary used
-!by the elimination and separation BBOP routines. These routines rebuild the
-!whole physical matrix after changing the basis, so Q intentionally performs a
-!fresh factorization here. Rank-one QR updates would add complexity without
-!saving work because all matrix elements have just been recomputed.
+!by the elimination and separation BBOP routines. It constructs the initial
+!factorization. After the basis change, Q cleanup drivers preserve this state
+!through delete_symmetric or replace_symmetric; only G rebuilds and calls this
+!routine a second time.
 !
 !The G path preserves the historical DSYGVX layout: it materializes the upper
 !triangle and restores Hamiltonian and overlap diagonals before calling LAPACK.
@@ -9755,6 +9841,123 @@ contains
 
   end subroutine SolveEliminationGSEP
 
+  subroutine DeleteQMaskedFunctions(RemoveMask,ErrorCode)
+!Subroutine DeleteQMaskedFunctions removes every marked canonical basis
+!function from both the qrlinalg state and the physical matrix representation.
+!Deletions are submitted in descending canonical order, so an original index
+!continues to identify the same row and column after every preceding deletion.
+!For r removed functions this costs O(r*n**2), while the historical cleanup
+!path recalculated O(n**2) matrix elements and constructed another O(n**3)
+!factorization even though every survivor-survivor element was unchanged.
+!
+!The physical lower triangles are compacted only after all root-owned QR
+!operations succeed. Their in-place ascending survivor copy is safe: each
+!source row and column has an original index not smaller than its destination,
+!and no write can destroy a matrix element needed by a later survivor. The
+!upper triangles remain deliberately unspecified under the Q canonical-layout
+!contract. Raw overlap norms and the current eigenvector are compacted by the
+!same survivor map.
+!
+!A public qrlinalg deletion cannot fail after the complete metadata preflight,
+!but the recovery path is still explicit. If a future library implementation
+!introduces a failure, the untouched physical matrices reconstruct the old
+!factorization before this routine reports the original error.
+!
+!Arguments:
+    integer,intent(in)  :: RemoveMask(:)
+    integer,intent(out) :: ErrorCode
+!Local variables:
+    integer i,j,OldI,OldJ,OldOrder,NewOrder,RootError,RecoveryError
+    integer,allocatable :: Survivor(:)
+
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    OldOrder=Q_Workspace%MatrixOrder
+    if (Glob_GSEPSolutionMethod/='Q') return
+    if (.not.Q_Workspace%MatricesAreCanonical) return
+    if (.not.Q_Workspace%FactorsMatchMatrices) return
+    if (OldOrder<2) return
+    if (size(RemoveMask)/=OldOrder) return
+    NewOrder=count(RemoveMask==0)
+    if ((NewOrder<1).or.(NewOrder>=OldOrder)) return
+    if (.not.allocated(Glob_H)) return
+    if (.not.allocated(Glob_S)) return
+    if (.not.allocated(Glob_diagS)) return
+    if (.not.allocated(Glob_c)) return
+    if ((size(Glob_H,1)<OldOrder).or.(size(Glob_H,2)<OldOrder)) return
+    if ((size(Glob_S,1)<OldOrder).or.(size(Glob_S,2)<OldOrder)) return
+    if (size(Glob_diagS)<OldOrder) return
+    if (size(Glob_c)<OldOrder) return
+
+    allocate(Survivor(NewOrder),stat=RootError)
+    if (RootError/=0) then
+      ErrorCode=Q_METHOD_ALLOCATION_ERROR
+      return
+    endif
+    j=0
+    do i=1,OldOrder
+      if (RemoveMask(i)==0) then
+        j=j+1
+        Survivor(j)=i
+      endif
+    enddo
+
+    RootError=Q_METHOD_SUCCESS
+    if (Glob_ProcID==0) then
+      if (.not.Q_Workspace%Factors%is_valid()) RootError=Q_METHOD_INVALID_STATE
+      if (Q_Workspace%Factors%order()/=OldOrder) RootError=Q_METHOD_INVALID_STATE
+      if (Q_Workspace%Factors%get_capacity()/=Q_Workspace%Capacity) &
+        RootError=Q_METHOD_INVALID_STATE
+      if (Q_Workspace%Factors%get_shift()/=Glob_ApproxEnergy) &
+        RootError=Q_METHOD_INVALID_STATE
+      if (RootError==Q_METHOD_SUCCESS) then
+        do i=OldOrder,1,-1
+          if (RemoveMask(i)/=0) then
+            call Q_Workspace%Factors%delete_symmetric(i,RootError)
+            if (RootError/=Q_METHOD_SUCCESS) exit
+          endif
+        enddo
+      endif
+    endif
+    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    if (RootError/=Q_METHOD_SUCCESS) then
+      Q_Workspace%FactorsMatchMatrices=.false.
+      call FactorizeQFresh(RecoveryError)
+      if (RecoveryError/=Q_METHOD_SUCCESS) then
+        ErrorCode=RecoveryError
+      else
+        ErrorCode=RootError
+      endif
+      deallocate(Survivor)
+      return
+    endif
+
+    do i=1,NewOrder
+      OldI=Survivor(i)
+      Glob_c(i)=Glob_c(OldI)
+      Glob_diagS(i)=Glob_diagS(OldI)
+      do j=1,i
+        OldJ=Survivor(j)
+        Glob_H(i,j)=Glob_H(OldI,OldJ)
+        Glob_S(i,j)=Glob_S(OldI,OldJ)
+      enddo
+    enddo
+
+    Q_Workspace%MatrixOrder=NewOrder
+    Q_Workspace%NumActive=0
+    Q_Workspace%ActiveFunction=0
+    Q_Workspace%ActivePosition=0
+    Q_Workspace%MatrixParametersAreStored=.false.
+    Q_Workspace%TrialIsReady=.false.
+    Q_Workspace%TrialHasDerivatives=.false.
+    Q_Workspace%AcceptedPointIsStored=.false.
+    Q_Workspace%FactorsMatchMatrices=.true.
+    Q_Workspace%LastEigenpairResidual=huge(ONE)
+    Q_Workspace%LastFactorResidual=huge(ONE)
+    ErrorCode=Q_METHOD_SUCCESS
+    deallocate(Survivor)
+
+  end subroutine DeleteQMaskedFunctions
+
   subroutine EliminateLittleContribFunc(LinCoeffThreshold,FileName,PrintInfoSpec,GSEPSolMethod)
 !Subroutine EliminateLittleContribFunc eliminates basis
 !functions whose contribution to the energy is small. More
@@ -9791,6 +9994,7 @@ contains
     real(wp)  Min_c,Max_c
     real(wp)  Aver_c
     real(wp),allocatable,dimension(:,:)   :: NonlinParamTemp
+    integer,allocatable,dimension(:)      :: MaskArray
     character(Glob_FileNameLength)           :: ch_temp
     character(1)                              :: Method
 
@@ -9856,6 +10060,8 @@ contains
     endif
 
     allocate(NonlinParamTemp(1:npt,cbs))
+    allocate(MaskArray(1:cbs))
+    MaskArray=0
 
     if ((PrintInfoSpec>1).and.(Glob_ProcID==0)) then
       write(*,*) 'List of all linear coefficients:'
@@ -9875,7 +10081,9 @@ contains
       else
         if ((j==0).and.(Glob_ProcID==0)) write(*,*) 'Little contributing function list:'
         j=j+1
-        write(*,'(i6,a1,i6,a4,f19.12)') j,':',i,'  c=',Glob_c(i)
+        MaskArray(i)=1
+        if (Glob_ProcID==0) &
+          write(*,'(i6,a1,i6,a4,f19.12)') j,':',i,'  c=',Glob_c(i)
       endif
       if (abs(Glob_c(i))>abs(Max_c)) Max_c=Glob_c(i)
       if (abs(Glob_c(i))<abs(Min_c)) Min_c=Glob_c(i)
@@ -9916,17 +10124,32 @@ contains
       write(*,*) 'Energy before elimination    ',Evalue
     endif
 
-    Glob_CurrBasisSize=cbs-j
-    cbs=Glob_CurrBasisSize
-    Glob_NonlinParam(1:npt,1:cbs)=NonlinParamTemp(1:npt,1:cbs)
+    Glob_NonlinParam(1:npt,1:cbs-j)=NonlinParamTemp(1:npt,1:cbs-j)
 
     if (Glob_ProcID==0) then
-      write(*,*) 'Computing matrix elements and solving eigenvalue problem with the'
-      write(*,*) 'basis where little contributing functions are eliminated...'
+      if (Method=='Q') then
+        write(*,*) 'Deleting selected rows and columns from the QR factorization...'
+      else
+        write(*,*) 'Computing matrix elements and solving eigenvalue problem with the'
+        write(*,*) 'basis where little contributing functions are eliminated...'
+      endif
     endif
-    call ComputeMatElem(1,cbs)
-
-    call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
+    if (Method=='Q') then
+      !Every survivor-survivor matrix element is unchanged. Preserve its
+      !canonical value and delete the matching factor rows and columns instead
+      !of evaluating the complete smaller matrix for a second time.
+      call DeleteQMaskedFunctions(MaskArray,ErrorCode)
+      if (ErrorCode==Q_METHOD_SUCCESS) then
+        Glob_CurrBasisSize=cbs-j
+        cbs=Glob_CurrBasisSize
+        call SolveQ(Evalue,ErrorCode)
+      endif
+    else
+      Glob_CurrBasisSize=cbs-j
+      cbs=Glob_CurrBasisSize
+      call ComputeMatElem(1,cbs)
+      call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
+    endif
     if (ErrorCode/=0) then
       if (Glob_ProcID==0) write(*,*) &
         'Error EC0171 in EliminateLittleContribFunc: energy cannot be computed'
@@ -9956,6 +10179,7 @@ contains
     if (Glob_ProcID==0) call SaveResults(Sort='no')
     Glob_DataFileName=ch_temp
 
+    deallocate(MaskArray)
     deallocate(NonlinParamTemp)
 
 !deallocate global arrays
@@ -10120,7 +10344,14 @@ contains
         AverOverlap=AverOverlap+abs(Glob_S(j,i))
       enddo
     enddo
-    AverOverlap=AverOverlap/(cbs*(cbs-1)/TWO)
+    if (cbs>1) then
+      AverOverlap=AverOverlap/(cbs*(cbs-1)/TWO)
+    else
+      !An order-one basis has no off-diagonal pair statistics.
+      MaxOverlap=ZERO
+      MinOverlap=ZERO
+      AverOverlap=ZERO
+    endif
 
 !Check linear coefficients:
     Min_c=huge(Min_c)/2
@@ -10171,17 +10402,26 @@ contains
     !overlap several earlier functions, but MaskArray removes that function
     !only once. j is the number of unique masked functions actually skipped by
     !the compaction loop and therefore defines the new basis order.
-    Glob_CurrBasisSize=cbs-j
-    cbs=Glob_CurrBasisSize
-
-    if (Glob_ProcID==0) write(*,'(1x,a28)',advance='no') 'Computing matrix elements...'
-    call ComputeMatElem(1,cbs)
-    if (Glob_ProcID==0) then
-      write(*,*) ' done'
-      write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
+    if (Method=='Q') then
+      if (Glob_ProcID==0) write(*,'(1x,a)',advance='no') &
+        'Deleting selected rows and columns from QR factors...'
+      call DeleteQMaskedFunctions(MaskArray,ErrorCode)
+      if (ErrorCode==Q_METHOD_SUCCESS) then
+        Glob_CurrBasisSize=cbs-j
+        cbs=Glob_CurrBasisSize
+        call SolveQ(Evalue,ErrorCode)
+      endif
+    else
+      Glob_CurrBasisSize=cbs-j
+      cbs=Glob_CurrBasisSize
+      if (Glob_ProcID==0) write(*,'(1x,a28)',advance='no') 'Computing matrix elements...'
+      call ComputeMatElem(1,cbs)
+      if (Glob_ProcID==0) then
+        write(*,*) ' done'
+        write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
+      endif
+      call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     endif
-
-    call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     if (ErrorCode/=0) then
       if (Glob_ProcID==0) write(*,*) &
         'Error EC0176 in EliminateLinDepFunc: energy cannot be computed'
@@ -10200,7 +10440,14 @@ contains
         AverOverlap=AverOverlap+abs(Glob_S(j,i))
       enddo
     enddo
-    AverOverlap=AverOverlap/(cbs*(cbs-1)/TWO)
+    if (cbs>1) then
+      AverOverlap=AverOverlap/(cbs*(cbs-1)/TWO)
+    else
+      !Elimination can legitimately leave one surviving basis function.
+      MaxOverlap=ZERO
+      MinOverlap=ZERO
+      AverOverlap=ZERO
+    endif
 
 !Check linear coefficients:
     Min_c=huge(Min_c)/2
@@ -10297,7 +10544,7 @@ contains
     character(1),intent(in),optional          :: GSEPSolMethod
 
 !Local variables:
-    integer        i,j,k
+    integer        i,j,k,NumActive
     integer        np,npt,cbs
     integer        OpenFileErr,ErrorCode
     logical        IsSwapFileOK
@@ -10308,7 +10555,7 @@ contains
     real(wp)    AverOverlap
     real(wp)    Min_c,Max_c
     real(wp)    Average_c
-    integer,allocatable,dimension(:)    :: MaskArray
+    integer,allocatable,dimension(:)    :: MaskArray,ActiveFunction
     character(Glob_FileNameLength)      :: ch_temp
     character(1)                        :: Method
 
@@ -10404,7 +10651,13 @@ contains
         AverOverlap=AverOverlap+abs(Glob_S(j,i))
       enddo
     enddo
-    AverOverlap=AverOverlap/(cbs*(cbs-1)/TWO)
+    if (cbs>1) then
+      AverOverlap=AverOverlap/(cbs*(cbs-1)/TWO)
+    else
+      MaxOverlap=ZERO
+      MinOverlap=ZERO
+      AverOverlap=ZERO
+    endif
 
 !Check linear coefficients:
     Min_c=huge(Min_c)/2
@@ -10440,6 +10693,31 @@ contains
       call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
     endif
 
+    if (Method=='Q') then
+      !The initial cleanup workspace holds one transaction column. Expand that
+      !storage only to the number of unique functions selected by the overlap
+      !mask, while retaining the already computed full QR factorization.
+      NumActive=count(MaskArray>0)
+      call EnsureQActiveCapacity(NumActive,ErrorCode)
+      if (ErrorCode==Q_METHOD_SUCCESS) then
+        allocate(ActiveFunction(NumActive))
+        j=0
+        do i=1,cbs
+          if (MaskArray(i)>0) then
+            j=j+1
+            ActiveFunction(j)=i
+          endif
+        enddo
+        call SetQActiveFunctions(ActiveFunction,ErrorCode)
+      endif
+      if (ErrorCode==Q_METHOD_SUCCESS) call CaptureQMatrixParameters(ErrorCode)
+      if (ErrorCode/=Q_METHOD_SUCCESS) then
+        if (Glob_ProcID==0) write(*,*) &
+          'Error EC0181 in SeparateLinDepFunc: Q transaction cannot be prepared'
+        call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+      endif
+    endif
+
     j=0
     i=1
     do i=1,cbs
@@ -10453,14 +10731,21 @@ contains
     enddo
     call MPI_BCAST(Glob_NonlinParam,cbs*npt,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
-    if (Glob_ProcID==0) write(*,'(1x,a28)',advance='no') 'Computing matrix elements...'
-    call ComputeMatElem(1,cbs)
-    if (Glob_ProcID==0) then
-      write(*,*) ' done'
-      write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
+    if (Method=='Q') then
+      if (Glob_ProcID==0) write(*,'(1x,a)',advance='no') &
+        'Computing selected matrix columns and updating QR...'
+      call AssembleQTrial(.false.,ErrorCode)
+      if (ErrorCode==Q_METHOD_SUCCESS) call ApplyQTrial(ErrorCode)
+      if (ErrorCode==Q_METHOD_SUCCESS) call SolveQ(Evalue,ErrorCode)
+    else
+      if (Glob_ProcID==0) write(*,'(1x,a28)',advance='no') 'Computing matrix elements...'
+      call ComputeMatElem(1,cbs)
+      if (Glob_ProcID==0) then
+        write(*,*) ' done'
+        write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
+      endif
+      call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     endif
-
-    call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     if (ErrorCode/=0) then
       if (Glob_ProcID==0) write(*,*) &
         'Error EC0181 in EliminateLinDepFunc: energy cannot be computed'
@@ -10479,7 +10764,13 @@ contains
         AverOverlap=AverOverlap+abs(Glob_S(j,i))
       enddo
     enddo
-    AverOverlap=AverOverlap/(cbs*(cbs-1)/2)
+    if (cbs>1) then
+      AverOverlap=AverOverlap/(cbs*(cbs-1)/TWO)
+    else
+      MaxOverlap=ZERO
+      MinOverlap=ZERO
+      AverOverlap=ZERO
+    endif
 
 !Check linear coefficients:
     Min_c=huge(Min_c)/2
@@ -10527,6 +10818,7 @@ contains
     Glob_DataFileName=ch_temp
 
 !deallocate local workspace
+    if (allocated(ActiveFunction)) deallocate(ActiveFunction)
     deallocate(MaskArray)
 
 !Deallocate workspace for DSYGVX
@@ -10587,7 +10879,7 @@ contains
     character(1),intent(in),optional          :: GSEPSolMethod
 
 !Local variables:
-    integer        i,j,k
+    integer        i,j,k,NumActive
     integer        np,npt,cbs
     integer        OpenFileErr,ErrorCode
     logical        IsSwapFileOK
@@ -10598,6 +10890,7 @@ contains
     real(wp)    AverOverlap
     real(wp)    Min_c,Max_c
     real(wp)    Average_c
+    integer,allocatable,dimension(:) :: ActiveFunction
     character(Glob_FileNameLength)  :: ch_temp
     character(1)                    :: Method
 
@@ -10679,7 +10972,13 @@ contains
         AverOverlap=AverOverlap+abs(Glob_S(j,i))
       enddo
     enddo
-    AverOverlap=AverOverlap/(cbs*(cbs-1)/2)
+    if (cbs>1) then
+      AverOverlap=AverOverlap/(cbs*(cbs-1)/TWO)
+    else
+      MaxOverlap=ZERO
+      MinOverlap=ZERO
+      AverOverlap=ZERO
+    endif
 
 !Check linear coefficients
     k=0
@@ -10700,6 +10999,30 @@ contains
         write(*,*) 'No file have been written. Program will now stop'
       endif
       call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
+    endif
+
+    if (Method=='Q') then
+      !The coefficient scan already provides the exact active count. Reserve
+      !only those transaction columns and preserve the initial factorization.
+      NumActive=k
+      call EnsureQActiveCapacity(NumActive,ErrorCode)
+      if (ErrorCode==Q_METHOD_SUCCESS) then
+        allocate(ActiveFunction(NumActive))
+        k=0
+        do i=1,cbs
+          if (abs(Glob_c(i))>LCThreshold) then
+            k=k+1
+            ActiveFunction(k)=i
+          endif
+        enddo
+        call SetQActiveFunctions(ActiveFunction,ErrorCode)
+      endif
+      if (ErrorCode==Q_METHOD_SUCCESS) call CaptureQMatrixParameters(ErrorCode)
+      if (ErrorCode/=Q_METHOD_SUCCESS) then
+        if (Glob_ProcID==0) write(*,*) &
+          'Error EC0186 in SeparateFuncLargeCoeff: Q transaction cannot be prepared'
+        call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+      endif
     endif
     Min_c=huge(Min_c)/2
     Max_c=ZERO
@@ -10736,14 +11059,21 @@ contains
     enddo
     call MPI_BCAST(Glob_NonlinParam,cbs*Glob_npt,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
-    if (Glob_ProcID==0) write(*,'(1x,a28)',advance='no') 'Computing matrix elements...'
-    call ComputeMatElem(1,cbs)
-    if (Glob_ProcID==0) then
-      write(*,*) ' done'
-      write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
+    if (Method=='Q') then
+      if (Glob_ProcID==0) write(*,'(1x,a)',advance='no') &
+        'Computing selected matrix columns and updating QR...'
+      call AssembleQTrial(.false.,ErrorCode)
+      if (ErrorCode==Q_METHOD_SUCCESS) call ApplyQTrial(ErrorCode)
+      if (ErrorCode==Q_METHOD_SUCCESS) call SolveQ(Evalue,ErrorCode)
+    else
+      if (Glob_ProcID==0) write(*,'(1x,a28)',advance='no') 'Computing matrix elements...'
+      call ComputeMatElem(1,cbs)
+      if (Glob_ProcID==0) then
+        write(*,*) ' done'
+        write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
+      endif
+      call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     endif
-
-    call SolveEliminationGSEP(Method,cbs,Evalue,ErrorCode)
     if (ErrorCode/=0) then
       if (Glob_ProcID==0) write(*,*) 'Error EC0186 in SeparateFuncLargeCoeff: energy cannot be computed'
       call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
@@ -10761,7 +11091,13 @@ contains
         AverOverlap=AverOverlap+abs(Glob_S(j,i))
       enddo
     enddo
-    AverOverlap=AverOverlap/(cbs*(cbs-1)/TWO)
+    if (cbs>1) then
+      AverOverlap=AverOverlap/(cbs*(cbs-1)/TWO)
+    else
+      MaxOverlap=ZERO
+      MinOverlap=ZERO
+      AverOverlap=ZERO
+    endif
 
 !Check linear coefficients
     Min_c=huge(Min_c)/2
@@ -10805,6 +11141,8 @@ contains
     Glob_DataFileName=FileName
     if (Glob_ProcID==0) call SaveResults(Sort='no')
     Glob_DataFileName=ch_temp
+
+    if (allocated(ActiveFunction)) deallocate(ActiveFunction)
 
 !Deallocate workspace for DSYGVX
     if (Method=='G') then

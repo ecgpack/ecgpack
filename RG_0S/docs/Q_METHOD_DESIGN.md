@@ -1063,13 +1063,12 @@ and returns an S-normalized coefficient vector. The routines take an optional
 method argument so all existing three-argument/four-argument G call sites keep
 their source behavior; `main.f90` passes `Q` explicitly on the new paths.
 
-After elimination or random separation, these routines deliberately retain
-their historical full `ComputeMatElem(1,cbs)` reconstruction and then call the
-common solver. This means their one-time linear-algebra step remains O(n^3),
-like DSYGVX. It is not an iterative optimizer bottleneck. Principal deletion
-for elimination and indexed replacement for separation are valid future
-performance refinements, but require careful in-place compaction and separate
-tests; they are not prerequisites for correct Q semantics.
+The first correct implementation deliberately retained the historical full
+`ComputeMatElem(1,cbs)` reconstruction and a second fresh factorization after
+elimination or random separation. Section 18 records the subsequent Q-only
+performance refinement: elimination now uses principal QR deletions and
+separation now assembles and replaces only the selected canonical columns.
+The original G behavior remains unchanged.
 
 For Q overlap reporting, the lower element `Glob_S(j,i)`, `j>i`, is used
 directly. The former print statement read `Glob_S(i,j)` only because G had
@@ -1104,8 +1103,9 @@ as their G implementations do, so exit status 1 is expected after the success
 messages and output file.
 
 The environment approval service became unavailable before the two final MPI
-runs could start. After review, replay these disposable tests (the final exit
-status is again expected to be 1):
+runs could start in that implementation turn. They were subsequently replayed
+successfully in the post-commit validation recorded in section 17 (the final
+exit status is expected to be 1):
 
 ```text
 SEPR_LND1 Q 3 0.2 0.1 separated-lnd-q.txt
@@ -1117,3 +1117,188 @@ build directory was cleaned between precisions so module/object reuse could
 not mix working kinds. After the final elimination edge-case correction, the
 strict wp=8 debug build was repeated successfully. No sample input or tracked
 generated output was modified.
+
+## 17. Post-commit runtime validation
+
+This validation was performed after commit `f872103` against the strict wp=8
+debug executable (`-fbounds-check`, `-fcheck=all`, and floating-point traps).
+All inputs and outputs were disposable files under `/tmp`; no sample input was
+edited.
+
+### Fixed-basis G/Q comparison
+
+`SAVE_HSWF G` and `SAVE_HSWF Q` were run on the identical three-function Li
+basis. Both completed normally. The exported physical matrices agreed exactly:
+
+```text
+max abs H difference = 0
+max abs S difference = 0
+```
+
+The G energy was `-2.2487037512529304` and the Q energy was
+`-2.2487037512529300`. With the same eigenvector sign, the maximum coefficient
+difference was `3.3306690738754696e-16`. This simultaneously validates the
+canonical output boundary, normalization, and shifted Q solve against DSYGVX
+for the same ground-state root.
+
+### Two-rank optimizer and observable runs
+
+- `BASIS_ENL Q` grew a four-particle calculation from order zero through
+  orders one, two, and three. This exercised the exact order-one solution,
+  first fresh factorization, suffix appends, active order below capacity, and
+  distributed matrix-element assembly. The run completed with energy
+  `-1.8111982746322499` for its random disposable basis.
+- `OPT_CYCLE Q` optimized canonical functions `(2,1)` in one two-function
+  transaction and then function 3 in the final short block. Both steps made
+  two energy and one gradient evaluation and completed normally; energy fell
+  from `-2.2487037512529295` to `-2.3143892396658035`.
+- `FULL_OPT1 Q` optimized interior canonical function 2 with an active overlap
+  penalty. It completed two energy and one gradient evaluation, reported the
+  physical energy separately from the penalty, and exited normally at the
+  requested evaluation limit.
+- `DENSITIES Q` and `MOMT_DENS Q` each solved the same Q state on two ranks and
+  wrote finite coordinate- or momentum-space correlation functions and
+  densities for both points of their disposable grids. Both reported
+  `S=1.0000000000000000` and energy `-2.2487037512529295`.
+
+### Elimination and separation runs
+
+The four save-and-stop routines all selected the intended function, rebuilt
+canonical H/S, solved through Q, and wrote the requested basis:
+
+| Command | Selection and result |
+| --- | --- |
+| `ELIM_LCFN Q 3 0.1` | Removed function 3 (`abs(c)=0.089552928023`); saved order 2 with energy `-2.2109294026962365`. |
+| `ELIM_LND1 Q 3 0.2` | Removed function 3 because `S(3,2)=0.32073776366828`; saved order 2 with the same energy. |
+| `SEPR_LND1 Q 3 0.2 0.1` | Perturbed function 3, rebuilt/solved order 3, and saved energy `-2.2478165250183046` in that random run. |
+| `SEPR_FLCF Q 3 0.7 0.1` | Perturbed function 1 (`abs(c)=0.767494888103`), rebuilt/solved order 3, and saved energy `-2.2582293926076114` in that random run. |
+
+Their exit status is intentionally 1 because the historical routines call
+`MPI_Abort` after successfully saving and printing “Program will now stop.”
+
+An additional `ELIM_LND1 Q 3 0.03` boundary test produced three offending
+pairs but only two uniquely masked later functions. It correctly saved an
+order-one basis with energy `-2.0755808976887984`, confirming the unique-mask
+size calculation. The first execution exposed division by zero in the legacy
+post-elimination overlap statistics, because an order-one basis has no pairs.
+All six overlap-statistics sites in the elimination/separation routines now
+define maximum, minimum, and average overlap as zero for order one. The strict
+build and the failing test were rerun successfully after this correction.
+
+Finally, `ELIM_LCFN Q 3 1.0` selected every function and followed the intended
+empty-basis guard: it printed the diagnostic, saved no output, and stopped
+before publishing basis order zero.
+
+### Chained lifecycle run
+
+A final two-rank process executed four Q commands consecutively:
+
+```text
+BASIS_ENL Q  ->  OPT_CYCLE Q  ->  FULL_OPT1 Q  ->  SAVE_HSWF Q
+```
+
+The first deliberately undersized `NTrials=4` attempt rejected one ordinary
+non-convergent random candidate, then stopped because one failure represented
+25 percent and exceeded the configured candidate-failure fraction. This was a
+correct fail-closed result, not factor corruption. Restarting the saved
+order-one basis with `NTrials=20` made the same single failure only five
+percent and completed the workflow.
+
+The enlargement step wrote the canonical swap representation. Both
+`OptCycleQ` and `FullOpt1Q` subsequently reported successful swap restore and
+fresh QR construction before applying their own updates. `SaveHSWF Q` restored
+the final matrix generation and reproduced the final full-optimization energy
+`-2.9571395264418712`. The chained process exited normally, confirming problem
+size changes, repeated Q workspace cleanup/allocation, cross-BBOP swap reuse,
+and canonical saved coefficients in one MPI lifetime.
+
+## 18. Q cleanup performance refinement
+
+The first implementation of the four cleanup commands intentionally favored a
+simple correctness boundary: after changing the basis, it recomputed the whole
+matrix and created fresh QR factors. Once the canonical-memory invariants and
+all four commands had been validated, this redundant work was removed without
+changing the G paths.
+
+### Elimination by principal deletion
+
+`ELIM_LCFN Q` and `ELIM_LND1 Q` now retain the initial canonical matrices and
+QR state. `DeleteQMaskedFunctions` performs the structural change as follows:
+
+1. construct the survivor map from the original canonical mask;
+2. validate factor order, capacity, shift, and physical storage before any
+   mutation;
+3. call `delete_symmetric` on rank zero in descending original-index order;
+4. broadcast the status before publishing a new physical matrix generation;
+5. compact canonical lower H/S, the raw S diagonal, and coefficients in
+   ascending survivor order; and
+6. solve the smaller problem using the retained factors.
+
+Descending QR deletion is essential because deleting a high index does not
+change any lower original index. Ascending physical compaction is safe in
+place because every survivor source index is at least its destination index.
+The upper H/S triangles remain unspecified. If a QR operation were ever to
+fail after the preflight, the physical matrices are still untouched and can
+reconstruct the old factors before the error is reported.
+
+For `r` removals from order `n`, structural work is O(r*n**2), followed by the
+usual O(n**2) inverse iteration and residual checks. No matrix element is
+recalculated. The previous implementation evaluated all survivor pairs and
+performed another O(n**3) fresh factorization.
+
+### Separation by indexed replacement
+
+`SEPR_LND1 Q` and `SEPR_FLCF Q` turn their selected canonical indices into an
+explicit active list before changing nonlinear parameters. They capture the
+matrix-parameter generation, perturb the selected parameters, call
+`AssembleQTrial(.false.)`, apply the staged columns through
+`replace_symmetric`, and solve with the updated factors. Active-active pairs
+are still evaluated exactly once by the shared indexed assembler.
+
+Cleanup starts with transaction capacity one because elimination needs no
+replacement columns. The selected count is not known until overlap or
+coefficient inspection. `EnsureQActiveCapacity` therefore grows only the
+transaction arrays while preserving the existing qrlinalg factors and full-
+order vectors. It is valid only while no transaction or accepted point is
+live. All replacement arrays are allocated before `move_alloc`, so allocation
+failure leaves the old workspace valid. Normal memory use is O(n*k) for `k`
+selected functions rather than eagerly reserving O(n**2) transaction storage.
+
+For `k` separated functions, matrix-element assembly visits
+
+```text
+k*n - k*(k-1)/2
+```
+
+unordered pairs instead of `n*(n+1)/2`. QR replacement costs O(k*n**2). For
+the 100-function performance case with one selected function, the second
+assembly fell from 5,050 pairs to 100 pairs. With four symmetry terms, that is
+20,200 versus 400 matrix-element kernel evaluations.
+
+### Residual calculation
+
+The independent physical residual remains mandatory after every Q solve.
+`ComputeQEigenpairResidual` now evaluates `H*c` and `S*c` with two lower-
+triangle `DSYMV` calls instead of scalar double loops. It calls BLAS directly
+on rank zero because the existing `MTMVL` wrapper may select a collective MPI
+path. The mathematical residual and refresh policy are unchanged.
+
+### Validation
+
+Both strict debug and optimized wp=8 Netlib builds compiled successfully. A
+100-function Li elimination removed seven functions. Structural deletion gave
+energy `-7.4772345691800748`; the historical full-rebuild executable gave
+`-7.4772345691800757`, and an independent fresh Q recomputation of the saved
+93-function basis gave `-7.4772345691800748`.
+
+For one selected function in a 100-function `SEPR_FLCF Q` run, the updated-
+factor result was `-7.4773705263525638`. A fresh reconstruction from the saved
+perturbed basis gave `-7.4773705263525612`. Because the perturbation is random,
+validation compares the update with a fresh solve of the exact saved
+parameters, not with a separate random run.
+
+Finally, two-rank strict-debug executions covered `ELIM_LND1 Q` structural
+deletion and `SEPR_LND1 Q` selected-column replacement. Both completed their
+save-and-stop paths without bounds, allocation, floating-point, or collective
+errors. Their final MPI status remains intentionally nonzero because the
+legacy routines call `MPI_Abort` after saving.
