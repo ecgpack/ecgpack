@@ -1,0 +1,17 @@
+# Generated per-code build trees
+/*/debug/
+/*/debug-omp/
+/*/release/
+/*/release-omp/
+
+# Repository-wide build and calculation output
+/bin/
+/jobs/
+
+# Fortran compiler byproducts outside the normal build trees
+*.o
+*.mod
+*.smod
+
+# Temporary precision-definition backup created by build.bash
+/*/src/wp_def_temporary.f90

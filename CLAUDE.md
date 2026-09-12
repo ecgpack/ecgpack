@@ -19,14 +19,14 @@ Each code lives in its own top-level directory with an identical structure: a `M
 
 Most codes ship with a `sample_input/` subdirectory of worked examples — the four real-ECG energy codes (`RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`) plus all nine off-diagonal codes (`RG_0S-1P`, `RG_0S-2D`, `RG_0S-2P`, `RG_1P-1P`, `RG_1P-2D`, `RG_1P-2P`, `RG_2D-2D`, `RG_2P-2D`, `RG_2P-2P`). Only `CG_0S` currently has no sample inputs. See the Running section below.
 
-`RG_0S` is the most complete reference implementation; other codes share much of its source and Makefile. Non-code directories: `doc/` (documentation), `utilities/`, and `bin/` + `jobs/` (created by the user, not in git). The root also holds `README.md` (the repository manual), `AUTHORS.md` (list of contributors), and `.code-workspace` (a VSCode multi-folder workspace grouping all the code directories).
+`RG_0S` is the most complete reference implementation; other codes share much of its source and Makefile. Non-code directories: `doc/` (documentation, including developer-facing design guides in `doc/devnotes/`), `utilities/`, and `bin/` + `jobs/` (created by the user, not in git). The root also holds `README.md` (the repository manual), `AUTHORS.md` (list of contributors), and `.code-workspace` (a VSCode multi-folder workspace grouping all the code directories).
 
 ## Building
 
 The canonical entry point is `build.bash` in the root directory — run it with no arguments for full usage. It loops over toolchains/configs/codes/precisions/linalg choices, builds via each code's Makefile, and stores binaries in `bin/<toolchain>/<config>/<CODE>_N<nparticles>_P<precision>_<linalg>` (the `<linalg>` suffix is always present — e.g. `_netlib`, `_mkl`, `_openblas`). The `nparticles` argument is required. The `linalg` argument (see below) takes one of `netlib` (default), `mkl`, `lblas`, `openblas`, `aocl`; for `precision=10`/`16` only `netlib` is built (other values are skipped).
 
 ```bash
-./build.bash machine=ubuntu-generic toolchain=systemdefault config=release code=RG_0S nparticles=4 precision=8
+./build.bash machine=ubuntu-generic toolchain=systemdefault config=release code=RG_0S nparticles=4 precision=8 openmp=0
 ```
 
 To build a single code directly, invoke its Makefile (this is what `build.bash` calls under the hood):
@@ -34,6 +34,7 @@ To build a single code directly, invoke its Makefile (this is what `build.bash` 
 ```bash
 cd RG_0S
 make release COMPILER=gfortran MACHINE=ubuntu-generic PREC=8 LINALG=openblas EXEFILE=ecg
+make release COMPILER=gfortran MACHINE=ubuntu-generic PREC=8 LINALG=openblas OPENMP=1 EXEFILE=ecg
 make debug   COMPILER=gfortran MACHINE=ubuntu-generic PREC=8 LINALG=netlib   EXEFILE=ecg
 make clean   # also: cleaner, cleanest, cleanrelease, cleandebug
 ```
@@ -43,6 +44,7 @@ Key build parameters:
 - `CONFIG` (`release`/`debug`) — set by the `make release`/`make debug` target. `release` uses `-O3 -march=native`; `debug` enables bounds/uninit/FPE checks. Object and `.mod` files go in `release/` or `debug/`.
 - `PREC` — real `kind`: `8` (double/fp64), `10` (extended/fp80, GNU only), `16` (quadruple). Selects which `src/wp_def_<PREC>.f90` is compiled.
 - `LINALG` — selects which BLAS/LAPACK implementation to link against (default `netlib`). `netlib` compiles the bundled, lightly modified reference `src/BLAS.f`/`src/LAPACK.f` and adds no extra link flags; `mkl` (Intel MKL — compiler-dependent `-lmkl_*` flags), `lblas` (`-llapack -lblas`), `openblas` (`-lopenblas`), and `aocl` (AMD AOCL `-lflame -lblis …`) instead link an external optimized library and skip the bundled sources. Only `PREC=8` honors the optimized choices; for `PREC=10`/`16` only `LINALG=netlib` is supported (any other value leaves the build unsupported). In the off-diagonal codes `LINALG` is accepted but a no-op (they link no BLAS/LAPACK). The bundled `src/BLAS.f`/`src/LAPACK.f` and the `BARE_OBJS_LPKBLS` object list are compiled only when `LINALG=netlib`.
+- `OPENMP` (`0`/`1`) — enables compiler OpenMP flags in the four real-ECG energy codes. OpenMP objects are isolated in `debug-omp/` or `release-omp/`; every MPI rank may create its own OpenMP thread team.
 - `COMPILER` (`gfortran`→`mpif90`, `ifort`→`mpiifort`, `ifx`→`mpiifx`, `nvfortran`→`mpif90`) and `MACHINE` select compiler flags. Supported machines are hardcoded in both `build.bash` and the Makefiles; adding a machine means editing both.
 
 Note: the **number of particles is compiled in**, not a runtime argument. `build.bash` does an in-place `sed` on `src/wp_def_<PREC>.f90` to set `Glob_AllowedNumOfParticles`, builds, then restores the original from `wp_def_temporary.f90`. A binary built for N particles rejects input files with a different particle count.
@@ -61,14 +63,15 @@ There is no automated test suite; validation is done by running physical test ca
 
 Within each `src/`, the module compile/dependency order (see the Makefile) is:
 
-`wp_def_<PREC>` → `globvars` → `misc`, `linalg`, `spin` → `matelem` → `matform` → `workproc` → `main`
+`wp_def_<PREC>` → `globvars` → `misc`, `linalg`, `spin` → `matelem` → `matform` → `qrupdate` → `qrlinalg` → `workproc` → `main`
 
 - **`wp_def_<PREC>.f90`** — defines the working-precision kind (`wp`), `Glob_AllowedNumOfParticles`, and the MPI real type. Edited at build time by `build.bash` (see above).
 - **`globvars.f90`** — all global state (the `Glob_*` variables: masses, charges, basis, matrices) and physical/numeric constants.
 - **`linalg.f90`** — linear-algebra wrappers over BLAS/LAPACK. `BLAS.f`/`LAPACK.f` are bundled, lightly modified netlib reference sources used only when `LINALG=netlib`. `dmng.f` (lightly modified TOMS nonlinear minimizer) and `X1MACH.f90` (machine constants) support the optimizer.
 - **`spin.f90`** — spin algebra and permutational-symmetry projection.
 - **`matelem.f90`** — matrix elements between individual basis functions; **`matform.f90`** assembles the full Hamiltonian (H) and overlap (S) matrices.
-- **`workproc.f90`** — the bulk of the program (often >8000 lines): `ReadIOFile`/`SaveResults` I/O, basis enlargement, optimization cycles, the generalized symmetric eigenvalue solvers (methods `'G'` and `'I'`), expectation values, densities, and swap-file handling.
+- **`qrlinalg.f90` and `qrupdate/`** — QR factorization/update support for generalized-eigenvalue method `'Q'` in the four real-ECG energy codes. The canonical H/S layout and porting procedure are documented in `doc/devnotes/Q_method_design.md`.
+- **`workproc.f90`** — the bulk of the program (often >8000 lines): `ReadIOFile`/`SaveResults` I/O, basis enlargement, optimization cycles, the generalized symmetric eigenvalue solvers (methods `'G'`, `'I'`, and `'Q'` in the real-ECG energy codes), expectation values, densities, and swap-file handling.
 - **`main.f90`** — initializes MPI, seeds RNGs, then drives a sequence of **BBOP** (Basis Building and Optimization Program) steps read from the input file. Each step is a `case` in the main `select`: `BASIS_ENL`, `OPT_CYCLE`, `FULL_OPT1`, `ELIM_LCFN`, `ELIM_LND1`, `SEPR_LND1`, `SEPR_FLCF`, `EXPC_VALS`, `DENSITIES`, `MOMT_DENS`, `SAVE_FILE`, `SAVE_HSWF`. Adding a calculation mode means adding a case here plus the corresponding routine in `workproc.f90`.
 
 When editing matrix-element or matform code, changes usually must be mirrored across the analogous `RG_*` directories, since the codes are intentionally near-duplicates specialized to different symmetries.

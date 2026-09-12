@@ -45,6 +45,26 @@ contains
         Glob_S(i,j)=Sij*f
         Glob_H(i,j)=Hij*f
       endif
+    case('Q')
+      !Q keeps the normalized, unshifted physical H and S matrices in their
+      !canonical basis order. The complete lower triangles, including both
+      !diagonals, are authoritative. The upper triangles are deliberately not
+      !written because qrlinalg reads only the lower triangles and workproc
+      !uses the upper storage only when packing a swap file.
+      !
+      !Glob_diagS retains the raw self-overlap. It is required to normalize
+      !every off-diagonal element involving this function and later to form
+      !derivatives of normalized matrix elements. Unlike G, Q also stores the
+      !physical normalized Hamiltonian diagonal directly in Glob_H.
+      if (i==j) then
+        Glob_diagS(i)=Sij
+        Glob_S(i,i)=ONE
+        Glob_H(i,i)=Hij/Glob_diagS(i)
+      else
+        f=1/sqrt(Glob_diagS(i)*Glob_diagS(j))
+        Glob_S(i,j)=Sij*f
+        Glob_H(i,j)=Hij*f
+      endif
     endselect
   end subroutine StoreHS
 

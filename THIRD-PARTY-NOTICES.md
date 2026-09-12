@@ -103,6 +103,29 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ---
 
+## qrupdate-ng (Martin Köhler and contributors)
+
+**Files:** the `src/qrupdate/` directories in `RG_0S`, `RG_1P`, `RG_2D`,
+and `RG_2P`. Each energy code carries an identical copy of the imported
+sources, its README, and the complete `COPYING` license text.
+
+**Origin:** Martin Köhler's `qrupdate-ng` repository at the Max Planck
+Institute Magdeburg,
+<https://gitlab.mpi-magdeburg.mpg.de/koehlerm/qrupdate-ng>, commit
+`3fa4f77d6259c00cf0c36632287063f1277a3fe0`.
+
+The library supplies rank-one QR updates, row and column insertion/deletion,
+column shifting, and related Givens-rotation operations used by ECGPACK's Q
+generalized-eigenvalue method. The bundled generic-precision snapshot uses
+the build-selected `wp_def` kind. Source headers retain the upstream author
+and licensing notices.
+
+The qrupdate-ng sources state GNU GPL version 3 or, at the user's option, any
+later version. The full license text is reproduced as `COPYING` in each of the
+four vendored directories.
+
+---
+
 ## PORT optimization routines (David M. Gay, Bell Laboratories)
 
 **Files:** `CG_0S/src/dmng.f`, `RG_0S/src/dmng.f`, `RG_1P/src/dmng.f`,

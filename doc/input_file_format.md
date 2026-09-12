@@ -158,10 +158,13 @@ After the header, an input file contains a list of commands that instruct the pr
 
 Each command contains a number of integer, real, character, or string arguments that must be arranged in a certain order. Spacings between those arguments can be arbitrary. Detailed descriptions of all available commands and their arguments are provided below.
 
-Most commands begin with a one-character **eigenvalue solver type**, which can be either `G` or `I`:
+Most commands begin with a one-character **eigenvalue solver type**. The real-ECG energy codes (`RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`) accept `G`, `I`, or `Q`:
 
 - `G` selects the LAPACK routine `DSYGVX`, which first reduces the definite generalized symmetric eigenvalue problem to a standard symmetric eigenvalue problem and then solves it. When `G` is used, the targeted root is set by the header keyword `WHICH_EIGENVALUE` (the header values `CURRENT_ENERGY` and `EIGVAL_TOLERANCE` are not referenced). The `G` option for the eigenvalue solver is safe in the sense that it prevents unintended root switching (it always targets a specific eigenvalue), which is particularly important for the case of small basis sizes, when the total wave function may still undergo considerable change in the process of its optimization. However, the `G` option is extremely slow when it comes to updating the solution in the case of large basis sizes, which is what is done routinely in `BASIS_ENL`, `OPT_CYCLE`, and `FULL_OPT1` (see the descriptions of these commands below). Efficient generation of large ECG basis sets is essentially impossible when using the `G` option.
 - `I` selects the iterative solver based on the inverse iteration method. When `I` is used, the solver relies on the header values `CURRENT_ENERGY`, `EIGVAL_TOLERANCE`, and `INVITPARAMETER` (it targets the eigenvalue close to `CURRENT_ENERGY` $\times$ `INVITPARAMETER`), and `WHICH_EIGENVALUE` is not referenced. The `I` option is much faster than `G`. When it comes to updating the eigenvector/eigenvalue routinely (as is done in `BASIS_ENL`, `OPT_CYCLE`, and `FULL_OPT1`) it may be several orders of magnitude faster. The reason for this is that updating the solution in the inverse iteration approach scales as $\mathcal{O}(K^2)$ , where $K$ is the basis size. Using the `G` option that calls standard LAPACK eigensolver results in $\mathcal{O}(K^3)$ scaling.
+- `Q` uses inverse iteration together with a QR factorization of the shifted matrix $H-\sigma S$, where the shift is selected from `CURRENT_ENERGY` and `INVITPARAMETER` in the same way as for `I`. During basis enlargement and optimization, accepted changes are applied to the QR factors without permuting the physical Hamiltonian and overlap matrices. A solve and a single-function factor update both scale as $\mathcal{O}(K^2)$. The implementation monitors the inverse-iteration residual and the accumulated factor-update residual; it automatically performs a fresh factorization if an update history becomes numerically unreliable. `Q` is implemented for the four real-ECG energy codes listed above. It is not currently available in `CG_0S` or the off-diagonal matrix-element codes.
+
+`BASIS_ENL`, `OPT_CYCLE`, `FULL_OPT1`, `EXPC_VALS`, `DENSITIES`, `MOMT_DENS`, and `SAVE_HSWF` accept `Q` wherever that command is available for the selected real basis type. The elimination and separation commands accept `G` or `Q`, but not `I`. `SAVE_FILE` does not invoke a solver and therefore has no solver argument.
 
 This eigenvalue solver type argument is not repeated in detail for each command below.
 
@@ -177,7 +180,7 @@ Grows the basis by stochastic selection of new basis functions followed by optim
 
 | Argument | Type | Description |
 | :--- | :---: | :--- |
-| `G` | character | Eigenvalue solver type, `G` or `I` (see the note above). |
+| `G` | character | Eigenvalue solver type, `G`, `I`, or `Q` (see the note above). |
 | `1` | integer | Function number from which the basis enlargement starts (normally the current basis size plus one). If the value exceeds the current basis size plus one, it is automatically reset to the current basis size plus one. |
 | `5` | integer | The size to which the basis must be grown. |
 | `1` | integer | The number of functions that are randomly selected and added to the basis at each enlargement step. Normally it is best to add only one function at a time, but in some special cases one can consider adding more than one function. |
@@ -198,7 +201,7 @@ Performs a cyclic optimization of the current basis, optimizing one or several f
 
 | Argument | Type | Description |
 | :--- | :---: | :--- |
-| `G` | character | Eigenvalue solver type, `G` or `I` (see the note above). |
+| `G` | character | Eigenvalue solver type, `G`, `I`, or `Q` (see the note above). |
 | `5` | integer | Current basis size (must match the actual basis size). |
 | `1` | integer | Function number from which the optimization cycle begins. Normally it should start from function 1. In some specific situations, however, one might want to skip optimizing the first few functions. |
 | `5` | integer | Function number at which the optimization cycle ends. To optimize the entire basis, set the begin function to 1 and the end function equal to the current basis size. |
@@ -222,7 +225,7 @@ Performs a full (i.e. simultaneous) optimization of the nonlinear parameters of 
 
 | Argument | Type | Description |
 | :--- | :---: | :--- |
-| `G` | character | Eigenvalue solver type, `G` or `I` (see the note above). |
+| `G` | character | Eigenvalue solver type, `G`, `I`, or `Q` (see the note above). |
 | `5` | integer | Current basis size (must match the actual basis size). |
 | `1` | integer | First function in the subset of functions whose parameters are to be optimized. |
 | `5` | integer | Last function in the subset of functions whose parameters are to be optimized. To optimize the entire basis, set this equal to the current basis size. |
@@ -245,7 +248,7 @@ Computes expectation values for the current basis.
 
 | Argument | Type | Description |
 | :--- | :---: | :--- |
-| `I` | character | Eigenvalue solver type, `G` or `I` (see the note above). |
+| `I` | character | Eigenvalue solver type, `G`, `I`, or `Q` (see the note above). |
 | `5` | integer | Current basis size (must match the actual basis size). |
 
 #### 5. `DENSITIES`
@@ -260,7 +263,7 @@ Computes densities of particles in the center-of-mass frame as well as pair corr
 
 | Argument | Type | Description |
 | :--- | :---: | :--- |
-| `I` | character | Eigenvalue solver type, `G` or `I` (see the note above). |
+| `I` | character | Eigenvalue solver type, `G`, `I`, or `Q` (see the note above). |
 | `5` | integer | Current basis size (must match the actual basis size). |
 | `cf_grid.dat` | string | Input file with the grid of points at which the pair correlation functions are evaluated. |
 | `cf.dat` | string | Output file with the computed pair correlation functions $g_i$ and $g_{ij}$. |
@@ -279,7 +282,7 @@ Computes momentum densities of particles in the center-of-mass frame as well as 
 
 | Argument | Type | Description |
 | :--- | :---: | :--- |
-| `I` | character | Eigenvalue solver type, `G` or `I` (see the note above). |
+| `I` | character | Eigenvalue solver type, `G`, `I`, or `Q` (see the note above). |
 | `5` | integer | Current basis size (must match the actual basis size). |
 | `mom_cf_grid.dat` | string | Input file with the grid of points at which the momentum pair correlation functions are evaluated. |
 | `mom_cf.dat` | string | Output file with the computed momentum pair correlation functions. |
@@ -315,7 +318,7 @@ Saves the Hamiltonian and overlap matrices, the eigenvector of linear coefficien
 
 | Argument | Type | Description |
 | :--- | :---: | :--- |
-| `I` | character | Eigenvalue solver type, `G` or `I` (see the note above). |
+| `I` | character | Eigenvalue solver type, `G`, `I`, or `Q` (see the note above). |
 | `5` | integer | Current basis size (must match the actual basis size). |
 | `H.txt` | string | Name of the file where the Hamiltonian matrix is stored, or `none` to skip it. |
 | `S.txt` | string | Name of the file where the overlap matrix is stored, or `none` to skip it. |
@@ -324,7 +327,7 @@ Saves the Hamiltonian and overlap matrices, the eigenvector of linear coefficien
 
 #### 9. `ELIM_LCFN`
 
-Eliminates basis functions whose contribution to the energy is small, i.e. those whose linear coefficient (in front of the normalized function) has an absolute value smaller than a given threshold. The reduced basis is written to the specified file and the program then terminates. This command only works with the `G` eigenvalue solver.
+Eliminates basis functions whose contribution to the energy is small, i.e. those whose linear coefficient (in front of the normalized function) has an absolute value smaller than a given threshold. The reduced basis is written to the specified file and the program then terminates. This command works with the `G` and `Q` eigenvalue solvers.
 
 *Example* :
 
@@ -334,14 +337,14 @@ Eliminates basis functions whose contribution to the energy is small, i.e. those
 
 | Argument | Type | Description |
 | :--- | :---: | :--- |
-| `G` | character | Eigenvalue solver type. Must be `G`; the `I` solver is not supported for this command. |
+| `G` | character | Eigenvalue solver type. Use `G` or `Q`; the `I` solver is not supported for this command. |
 | `5` | integer | Current basis size (must match the actual basis size). |
 | `1.0E-4` | real | Linear coefficient threshold. Functions whose linear coefficient (in front of the normalized function) is smaller than this value by magnitude are eliminated. |
 | `inout_reduced.txt` | string | Name of the file where the reduced basis is stored. |
 
 #### 10. `ELIM_LND1`
 
-Eliminates linearly dependent functions. It checks pair linear dependency only, removing each function whose overlap (absolute value) with any earlier (smaller-numbered) function exceeds the threshold. The reduced basis is written to the specified file and the program then terminates. This command only works with the `G` eigenvalue solver.
+Eliminates linearly dependent functions. It checks pair linear dependency only, removing each function whose overlap (absolute value) with any earlier (smaller-numbered) function exceeds the threshold. The reduced basis is written to the specified file and the program then terminates. This command works with the `G` and `Q` eigenvalue solvers.
 
 *Example* :
 
@@ -351,14 +354,14 @@ Eliminates linearly dependent functions. It checks pair linear dependency only, 
 
 | Argument | Type | Description |
 | :--- | :---: | :--- |
-| `G` | character | Eigenvalue solver type. Must be `G`; the `I` solver is not supported for this command. |
+| `G` | character | Eigenvalue solver type. Use `G` or `Q`; the `I` solver is not supported for this command. |
 | `5` | integer | Current basis size (must match the actual basis size). |
 | `0.99` | real | Pair linear dependency threshold. A function is removed if its overlap (absolute value, computed with normalized functions) with any earlier function exceeds this value. |
 | `inout_reduced.txt` | string | Name of the file where the reduced basis is stored. |
 
 #### 11. `SEPR_LND1`
 
-Does the same linear dependency detection as `ELIM_LND1`, but instead of discarding the offending functions it randomly perturbs their nonlinear parameters to separate them. Each affected parameter $a_{\mathrm{old}}$ is replaced by a random value drawn from the interval $[a_{\mathrm{old}}(1-s),\,a_{\mathrm{old}}(1+s)]$, where $s$ is the separation parameter. The result is written to the specified file and the program then terminates. This command only works with the `G` eigenvalue solver.
+Does the same linear dependency detection as `ELIM_LND1`, but instead of discarding the offending functions it randomly perturbs their nonlinear parameters to separate them. Each affected parameter $a_{\mathrm{old}}$ is replaced by a random value drawn from the interval $[a_{\mathrm{old}}(1-s),\,a_{\mathrm{old}}(1+s)]$, where $s$ is the separation parameter. The result is written to the specified file and the program then terminates. This command works with the `G` and `Q` eigenvalue solvers.
 
 *Example* :
 
@@ -368,7 +371,7 @@ Does the same linear dependency detection as `ELIM_LND1`, but instead of discard
 
 | Argument | Type | Description |
 | :--- | :---: | :--- |
-| `G` | character | Eigenvalue solver type. Must be `G`; the `I` solver is not supported for this command. |
+| `G` | character | Eigenvalue solver type. Use `G` or `Q`; the `I` solver is not supported for this command. |
 | `5` | integer | Current basis size (must match the actual basis size). |
 | `0.99` | real | Linear dependency threshold (see `ELIM_LND1`). Functions whose overlap exceeds this value are separated rather than removed. |
 | `0.1` | real | Separation parameter $s$ controlling the random shift of the nonlinear parameters of the affected functions. |
@@ -376,7 +379,7 @@ Does the same linear dependency detection as `ELIM_LND1`, but instead of discard
 
 #### 12. `SEPR_FLCF`
 
-Randomly perturbs the nonlinear parameters of basis functions whose linear coefficient (in front of the normalized function) exceeds the threshold by magnitude, in order to separate near linear dependencies that manifest as large coefficients. Each affected parameter $a_{\mathrm{old}}$ is replaced by a random value from the interval $[a_{\mathrm{old}}(1-s),\,a_{\mathrm{old}}(1+s)]$. The result is written to the specified file and the program then terminates. This command only works with the `G` eigenvalue solver.
+Randomly perturbs the nonlinear parameters of basis functions whose linear coefficient (in front of the normalized function) exceeds the threshold by magnitude, in order to separate near linear dependencies that manifest as large coefficients. Each affected parameter $a_{\mathrm{old}}$ is replaced by a random value from the interval $[a_{\mathrm{old}}(1-s),\,a_{\mathrm{old}}(1+s)]$. The result is written to the specified file and the program then terminates. This command works with the `G` and `Q` eigenvalue solvers.
 
 *Example* :
 
@@ -386,7 +389,7 @@ Randomly perturbs the nonlinear parameters of basis functions whose linear coeff
 
 | Argument | Type | Description |
 | :--- | :---: | :--- |
-| `G` | character | Eigenvalue solver type. Must be `G`; the `I` solver is not supported for this command. |
+| `G` | character | Eigenvalue solver type. Use `G` or `Q`; the `I` solver is not supported for this command. |
 | `5` | integer | Current basis size (must match the actual basis size). |
 | `3.0` | real | Linear coefficient threshold. Functions whose linear coefficient (in front of the normalized function) exceeds this value by magnitude are separated. |
 | `0.1` | real | Separation parameter $s$ controlling the random shift of the nonlinear parameters of the affected functions. |
