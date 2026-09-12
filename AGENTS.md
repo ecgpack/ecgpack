@@ -63,7 +63,7 @@ Root files of interest:
 The preferred batch build entry point is the root script:
 
 ```bash
-./build.bash machine=linux-generic toolchain=systemdefault config=release code=RG_0S nparticles=4 precision=8 linalg=netlib
+./build.bash machine=linux-generic toolchain=systemdefault config=release code=RG_0S nparticles=4 precision=8 linalg=netlib openmp=0
 ```
 
 Run `./build.bash` with no arguments to see its usage. It loops over requested toolchains, configurations, codes, particle counts, precisions, and linear-algebra choices, then places binaries under:
@@ -79,11 +79,12 @@ To build a single code directly, use its Makefile:
 ```bash
 cd RG_0S
 make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=openblas EXEFILE=ecg
+make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=openblas OPENMP=1 EXEFILE=ecg
 make debug   COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib   EXEFILE=ecg
 make clean
 ```
 
-The Makefiles also provide `cleaner`, `cleanest`, `cleanrelease`, and `cleandebug`. Object and module files are written under the selected `release/` or `debug/` directory.
+The Makefiles also provide `cleaner`, `cleanest`, `cleanrelease`, and `cleandebug`. Object and module files are written under `release/` or `debug/`; the four real-ECG energy codes use separate `release-omp/` or `debug-omp/` trees when `OPENMP=1`.
 
 Common Makefile parameters:
 
@@ -144,7 +145,7 @@ Sample inputs live under each code's `sample_input/` directory when available. T
 Within each `src/`, module order is generally:
 
 ```text
-wp_def_<PREC> -> globvars -> misc, linalg, spin -> matelem -> matform -> workproc -> main
+wp_def_<PREC> -> globvars -> misc, linalg, spin -> matelem -> matform -> qrupdate -> qrlinalg -> workproc -> main
 ```
 
 Important files:
@@ -158,7 +159,8 @@ Important files:
 - `spin.f90`: spin algebra and permutation-symmetry projection
 - `matelem.f90`: matrix elements between individual basis functions
 - `matform.f90`: assembly of Hamiltonian and overlap matrices
-- `workproc.f90`: the bulk of the program, including `ReadIOFile`/`SaveResults` I/O, basis construction, optimization cycles, generalized symmetric eigensolvers (methods `G` and `I`), expectation values, densities, and swap-file handling
+- `qrlinalg.f90` and `qrupdate/`: QR factorization/update state used by method `Q` in the four real-ECG energy codes
+- `workproc.f90`: the bulk of the program, including `ReadIOFile`/`SaveResults` I/O, basis construction, optimization cycles, generalized symmetric eigensolvers (methods `G`, `I`, and `Q` in the real-ECG energy codes), expectation values, densities, and swap-file handling
 - `main.f90`: MPI initialization, random-number seeding, and top-level execution of BBOP input steps
 
 Common BBOP steps handled from `main.f90` include:
@@ -196,6 +198,7 @@ Off-diagonal codes use specialized operator routines and basis-specific overlap 
 - Input format: `doc/input_file_format.md`
 - Physics and notation: `doc/theoretical_background.md`
 - VS Code setup: `doc/use_of_visual_studio_code.md`
+- Q-method architecture, canonical H/S layout, porting steps, and validation: `RG_0S/docs/Q_METHOD_DESIGN.md`
 
 For behavior questions, prefer these project docs over inference from code alone.
 

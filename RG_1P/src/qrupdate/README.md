@@ -1,7 +1,11 @@
 # Generic-precision QR updates
 
-This directory vendors the generic QR-update implementation from
-`do1exist7/qrupdate-ng` at commit
+This directory vendors the generic QR-update implementation from Martin
+Köhler's `qrupdate-ng` repository:
+
+<https://gitlab.mpi-magdeburg.mpg.de/koehlerm/qrupdate-ng>
+
+The imported revision is commit
 `3fa4f77d6259c00cf0c36632287063f1277a3fe0`.
 
 The public `qrupdate` module provides generic real/complex interfaces for

@@ -8,10 +8,10 @@ the same method to the other ECGPACK variants. Update it after every reviewable
 chunk with the exact files changed, validation performed, open questions, and
 any decision that a later port must reproduce.
 
-The first committed foundation (`8561b61`) defines code ownership and canonical
+The first committed foundation (`6e26bb4`) defines code ownership and canonical
 layout, integrates qrlinalg and its build dependencies, and implements
 non-derivative canonical Q storage plus arbitrary-index staged column assembly.
-The second committed chunk (`4b07fa4`) completes `OPT_CYCLE Q`: factor
+The second committed chunk (`9644fec`) completes `OPT_CYCLE Q`: factor
 lifecycle, replacement transactions, solve/residual monitoring, indexed
 derivatives, energy/gradient wrappers, swap handling, driver, and `main.f90`
 dispatch are implemented and validated.
@@ -515,20 +515,22 @@ factor drift, while the physical eigenpair residual
 `||H*c-E*S*c||` monitors the inverse-iteration result. `workproc` must evaluate
 both at the checkpoints defined in the lifecycle chunk.
 
-The vendored qrupdate code states GPL-3.0-or-later licensing. Preserve its
-notices and confirm project-wide distribution compatibility before release;
-update `THIRD-PARTY-NOTICES.md` when integration becomes distributable.
+The vendored qrupdate code comes from Martin Köhler's `qrupdate-ng` repository
+at <https://gitlab.mpi-magdeburg.mpg.de/koehlerm/qrupdate-ng>, revision
+`3fa4f77d6259c00cf0c36632287063f1277a3fe0`. It states GPL-3.0-or-later
+licensing. Preserve its source notices, per-directory `COPYING` files, and the
+repository-level `THIRD-PARTY-NOTICES.md` entry when repeating this port.
 
 ## 9. Reviewable implementation sequence
 
 Each chunk stops for review and is committed only on explicit request.
 
-1. **Completed in foundation commit `8561b61`:** API study, canonical stable-order
+1. **Completed in foundation commit `6e26bb4`:** API study, canonical stable-order
    decision, memory/code scaffold in workproc, routine map, and porting record.
-2. **Completed in foundation commit `8561b61`:** qrlinalg shape/residual API import,
+2. **Completed in foundation commit `6e26bb4`:** qrlinalg shape/residual API import,
    build/provider integration, all-precision compilation, analytical residual
    test, and an existing I-method sample check.
-3. **Completed in foundation commit `8561b61`:** Q canonical `StoreHS`, explicit matrix-
+3. **Completed in foundation commit `6e26bb4`:** Q canonical `StoreHS`, explicit matrix-
    parameter generation state, and staged arbitrary-index non-derivative H/S
    columns compared with full G/Q recomputation under MPI.
 4. **Completed for OPT_CYCLE Q:** root factor lifecycle and solve: fresh factorization, status broadcasts,
@@ -735,7 +737,7 @@ Not changed:
 ## 14. OPT_CYCLE Q implementation log
 
 This section records the complete implementation after foundation commit
-`8561b61`. The statements in sections 11--13 are historical chunk boundaries;
+`6e26bb4`. The statements in sections 11--13 are historical chunk boundaries;
 their “not changed” lists describe those earlier reviews, not current code.
 
 ### Step 1: factor ownership and fresh construction
@@ -924,7 +926,7 @@ used for these checks were disposable files under `/tmp`.
 
 ## 15. BASIS_ENL Q and FULL_OPT1 Q implementation log
 
-This is the first uncommitted review chunk after `4b07fa4`. It completes the
+This was the first review chunk after `9644fec`. It completes the
 two optimizer drivers that were intentionally left fail-closed in the
 OPT_CYCLE chunk.
 
@@ -1120,7 +1122,7 @@ generated output was modified.
 
 ## 17. Post-commit runtime validation
 
-This validation was performed after commit `f872103` against the strict wp=8
+This validation was performed after commit `bd0a7a1` against the strict wp=8
 debug executable (`-fbounds-check`, `-fcheck=all`, and floating-point traps).
 All inputs and outputs were disposable files under `/tmp`; no sample input was
 edited.
@@ -1305,22 +1307,22 @@ legacy routines call `MPI_Abort` after saving.
 
 ## 19. Port to RG_1P, RG_2D, and RG_2P
 
-The complete committed RG_0S Q implementation through `846120a` was ported to
+The complete committed RG_0S Q implementation through `ee12e5c` was ported to
 the three remaining real-basis energy codes. The upstream sequence used as the
 port specification was:
 
-1. `8561b61 Establish Q method QR architecture`;
-2. `4b07fa4 Implement Q cyclic optimization`;
-3. `f872103 Implement remaining Q methods`; and
-4. `846120a Optimize Q cleanup updates`.
+1. `6e26bb4 Establish Q method QR architecture`;
+2. `9644fec Implement Q cyclic optimization`;
+3. `bd0a7a1 Implement remaining Q methods`; and
+4. `ee12e5c Optimize Q cleanup updates`.
 
 The port deliberately did not copy the whole final RG_0S `workproc.f90` over a
 sibling. Each sibling contains basis-specific generation, discrete angular
 indices, matrix-element signatures, saved-data formats, and operator code. The
 repeatable procedure was instead:
 
-1. use the pre-Q RG_0S file at `154145b` as the merge base;
-2. use the RG_0S file at `846120a` as the changed reference;
+1. use the pre-Q ecgpack `main` commit `8d38d29` as the merge base;
+2. use the RG_0S file at `ee12e5c` as the changed reference;
 3. perform a three-way file merge with the unchanged sibling as the current
    side, thereby transferring only the RG_0S Q changes;
 4. resolve overlap at the insertion point in favor of the new Q routines while
@@ -1362,9 +1364,20 @@ RG_0S.
 
 - RG_1P generates, broadcasts, saves, restores, prints, and optionally
   optimizes one `Z` index per candidate;
-- RG_2D does the same for two independently selectable indices;
+- RG_2D does the same for two indices, subject to the optional vector-coupling
+  restriction described below;
 - RG_2P does the same for two indices while preserving the local requirement
   that the two indices of one basis function differ.
+
+The correct ecgpack repository contains newer RG_2D
+`VECTOR_COUPLING_SCHEME` behavior that was absent from the original Q porting
+baseline. That behavior must be retained in `BasisEnlQ`: scheme 1 excludes the
+other index while either index is scanned, and scheme 2 treats the equal pair
+as one discrete choice and changes both indices together. If either scheme-2
+index is fixed, both are effectively fixed. `GenerateTrialParam` establishes
+the same invariants for random candidates before Q stages their canonical
+columns. Do not replace the newer RG_2D `globvars.f90`, input parsing, or G/I
+index scans with files from an older sibling repository.
 
 These indices are not DRMNG variables and are not stored in
 `Q_Workspace%MatrixParam`. Every discrete trial therefore uses
@@ -1483,3 +1496,61 @@ enabled, so the compiler attempted to parse the commented argument lists as
 directives. Those lines now use ordinary `!` comments in every real-ECG
 variant; this is a source-compatibility correction and does not alter the
 serial or numerical code path.
+
+## 21. Transfer to the canonical ecgpack repository
+
+The Q work was first developed in a separate repository with closely related
+history. The canonical ecgpack repository was still at pre-Q commit `8d38d29`
+when the implementation was transferred. Most affected files matched that
+pre-Q baseline exactly, so the original reviewable commits could be applied
+without reconstructing the algorithms. The deliberate exceptions were:
+
+- retain ecgpack's newer RG_2D `VECTOR_COUPLING_SCHEME` globals, input/output,
+  candidate generation, and G/I index optimization;
+- extend `BasisEnlQ` with the equivalent scheme-aware index scan described in
+  section 19;
+- retain the `nvhpc-26.5` toolchain added to the canonical `build.bash`;
+- merge the Q/OpenMP manual text into the newer public manuals instead of
+  replacing them; and
+- replace obsolete internal commit references in this document with commits
+  that exist on the canonical feature branch.
+
+This is the repeatable migration rule for a later variant: compare the target
+against the known pre-Q baseline first, transfer unchanged files directly,
+and use a three-way merge for every target file with local semantic changes.
+After the merge, inspect each basis-specific discrete metadata path separately;
+a clean textual application is not proof that a new Q driver enforces newer
+target invariants.
+
+### Canonical-repository validation
+
+All four variants compiled serially with strict debug checks and OpenMP
+enabled, followed by release/OpenMP builds. The root batch driver was also
+used to produce `RG_2P_N5_P8_netlib` from its own five-particle sample setup:
+
+```bash
+make -C RG_0S debug COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib OPENMP=1 EXEFILE=ecg
+make -C RG_1P debug COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib OPENMP=1 EXEFILE=ecg
+make -C RG_2D debug COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib OPENMP=1 EXEFILE=ecg
+make -C RG_2P debug COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib OPENMP=1 EXEFILE=ecg
+./build.bash machine=linux-generic toolchain=systemdefault config=release code=RG_2P nparticles=5 precision=8 linalg=netlib openmp=1
+```
+
+Disposable release runs generated three-function Q bases using the respective
+RG_0S Li, RG_1P He, RG_2D He, and RG_2P Be sample headers. Fresh I and Q
+`SAVE_HSWF` solves on each identical physical basis gave:
+
+| Code/coupling scheme | I energy | Q energy | maximum `abs(H_I-H_Q)` |
+| --- | ---: | ---: | ---: |
+| RG_0S | -6.9847582217159010 | -6.9847582217159019 | 8.88E-16 |
+| RG_1P | -2.0454892050253215 | -2.0454892050253219 | 1.11E-16 |
+| RG_2D scheme 1 | -0.68507236237832703 | -0.68507236237832703 | 0 |
+| RG_2D scheme 2 | -1.9516468333501751 | -1.9516468333501749 | 0 |
+| RG_2P | -13.348362812664611 | -13.348362812664611 | 1.07E-14 |
+
+The separately assembled overlap files were byte-identical in every case.
+The tiny Hamiltonian differences are expected floating-point accumulation
+roundoff. All RG_2D scheme-1 basis functions had unequal index pairs, while
+all scheme-2 functions had equal pairs, including after optimization type 1
+performed its discrete-index scan. Test inputs and outputs remained under
+`/tmp`; no tracked sample was modified.
