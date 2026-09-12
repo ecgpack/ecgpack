@@ -5851,52 +5851,87 @@ contains
             j2=Glob_Index(nfru+ii,2)
             jbest=j
             jbest2=j2
-            if (.not.Glob_IsIndexFixed(1)) then
-              do jj=1,Glob_n
-                if (jj/=j) then
-                  Glob_Index(nfru+ii,1)=jj
-                  call EvaluateQAppendedTrial(nfru,K,Evalue,ErrCode)
-                  if (ErrCode/=Q_METHOD_SUCCESS) then
-                    NumOfFailures=NumOfFailures+1
-                    Glob_Index(nfru+ii,1)=jbest
-                    if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
-                      if (Glob_ProcID==0) then
-                        write(*,*) 'Error EC0128 in BasisEnlQ: number of failures in energy calculations'
-                        write(*,*) 'during the optimization of the first index exceeded limit'
+            if (Glob_VectorCouplingScheme==2) then
+              !Coupling scheme 2 requires the two indices to be equal. They therefore cannot
+              !be varied independently and are varied together here. If either index is fixed,
+              !both are effectively fixed and there is no discrete metadata to optimize.
+              if (.not.(Glob_IsIndexFixed(1).or.Glob_IsIndexFixed(2))) then
+                do jj=1,Glob_n
+                  if (jj/=j) then
+                    Glob_Index(nfru+ii,1)=jj
+                    Glob_Index(nfru+ii,2)=jj
+                    call EvaluateQAppendedTrial(nfru,K,Evalue,ErrCode)
+                    if (ErrCode/=Q_METHOD_SUCCESS) then
+                      NumOfFailures=NumOfFailures+1
+                      Glob_Index(nfru+ii,1)=jbest
+                      Glob_Index(nfru+ii,2)=jbest
+                      if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
+                        if (Glob_ProcID==0) then
+                          write(*,*) 'Error EC0128 in BasisEnlQ: number of failures in energy calculations'
+                          write(*,*) 'during the optimization of both indices exceeded limit'
+                        endif
+                        call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
                       endif
-                      call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+                    else if (Evalue<Glob_CurrEnergy) then
+                      Glob_CurrEnergy=Evalue
+                      jbest=jj
                     endif
-                  else if (Evalue<Glob_CurrEnergy) then
-                    Glob_CurrEnergy=Evalue
-                    jbest=jj
                   endif
-                endif
-              enddo
-            endif
-            Glob_Index(nfru+ii,1)=jbest
-            if (.not.Glob_IsIndexFixed(2)) then
-              do jj2=1,Glob_n
-                if (jj2/=j2) then
-                  Glob_Index(nfru+ii,2)=jj2
-                  call EvaluateQAppendedTrial(nfru,K,Evalue,ErrCode)
-                  if (ErrCode/=Q_METHOD_SUCCESS) then
-                    NumOfFailures=NumOfFailures+1
-                    Glob_Index(nfru+ii,2)=jbest2
-                    if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
-                      if (Glob_ProcID==0) then
-                        write(*,*) 'Error EC0129 in BasisEnlQ: number of failures in energy calculations'
-                        write(*,*) 'during the optimization of the second index exceeded limit'
+                enddo
+              endif
+              jbest2=jbest
+              Glob_Index(nfru+ii,1)=jbest
+              Glob_Index(nfru+ii,2)=jbest2
+            else
+              !Coupling scheme 1 requires different indices. Excluding the other index from
+              !each scan preserves that invariant. Scheme 0 retains the unrestricted scan.
+              if (.not.Glob_IsIndexFixed(1)) then
+                do jj=1,Glob_n
+                  if ((jj/=j).and.((Glob_VectorCouplingScheme/=1).or.(jj/=j2))) then
+                    Glob_Index(nfru+ii,1)=jj
+                    call EvaluateQAppendedTrial(nfru,K,Evalue,ErrCode)
+                    if (ErrCode/=Q_METHOD_SUCCESS) then
+                      NumOfFailures=NumOfFailures+1
+                      Glob_Index(nfru+ii,1)=jbest
+                      if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
+                        if (Glob_ProcID==0) then
+                          write(*,*) 'Error EC0128 in BasisEnlQ: number of failures in energy calculations'
+                          write(*,*) 'during the optimization of the first index exceeded limit'
+                        endif
+                        call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
                       endif
-                      call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+                    else if (Evalue<Glob_CurrEnergy) then
+                      Glob_CurrEnergy=Evalue
+                      jbest=jj
                     endif
-                  else if (Evalue<Glob_CurrEnergy) then
-                    Glob_CurrEnergy=Evalue
-                    jbest2=jj2
                   endif
-                endif
-              enddo
+                enddo
+              endif
+              Glob_Index(nfru+ii,1)=jbest
+              if (.not.Glob_IsIndexFixed(2)) then
+                do jj2=1,Glob_n
+                  if ((jj2/=j2).and.((Glob_VectorCouplingScheme/=1).or.(jj2/=jbest))) then
+                    Glob_Index(nfru+ii,2)=jj2
+                    call EvaluateQAppendedTrial(nfru,K,Evalue,ErrCode)
+                    if (ErrCode/=Q_METHOD_SUCCESS) then
+                      NumOfFailures=NumOfFailures+1
+                      Glob_Index(nfru+ii,2)=jbest2
+                      if (NumOfFailures>Glob_MaxEnergyFailsAllowed) then
+                        if (Glob_ProcID==0) then
+                          write(*,*) 'Error EC0129 in BasisEnlQ: number of failures in energy calculations'
+                          write(*,*) 'during the optimization of the second index exceeded limit'
+                        endif
+                        call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+                      endif
+                    else if (Evalue<Glob_CurrEnergy) then
+                      Glob_CurrEnergy=Evalue
+                      jbest2=jj2
+                    endif
+                  endif
+                enddo
+              endif
+              Glob_Index(nfru+ii,2)=jbest2
             endif
-            Glob_Index(nfru+ii,2)=jbest2
           enddo
           call EvaluateQAppendedTrial(nfru,K,Glob_CurrEnergy,ErrCode)
           if (ErrCode/=Q_METHOD_SUCCESS) then
