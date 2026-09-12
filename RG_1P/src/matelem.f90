@@ -6,7 +6,11 @@ module matelem
 
 contains
 
-  subroutine MatrixElementsHS_RG_1P(m_k, m_l, vechLk, vechLl, P, &
+#ifdef USE_CUDA
+  attributes(host,device) &
+#endif
+  subroutine MatrixElementsHS_RG_1P(n, np, m_k, m_l, Lk, Ll, Ak, Al, MAk, P, perm, iperm, Pisperm, &
+                              mass, chargeM, sqrtpi, pir3n2, &
                               Hkl, Skl, Dk, Dl, grad_k, grad_l)
 !This subroutine computes symmetry adapted matrix element with
 !two real L=1 correlated Gaussians:
@@ -20,8 +24,9 @@ contains
 !Input:
 !   m_k, m_l :: integers that determine which z-component is in the
 !                premultiplier of the Gaussian
-!   vechLk, vechLl :: Arrays of length (n(n+1)/2) of
-!     exponential parameters.
+!   Lk, Ll :: Precomputed lower-triangular parameter matrices.
+!   Ak, Al :: Precomputed Ak=Lk*Lk' and Al=Ll*Ll'.
+!   MAk    :: Precomputed Glob_MassMatrix*Ak.
 !   P  :: The symmetry permutation matrix of size n x n
 !   grad_k, grad_l :: Gradient flags
 !   grad_k=.true.  means that dHkldvechLk, dSkldvechLk need to be computed.
@@ -36,23 +41,29 @@ contains
 !           Dl=(dHkldvechLl,dSkldvechLl)
 
 !Arguments
-    integer,intent(in)          :: m_k,m_l
-    real(wp),intent(in)      :: vechLk(Glob_np), vechLl(Glob_np)
-    real(wp),intent(in)      :: P(Glob_n,Glob_n)
-    real(wp),intent(out)     :: Skl,Hkl
-    real(wp),intent(out)     :: Dk(2*Glob_np),Dl(2*Glob_np)
-    logical,intent(in)          :: grad_k, grad_l
-
-!Parameters (These are needed to declare static arrays. Using static
-!arrays makes the function call a little faster in comparison with
-!the case when arrays are dynamically allocated in stack)
+!Runtime dimensions and physics data are explicit inputs: device code cannot
+!read ordinary host module variables. Module PARAMETER constants (wp, nn,
+!ZERO, ONE, etc.) are compile-time values and remain valid on both targets.
+!n must equal nn; np is the number of packed lower-triangular parameters.
+!mass and chargeM are the mass and pre-scaled pseudocharge matrices.
+!sqrtpi = sqrt(pi); pir3n2 = pi**(3*n/2).
     integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+!The input reader enforces n == nn; fixed extents give constant matrix strides.
+    integer,intent(in),value :: n, np
+    integer,intent(in),value :: m_k,m_l
+    real(wp),intent(in)      :: Lk(nn,nn), Ll(nn,nn), Ak(nn,nn), Al(nn,nn), MAk(nn,nn)
+    real(wp),intent(in)      :: P(nn,nn)
+    integer,intent(in)       :: perm(nn), iperm(nn)
+    logical,intent(in),value :: Pisperm
+    real(wp),intent(in)      :: mass(nn,nn), chargeM(0:nn,0:nn)
+    real(wp),intent(in),value :: sqrtpi, pir3n2
+    real(wp),intent(out)     :: Skl,Hkl
+    real(wp),intent(out)     :: Dk(2*np),Dl(2*np)
+    logical,intent(in),value :: grad_k, grad_l
 
-!Local variables
-    integer           n, np
+!Local variables (fixed extents keep matrix workspace sizes compile-time known).
     integer           tvl(nn)
-    real(wp)       Lk(nn,nn),Ll(nn,nn)
-    real(wp)       Ak(nn,nn),tAl(nn,nn),tAkl(nn,nn)
+    real(wp)       tAl(nn,nn),tAkl(nn,nn)
     real(wp)       inv_tAkl(nn,nn)
     real(wp)       inv_tAkltAl(nn,nn),inv_tAkltAlM(nn,nn)
     real(wp)       inv_tAklAk(nn,nn),inv_tAklAkM(nn,nn)
@@ -69,54 +80,45 @@ contains
     real(wp)       Tkl, Vkl
     integer           i,j,k,indx
 
-    n=Glob_n
-    np=Glob_np
-!First we build matrices Lk, Ll, Ak, Al from vechLk, vechLl.
-    indx=0
-    do i=1,n
-      do j=i,n
-        indx=indx+1
-        Lk(i,j)=ZERO
-        Lk(j,i)=vechLk(indx)
-        Ll(i,j)=ZERO
-        Ll(j,i)=vechLl(indx)
-      enddo
-    enddo
-
-    do i=1,n
-      do j=i,n
-        temp1=ZERO
-        do k=1,i
-          temp1=temp1+Lk(i,k)*Lk(j,k)
-        enddo
-        Ak(i,j)=temp1
-        Ak(j,i)=temp1
-        temp1=ZERO
-        do k=1,i
-          temp1=temp1+Ll(i,k)*Ll(j,k)
-        enddo
-        tAl(i,j)=temp1
-        tAl(j,i)=temp1
-      enddo
-    enddo
+!Lk, Ll, Ak, Al arrive precomputed once per basis-function sweep.
 
 !Then we permute elements of Al to account for
 !the action of the permutation matrix
 !tAl=P'*Al*P
 !We also form matrix tAkl=Ak+tAl
-    do i=1,n
-      do j=1,n
+!Optimization: for every atomic symmetry projection P is a permutation
+!matrix -- one +1 per column, zeros elsewhere -- and multiplying by one does
+!not compute anything, it shuffles rows and columns:
+!  (P'*A*P)(i,j) = A(perm(i),perm(j))
+!so the two O(n^3) congruences below collapse into an O(n^2) gather. The
+!caller decodes perm/iperm once per symmetry term. If a matrix is not a pure
+!permutation (for example, signed molecular/positronic terms), the original
+!dense congruence is used instead, so the routine stays fully general.
+    if (Pisperm) then
+      !Gather directly from Al; tAl is the output.
+      do i=1,nn
+        do j=i,nn
+          temp1=Al(perm(i),perm(j))
+          tAl(i,j)=temp1
+          tAl(j,i)=temp1
+          tAkl(i,j)=Ak(i,j)+temp1
+          tAkl(j,i)=tAkl(i,j)
+        enddo
+      enddo
+    else
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
-        do k=1,n
-          temp1=temp1+P(k,j)*tAl(k,i)
+        do k=1,nn
+          temp1=temp1+P(k,j)*Al(k,i)
         enddo
         W1(j,i)=temp1
       enddo
     enddo
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+W1(i,k)*P(k,j)
         enddo
         tAl(i,j)=temp1
@@ -125,6 +127,7 @@ contains
         tAkl(j,i)=tAkl(i,j)
       enddo
     enddo
+    endif
 
 !I delete non-necessary parts of the code
 
@@ -132,7 +135,7 @@ contains
 !the products of their diagonal elements
 !det_Lk=ONE
 !det_Ll=ONE
-!do i=1,n
+!do i=1,nn
 !  det_Lk=det_Lk*Lk(i,i)
 !  det_Ll=det_Ll*Ll(i,i)
 !enddo
@@ -141,8 +144,8 @@ contains
 !The Cholesky factor will be temporarily stored in the
 !lower triangle of W1
     det_tAkl=ONE
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=tAkl(i,j)
         do k=i-1,1,-1
           temp1=temp1-W1(i,k)*W1(j,k)
@@ -159,9 +162,9 @@ contains
 
 !Inverting tAkl using its Cholesky factor (stored in W1)
 !and placing the result into inv_tAkl
-    do i=1,n
+    do i=1,nn
       W1(i,i)=ONE/W1(i,i)
-      do j=i+1,n
+      do j=i+1,nn
         temp1=ZERO
         do k=i,j-1
           temp1=temp1-W1(j,k)*W1(k,i)
@@ -170,10 +173,10 @@ contains
       enddo
     enddo
 
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=ZERO
-        do k=j,n
+        do k=j,nn
           temp1=temp1+W1(k,i)*W1(k,j)
         enddo
         inv_tAkl(i,j)=temp1
@@ -185,10 +188,10 @@ contains
 
 !Finding the inverse of Akk and All using their Cholesky factors
 !The result is placed in inv_Akk and inv_All
-!do i=1,n
+!do i=1,nn
 !  W1(i,i)=ONE/Lk(i,i)
 !  W2(i,i)=ONE/Ll(i,i)
-!  do j=i+1,n
+!  do j=i+1,nn
 !    temp1=ZERO
 !    temp2=ZERO
 !    do k=i,j-1
@@ -200,11 +203,11 @@ contains
 !  enddo
 !enddo
 
-!do i=1,n
-!  do j=i,n
+!do i=1,nn
+!  do j=i,nn
 !     temp1=ZERO
 !     temp2=ZERO
-!    do k=j,n
+!    do k=j,nn
 !       temp1=temp1+W1(k,i)*W1(k,j)
 !       temp2=temp2+W2(k,i)*W2(k,j)
 !     enddo
@@ -216,27 +219,32 @@ contains
 !enddo
 
 !Computing tvl=P'*vl
-    do i=1,n
-      tvl(i)=P(m_l,i)
-    enddo
+    if (Pisperm) then
+      tvl=0
+      tvl(iperm(m_l))=1
+    else
+      do i=1,nn
+        tvl(i)=P(m_l,i)
+      enddo
+    endif
 
 !Compute inv_tAkltvl = inv_tAkl * tvl
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+inv_tAkl(j,i)*tvl(j)
       enddo
       inv_tAkltvl(i)=temp1
     enddo
 
 !Compute vkinv_tAkl=vk'*inv_tAkl
-    do i=1,n
+    do i=1,nn
       vkinv_tAkl(i)=inv_tAkl(m_k,i)
     enddo
 
 !Compute tau3=vkinv_tAkl*tvl
     tau3=ZERO
-    do i=1,n
+    do i=1,nn
       tau3=tau3+vkinv_tAkl(i)*tvl(i)
     enddo
 
@@ -244,13 +252,13 @@ contains
 !temp1=abs(det_Ll*det_Lk)/det_tAkl
     temp1=det_tAkl*sqrt(det_tAkl)
 !Skl=Glob_2Raised3n2*tau3*temp1*sqrt(temp1/(inv_Akk(m_k,m_k)*inv_All(m_l,m_l)))
-    Skl=Glob_PiRaised3n2*tau3/(TWO*temp1)
+    Skl=pir3n2*tau3/(TWO*temp1)
 
 !Doing multiplication inv_tAkltAl=inv_tAkl*tAl
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+inv_tAkl(j,k)*tAl(k,i)
         enddo
         inv_tAkltAl(j,i)=temp1
@@ -258,11 +266,11 @@ contains
     enddo
 
 !Doing multiplication inv_tAkltAlM=inv_tAkltAl*M
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
-        do k=1,n
-          temp1=temp1+inv_tAkltAl(j,k)*Glob_MassMatrix(k,i)
+        do k=1,nn
+          temp1=temp1+inv_tAkltAl(j,k)*mass(k,i)
         enddo
         inv_tAkltAlM(j,i)=temp1
       enddo
@@ -270,9 +278,9 @@ contains
 
 !Computing tau1=tr[inv_tAkltAlM*Ak]
     tau1=ZERO
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+inv_tAkltAlM(i,k)*Ak(k,i)
       enddo
       tau1=tau1+temp1
@@ -281,17 +289,13 @@ contains
 !We do it by multiplying twice the row-vector on the left
 !by a matrix on the right and computing a dot product in the end.
 
-!vkinv_tAkltAlM'=vk'*inv_tAkltAlM
-    do i=1,n
-      vkinv_tAkltAlM(i)=inv_tAkltAlM(m_k,i)
-    enddo
-!u1=vkinv_tAkltAlM'*Ak
+!u1=inv_tAkltAlM(m_k,:)*Ak
 !tau2=u1'*inv_tAkltvl (storage for u1 as such is not needed, we use temp1=u1(i))
     tau2=ZERO
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do j=1,n
-        temp1=temp1+vkinv_tAkltAlM(j)*Ak(j,i)
+      do j=1,nn
+        temp1=temp1+inv_tAkltAlM(m_k,j)*Ak(j,i)
       enddo
       tau2=tau2+temp1*inv_tAkltvl(i)
     enddo
@@ -303,8 +307,8 @@ contains
 !and the potential energy. Notice that only the lower triangles
 !of eta1, sqrt_eta1, eta2, and Rkl are filled.
     Vkl=ZERO
-    temp1=Skl*(TWO/Glob_SqrtPi)
-    do i=1,n
+    temp1=Skl*(TWO/sqrtpi)
+    do i=1,nn
       temp2=inv_tAkl(i,i)
       temp3=sqrt(temp2)
       eta1(i,i)=temp2
@@ -315,10 +319,10 @@ contains
       temp4=vkinv_tAkl(i)*inv_tAkltvl(i)
       eta2(i,i)=temp4
       Rkl(i,i)=temp1*(ONE-temp4/(THREE*temp2*tau3))/temp3
-      Vkl=Vkl+Glob_ScaledPseudoChargeMatrix(i,0)*Rkl(i,i)
+      Vkl=Vkl+chargeM(i,0)*Rkl(i,i)
     enddo
-    do i=1,n
-      do j=i+1,n
+    do i=1,nn
+      do j=i+1,nn
         temp2=inv_tAkl(i,i)+inv_tAkl(j,j)-inv_tAkl(j,i)-inv_tAkl(j,i)
         temp3=sqrt(temp2)
         eta1(j,i)=temp2
@@ -330,7 +334,7 @@ contains
         temp4=(vkinv_tAkl(i)-vkinv_tAkl(j))*(inv_tAkltvl(i)-inv_tAkltvl(j))
         eta2(j,i)=temp4
         Rkl(j,i)=temp1*(ONE-temp4/(THREE*temp2*tau3))/temp3
-        Vkl=Vkl+Glob_ScaledPseudoChargeMatrix(i,j)*Rkl(j,i)
+        Vkl=Vkl+chargeM(i,j)*Rkl(j,i)
       enddo
     enddo
 
@@ -371,21 +375,26 @@ contains
 !  dHkl/dvechLl = (Hkl/Skl)*dSkl/dvechLl + Skl*vech[(P*Zsym*P')*Ll]
 
     if (grad_k.or.grad_l) then
+      !Materialize this row only for gradients. The energy path reads the row
+      !directly above, avoiding a temporary producer loop between reductions.
+      do i=1,nn
+        vkinv_tAkltAlM(i)=inv_tAkltAlM(m_k,i)
+      enddo
       !Evaluating matrix tKkl = inv_tAkltvl * vkinv_tAkl'
       !which will be used a lot below, and its symmetrization Ssym
-      do i=1,n
-        do j=1,n
+      do i=1,nn
+        do j=1,nn
           tKkl(i,j)=inv_tAkltvl(i)*vkinv_tAkl(j)
         enddo
       enddo
-      do i=1,n
+      do i=1,nn
         do j=1,i
           Ssym(i,j)=tKkl(i,j)+tKkl(j,i)
           Ssym(j,i)=Ssym(i,j)
         enddo
       enddo
       !Evaluating twosym_tFkl = tFkl + tFkl' , where tFkl = (3/2)*inv_tAkl + tKkl/tau3
-      do i=1,n
+      do i=1,nn
         do j=1,i
           twosym_tFkl(i,j)=THREE*inv_tAkl(j,i)+Ssym(i,j)/tau3
           twosym_tFkl(j,i)=twosym_tFkl(i,j)
@@ -393,10 +402,13 @@ contains
       enddo
       !Evaluating Fkl=inv_tAkltAlM*inv_tAkltAl'
       !(only the upper triangle, then mirrored)
+      !Keep this bound runtime: nvfortran 25.9 can fuse this producer with
+      !the following grad_k-only loop, corrupting dH/dLl when only grad_l
+      !is requested. n == nn; the runtime bound prevents that wrong-code.
       do j=1,n
         do i=1,j
           temp1=ZERO
-          do k=1,n
+          do k=1,nn
             temp1=temp1+inv_tAkltAlM(i,k)*inv_tAkltAl(j,k)
           enddo
           Fkl(i,j)=temp1
@@ -411,49 +423,59 @@ contains
     if (grad_k) then
       !Evaluating -Skl*vech((twosym_tFkl)*Lk)'
       indx=0
-      do i=1,n
-        do j=i,n
+      do i=1,nn
+        do j=i,nn
           temp1=ZERO
-          do k=i,n
+          do k=i,nn
             temp1=temp1-twosym_tFkl(k,j)*Lk(k,i)
           enddo
           indx=indx+1
-          Dk(Glob_np+indx)=Skl*temp1
+          Dk(np+indx)=Skl*temp1
         enddo
       enddo
     endif
 
     if (grad_l) then
       !Evaluating twosym_tGkl = P * twosym_tFkl *P'
-      do i=1,n
-        do j=1,n
-          temp1=ZERO
-          do k=1,n
-            temp1=temp1+P(i,k)*twosym_tFkl(k,j)
+      if (Pisperm) then
+        do i=1,nn
+          do j=1,i
+            temp1=twosym_tFkl(iperm(i),iperm(j))
+            twosym_tGkl(i,j)=temp1
+            twosym_tGkl(j,i)=temp1
           enddo
-          W1(i,j)=temp1
         enddo
-      enddo
-      do i=1,n
-        do j=1,i
-          temp1=ZERO
-          do k=1,n
-            temp1=temp1+W1(i,k)*P(j,k)
+      else
+        do i=1,nn
+          do j=1,nn
+            temp1=ZERO
+            do k=1,nn
+              temp1=temp1+P(i,k)*twosym_tFkl(k,j)
+            enddo
+            W1(i,j)=temp1
           enddo
-          twosym_tGkl(i,j)=temp1
-          twosym_tGkl(j,i)=temp1
         enddo
-      enddo
+        do i=1,nn
+          do j=1,i
+            temp1=ZERO
+            do k=1,nn
+              temp1=temp1+W1(i,k)*P(j,k)
+            enddo
+            twosym_tGkl(i,j)=temp1
+            twosym_tGkl(j,i)=temp1
+          enddo
+        enddo
+      endif
       !Evaluating -Skl*vech((twosym_tGkl)*Ll)'
       indx=0
-      do i=1,n
-        do j=i,n
+      do i=1,nn
+        do j=i,nn
           temp1=ZERO
-          do k=i,n
+          do k=i,nn
             temp1=temp1-twosym_tGkl(k,j)*Ll(k,i)
           enddo
           indx=indx+1
-          Dl(Glob_np+indx)=Skl*temp1
+          Dl(np+indx)=Skl*temp1
         enddo
       enddo
     endif
@@ -462,8 +484,8 @@ contains
 !(see the comment above)
 
     if (grad_k.or.grad_l) then
-      do j=1,n
-        do i=1,n
+      do j=1,nn
+        do i=1,nn
           Cmat(i,j)=ZERO
         enddo
         dv1(j)=ZERO
@@ -472,9 +494,9 @@ contains
       sigma=ZERO
       temp3=ONETHIRD/tau3
       !terms with Jii (interaction with the reference particle)
-      do i=1,n
-        temp1=(TWO/Glob_SqrtPi)/(eta1(i,i)*sqrt_eta1(i,i))
-        temp5=Glob_ScaledPseudoChargeMatrix(i,0)*temp1
+      do i=1,nn
+        temp1=(TWO/sqrtpi)/(eta1(i,i)*sqrt_eta1(i,i))
+        temp5=chargeM(i,0)*temp1
         temp2=ONE-eta2(i,i)/(eta1(i,i)*tau3)
         Cmat(i,i)=Cmat(i,i)+temp5*temp2
         temp6=temp5*temp3
@@ -483,10 +505,10 @@ contains
         sigma=sigma+temp6*eta2(i,i)/tau3
       enddo
       !terms with Jij (interparticle interactions)
-      do i=1,n
-        do j=i+1,n
-          temp1=(TWO/Glob_SqrtPi)/(eta1(j,i)*sqrt_eta1(j,i))
-          temp5=Glob_ScaledPseudoChargeMatrix(i,j)*temp1
+      do i=1,nn
+        do j=i+1,nn
+          temp1=(TWO/sqrtpi)/(eta1(j,i)*sqrt_eta1(j,i))
+          temp5=chargeM(i,j)*temp1
           temp2=ONE-eta2(j,i)/(eta1(j,i)*tau3)
           temp4=temp5*temp2
           Cmat(i,i)=Cmat(i,i)+temp4
@@ -504,20 +526,20 @@ contains
         enddo
       enddo
       !W1=Cmat*inv_tAkl (both factors are symmetric)
-      do j=1,n
-        do i=1,n
+      do j=1,nn
+        do i=1,nn
           temp1=ZERO
-          do k=1,n
+          do k=1,nn
             temp1=temp1+Cmat(k,i)*inv_tAkl(k,j)
           enddo
           W1(i,j)=temp1
         enddo
       enddo
       !upper triangle of inv_tAkl*Cmat*inv_tAkl=W1'*inv_tAkl, mirrored
-      do j=1,n
+      do j=1,nn
         do i=1,j
           temp1=ZERO
-          do k=1,n
+          do k=1,nn
             temp1=temp1+W1(k,i)*inv_tAkl(k,j)
           enddo
           Bmat(i,j)=temp1
@@ -525,10 +547,10 @@ contains
         enddo
       enddo
       !pv=inv_tAkl*dv1 and rv=inv_tAkl*dv2
-      do i=1,n
+      do i=1,nn
         temp1=ZERO
         temp2=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+inv_tAkl(k,i)*dv1(k)
           temp2=temp2+inv_tAkl(k,i)*dv2(k)
         enddo
@@ -536,8 +558,8 @@ contains
         rv(i)=temp2
       enddo
       !adding the rank-one and Ssym parts
-      do j=1,n
-        do i=1,n
+      do j=1,nn
+        do i=1,nn
           Bmat(i,j)=Bmat(i,j)+pv(i)*inv_tAkltvl(j)+inv_tAkltvl(i)*pv(j) &
                     +rv(i)*vkinv_tAkl(j)+vkinv_tAkl(i)*rv(j)-sigma*Ssym(i,j)
         enddo
@@ -547,25 +569,21 @@ contains
 !Gradient of Hkl with respect to vechLk
 
     if (grad_k) then
-      !Computing u1'=vkinv_tAkltAlM'*inv_tAkltAl'
-      do i=1,n
+      !Compute the independent u1 and u3 matvecs in one pass.
+      do i=1,nn
         temp1=ZERO
-        do j=1,n
+        temp2=ZERO
+        do j=1,nn
           temp1=temp1+vkinv_tAkltAlM(j)*inv_tAkltAl(i,j)
+          temp2=temp2+Ak(i,j)*inv_tAkltvl(j)
         enddo
         u1(i)=temp1
+        u3(i)=temp2
       enddo
-      !Computing u2=inv_tAkltAlM*Ak*inv_tAkltvl
-      do i=1,n
+      !Computing u2=inv_tAkltAlM*u3
+      do i=1,nn
         temp1=ZERO
-        do j=1,n
-          temp1=temp1+Ak(i,j)*inv_tAkltvl(j)
-        enddo
-        u3(i)=temp1
-      enddo
-      do i=1,n
-        temp1=ZERO
-        do j=1,n
+        do j=1,nn
           temp1=temp1+inv_tAkltAlM(i,j)*u3(j)
         enddo
         u2(i)=temp1
@@ -574,8 +592,8 @@ contains
       !tUkl = 6*Fkl + (4/tau3)*(inv_tAkltvl*u1'-u2*vkinv_tAkl') + (4*tau2/tau3^2)*tKkl
       temp1=FOUR/tau3
       temp2=temp1*tau2/tau3
-      do j=1,n
-        do i=1,n
+      do j=1,nn
+        do i=1,nn
           Zsym(i,j)=12*Fkl(i,j) &
                     +temp1*(inv_tAkltvl(i)*u1(j)+u1(i)*inv_tAkltvl(j) &
                             -u2(i)*vkinv_tAkl(j)-vkinv_tAkl(i)*u2(j)) &
@@ -584,14 +602,14 @@ contains
       enddo
       !Evaluating (Hkl/Skl)*dSkldvechLk' + Skl*vech(Zsym*Lk)'
       indx=0
-      do i=1,n
-        do j=i,n
+      do i=1,nn
+        do j=i,nn
           temp1=ZERO
-          do k=i,n
+          do k=i,nn
             temp1=temp1+Zsym(k,j)*Lk(k,i)
           enddo
           indx=indx+1
-          Dk(indx)=Skl*temp1+HklOverSkl*Dk(Glob_np+indx)
+          Dk(indx)=Skl*temp1+HklOverSkl*Dk(np+indx)
         enddo
       enddo
     endif
@@ -602,32 +620,32 @@ contains
       !Computing inv_tAklAk=inv_tAkl*Ak and inv_tAklAkM=inv_tAkl*Ak*M.
       !Both come for free: inv_tAkl*Ak=I-inv_tAkltAl (as Ak+tAl=tAkl),
       !hence inv_tAkl*Ak*M=M-inv_tAkltAlM.
-      do i=1,n
-        do j=1,n
+      do i=1,nn
+        do j=1,nn
           inv_tAklAk(j,i)=-inv_tAkltAl(j,i)
-          inv_tAklAkM(j,i)=Glob_MassMatrix(j,i)-inv_tAkltAlM(j,i)
+          inv_tAklAkM(j,i)=mass(j,i)-inv_tAkltAlM(j,i)
         enddo
         inv_tAklAk(i,i)=inv_tAklAk(i,i)+ONE
       enddo
       !Computing u1=inv_tAklAkM*inv_tAklAk'*tvl
-      do i=1,n
+      do i=1,nn
         temp1=ZERO
-        do j=1,n
+        do j=1,nn
           temp1=temp1+inv_tAklAk(j,i)*tvl(j)
         enddo
         u3(i)=temp1
       enddo
-      do i=1,n
+      do i=1,nn
         temp1=ZERO
-        do j=1,n
+        do j=1,nn
           temp1=temp1+inv_tAklAkM(i,j)*u3(j)
         enddo
         u1(i)=temp1
       enddo
       !Computing u2'=vkinv_tAkltAlM'*inv_tAklAk'
-      do i=1,n
+      do i=1,nn
         temp1=ZERO
-        do j=1,n
+        do j=1,nn
           temp1=temp1+vkinv_tAkltAlM(j)*inv_tAklAk(i,j)
         enddo
         u2(i)=temp1
@@ -638,9 +656,9 @@ contains
       !and 6*inv_tAklAkM*inv_tAklAk' = 6*(M-K-K'+Fkl) (see the comment above)
       temp1=FOUR/tau3
       temp2=temp1*tau2/tau3
-      do j=1,n
-        do i=1,n
-          Zsym(i,j)=12*(Glob_MassMatrix(i,j)-inv_tAkltAlM(i,j) &
+      do j=1,nn
+        do i=1,nn
+          Zsym(i,j)=12*(mass(i,j)-inv_tAkltAlM(i,j) &
                         -inv_tAkltAlM(j,i)+Fkl(i,j)) &
                     +temp1*(u1(i)*vkinv_tAkl(j)+vkinv_tAkl(i)*u1(j) &
                             -inv_tAkltvl(i)*u2(j)-u2(i)*inv_tAkltvl(j)) &
@@ -648,40 +666,132 @@ contains
         enddo
       enddo
       !Congruence W3=P*Zsym*P' (only the lower triangle, then mirrored)
-      do i=1,n
-        do j=1,n
-          temp1=ZERO
-          do k=1,n
-            temp1=temp1+P(i,k)*Zsym(k,j)
+      if (Pisperm) then
+        do i=1,nn
+          do j=1,i
+            temp1=Zsym(iperm(i),iperm(j))
+            W3(i,j)=temp1
+            W3(j,i)=temp1
           enddo
-          W1(i,j)=temp1
         enddo
-      enddo
-      do i=1,n
-        do j=1,i
-          temp1=ZERO
-          do k=1,n
-            temp1=temp1+W1(i,k)*P(j,k)
+      else
+        do i=1,nn
+          do j=1,nn
+            temp1=ZERO
+            do k=1,nn
+              temp1=temp1+P(i,k)*Zsym(k,j)
+            enddo
+            W1(i,j)=temp1
           enddo
-          W3(i,j)=temp1
-          W3(j,i)=temp1
         enddo
-      enddo
+        do i=1,nn
+          do j=1,i
+            temp1=ZERO
+            do k=1,nn
+              temp1=temp1+W1(i,k)*P(j,k)
+            enddo
+            W3(i,j)=temp1
+            W3(j,i)=temp1
+          enddo
+        enddo
+      endif
       !Evaluating (Hkl/Skl)*dSkldvechLl' + Skl*vech(W3*Ll)'
       indx=0
-      do i=1,n
-        do j=i,n
+      do i=1,nn
+        do j=i,nn
           temp1=ZERO
-          do k=i,n
+          do k=i,nn
             temp1=temp1+W3(k,j)*Ll(k,i)
           enddo
           indx=indx+1
-          Dl(indx)=Skl*temp1+HklOverSkl*Dl(Glob_np+indx)
+          Dl(indx)=Skl*temp1+HklOverSkl*Dl(np+indx)
         enddo
       enddo
     endif
 
   end subroutine MatrixElementsHS_RG_1P
+
+  subroutine Precompute_LAMA(n, np, Nmax, NonlinParam, mass, Lh, Ah, MAh)
+!Unpack L, form A=L*L', and form MA=mass*A once for each basis function.
+    integer, intent(in)  :: n, np, Nmax
+    real(wp),intent(in)  :: NonlinParam(np,Nmax), mass(n,n)
+    real(wp),intent(out) :: Lh(n,n,Nmax), Ah(n,n,Nmax), MAh(n,n,Nmax)
+    integer  :: f,i,j,k,indx
+    real(wp) :: temp1
+    do f=1,Nmax
+      indx=0
+      do i=1,n
+        do j=i,n
+          indx=indx+1
+          Lh(i,j,f)=ZERO
+          Lh(j,i,f)=NonlinParam(indx,f)
+        enddo
+      enddo
+      do i=1,n
+        do j=i,n
+          temp1=ZERO
+          do k=1,i
+            temp1=temp1+Lh(i,k,f)*Lh(j,k,f)
+          enddo
+          Ah(i,j,f)=temp1
+          Ah(j,i,f)=temp1
+        enddo
+      enddo
+      do j=1,n
+        do i=1,n
+          temp1=ZERO
+          do k=1,n
+            temp1=temp1+mass(i,k)*Ah(k,j,f)
+          enddo
+          MAh(i,j,f)=temp1
+        enddo
+      enddo
+    enddo
+  end subroutine Precompute_LAMA
+
+  subroutine Precompute_PermutationMaps(n, nterms, Pmat, perm, iperm, isperm)
+!Decode symmetry matrices once per matrix-build sweep. The maps drive the
+!atomic permutation fast path; non-permutation terms retain the dense fallback.
+    integer, intent(in)  :: n, nterms
+    real(wp), intent(in) :: Pmat(n,n,nterms)
+    integer, intent(out) :: perm(n,nterms), iperm(n,nterms)
+    logical, intent(out) :: isperm(nterms)
+    integer :: i, j, q, row
+    logical :: seen(n)
+
+    do q=1,nterms
+      isperm(q)=.true.
+      perm(:,q)=[(i,i=1,n)]
+      iperm(:,q)=[(i,i=1,n)]
+      do j=1,n
+        row=0
+        do i=1,n
+          if (Pmat(i,j,q)==ONE) then
+            if (row/=0) isperm(q)=.false.
+            row=i
+          elseif (Pmat(i,j,q)/=ZERO) then
+            isperm(q)=.false.
+          endif
+        enddo
+        if (row==0) then
+          isperm(q)=.false.
+        else
+          perm(j,q)=row
+        endif
+      enddo
+      if (isperm(q)) then
+        seen=.false.
+        do j=1,n
+          if (seen(perm(j,q))) then
+            isperm(q)=.false.
+            exit
+          endif
+          seen(perm(j,q))=.true.
+          iperm(perm(j,q),q)=j
+        enddo
+      endif
+    enddo
+  end subroutine Precompute_PermutationMaps
 
   subroutine MatrixElementsAll_RG_1P(m_k, m_l, vechLk, vechLl, Pbra, Pket, &
                                          Hkl, Skl, Tkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
@@ -793,8 +903,8 @@ contains
     np=Glob_np
 !First we build matrices Lk, Ll, Ak, Al from vechLk, vechLl.
     indx=0
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         indx=indx+1
         Lk(i,j)=ZERO
         Lk(j,i)=vechLk(indx)
@@ -803,8 +913,8 @@ contains
       enddo
     enddo
 
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=ZERO
         do k=1,i
           temp1=temp1+Lk(i,k)*Lk(j,k)
@@ -825,11 +935,11 @@ contains
 !  tAl=Pket'*Al*Pket
 !  tAk=Pbra'*Ak*Pbra
 !We also form matrix tAkl=tAk+tAl
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
         temp2=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+Pket(k,j)*tAl(k,i)
           temp2=temp2+tAk(j,k)*Pbra(k,i)
         enddo
@@ -839,11 +949,11 @@ contains
     enddo
 !tAl=W1*Pket
 !tAk=Pbra'*W2
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=ZERO
         temp2=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+W1(j,k)*Pket(k,i)
           temp2=temp2+Pbra(k,j)*W2(k,i)
         enddo
@@ -861,7 +971,7 @@ contains
 !the products of their diagonal elements
 !det_Lk=ONE
 !det_Ll=ONE
-!do i=1,n
+!do i=1,nn
 !  det_Lk=det_Lk*Lk(i,i)
 !  det_Ll=det_Ll*Ll(i,i)
 !enddo
@@ -870,8 +980,8 @@ contains
 !The Cholesky factor will be temporarily stored in the
 !lower triangle of W1
     det_tAkl=ONE
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=tAkl(i,j)
         do k=i-1,1,-1
           temp1=temp1-W1(i,k)*W1(j,k)
@@ -888,9 +998,9 @@ contains
 
 !Inverting tAkl using its Cholesky factor (stored in W1)
 !and placing the result into inv_tAkl
-    do i=1,n
+    do i=1,nn
       W1(i,i)=ONE/W1(i,i)
-      do j=i+1,n
+      do j=i+1,nn
         temp1=ZERO
         do k=i,j-1
           temp1=temp1-W1(j,k)*W1(k,i)
@@ -899,10 +1009,10 @@ contains
       enddo
     enddo
 
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=ZERO
-        do k=j,n
+        do k=j,nn
           temp1=temp1+W1(k,i)*W1(k,j)
         enddo
         inv_tAkl(i,j)=temp1
@@ -914,8 +1024,8 @@ contains
     if (AreMCorrFuncNeeded.or.AreMPartDensNeeded) then
       det_tAk=ONE
       det_tAl=ONE
-      do i=1,n
-        do j=i,n
+      do i=1,nn
+        do j=i,nn
           temp1=tAk(i,j)
           temp2=tAl(i,j)
           do k=i-1,1,-1
@@ -938,10 +1048,10 @@ contains
 
       !Inverting tAk and tAl using its Cholesky factors (stored in W1, W2)
       !and placing the result into inv_tAk, inv_tAl
-      do i=1,n
+      do i=1,nn
         W1(i,i)=ONE/W1(i,i)
         W2(i,i)=ONE/W2(i,i)
-        do j=i+1,n
+        do j=i+1,nn
           temp1=ZERO
           temp2=ZERO
           do k=i,j-1
@@ -953,11 +1063,11 @@ contains
         enddo
       enddo
 
-      do i=1,n
-        do j=i,n
+      do i=1,nn
+        do j=i,nn
           temp1=ZERO
           temp2=ZERO
-          do k=j,n
+          do k=j,nn
             temp1=temp1+W1(k,i)*W1(k,j)
             temp2=temp2+W2(k,i)*W2(k,j)
           enddo
@@ -970,8 +1080,8 @@ contains
 
       !Now calculate inv_invtAkinvtAl
       det_invtAkinvtAl=ONE
-      do i=1,n
-        do j=i,n
+      do i=1,nn
+        do j=i,nn
           temp1=inv_tAk(i,j)+inv_tAl(i,j)
           do k=i-1,1,-1
             temp1=temp1-W1(i,k)*W1(j,k)
@@ -987,9 +1097,9 @@ contains
       enddo
 
       !Inverting invtAk+invtAl
-      do i=1,n
+      do i=1,nn
         W1(i,i)=ONE/W1(i,i)
-        do j=i+1,n
+        do j=i+1,nn
           temp1=ZERO
           do k=i,j-1
             temp1=temp1-W1(j,k)*W1(k,i)
@@ -998,10 +1108,10 @@ contains
         enddo
       enddo
 
-      do i=1,n
-        do j=i,n
+      do i=1,nn
+        do j=i,nn
           temp1=ZERO
-          do k=j,n
+          do k=j,nn
             temp1=temp1+W1(k,i)*W1(k,j)
           enddo
           inv_invtAkinvtAl(i,j)=temp1
@@ -1013,10 +1123,10 @@ contains
 !I delete non-necessary parts of the code
 !Finding the inverse of Akk and All using their Cholesky factors
 !The result is placed in inv_Akk and inv_All
-!do i=1,n
+!do i=1,nn
 !  W1(i,i)=ONE/Lk(i,i)
 !  W2(i,i)=ONE/Ll(i,i)
-!  do j=i+1,n
+!  do j=i+1,nn
 !    temp1=ZERO
 !    temp2=ZERO
 !    do k=i,j-1
@@ -1028,11 +1138,11 @@ contains
 !  enddo
 !enddo
 
-!do i=1,n
-!  do j=i,n
+!do i=1,nn
+!  do j=i,nn
 !     temp1=ZERO
 !     temp2=ZERO
-!     do k=j,n
+!     do k=j,nn
 !       temp1=temp1+W1(k,i)*W1(k,j)
 !       temp2=temp2+W2(k,i)*W2(k,j)
 !     enddo
@@ -1044,24 +1154,24 @@ contains
 !enddo
 
 !Computing tvk=Pbra'*vk and tvl=Pket'*vl
-    do i=1,n
+    do i=1,nn
       tvk(i)=Pbra(m_k,i)
       tvl(i)=Pket(m_l,i)
     enddo
 
 !Compute inv_tAkltvl = inv_tAkl * tvl
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+inv_tAkl(j,i)*tvl(j)
       enddo
       inv_tAkltvl(i)=temp1
     enddo
 
 !Compute tvkinv_tAkl=tvk'*inv_tAkl
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+tvk(j)*inv_tAkl(j,i)
       enddo
       tvkinv_tAkl(i)=temp1
@@ -1069,42 +1179,42 @@ contains
 
 !Compute tau3=tvkinv_tAkl*tvl
     tau3=ZERO
-    do i=1,n
+    do i=1,nn
       tau3=tau3+tvkinv_tAkl(i)*tvl(i)
     enddo
 
     if (AreMCorrFuncNeeded.or.AreMPartDensNeeded)  then
       !Compute tvkinv_tAk
-      do i=1,n
+      do i=1,nn
         temp1=ZERO
-        do j=1,n
+        do j=1,nn
           temp1=temp1+tvk(j)*inv_tAk(j,i)
         enddo
         tvkinv_tAk(i)=temp1
       enddo
 
       !Compute inv_tAltvl
-      do i=1,n
+      do i=1,nn
         temp1=ZERO
-        do j=1,n
+        do j=1,nn
           temp1=temp1+inv_tAl(j,i)*tvl(j)
         enddo
         inv_tAltvl(i)=temp1
       enddo
 
       !Compute inv_invtAkinvtAlinv_tAltvl
-      do i=1,n
+      do i=1,nn
         temp1=ZERO
-        do j=1,n
+        do j=1,nn
           temp1=temp1+inv_invtAkinvtAl(j,i)*inv_tAltvl(j)
         enddo
         inv_invtAkinvtAlinv_tAltvl(i)=temp1
       enddo
 
       !Compute tvkinv_tAkinv_invtAkinvtAl
-      do i=1,n
+      do i=1,nn
         temp1=ZERO
-        do j=1,n
+        do j=1,nn
           temp1=temp1+inv_invtAkinvtAl(j,i)*tvkinv_tAk(j)
         enddo
         tvkinv_tAkinv_invtAkinvtAl(i)=temp1
@@ -1112,8 +1222,8 @@ contains
 
       !Compute tau4 = tvkinv_tAk*inv_invtAkinvtAl*inv_tAltvl
       tau4=ZERO
-      do i=1,n
-        do j=1,n
+      do i=1,nn
+        do j=1,nn
           tau4=tau4+tvkinv_tAk(i)*inv_invtAkinvtAl(i,j)*inv_tAltvl(j)
         enddo
       enddo
@@ -1132,10 +1242,10 @@ contains
     endif
 
 !Doing multiplication inv_tAkltAl=inv_tAkl*tAl, inv_tAkltAk=inv_tAkl*tAk
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+inv_tAkl(j,k)*tAl(k,i)
         enddo
         inv_tAkltAl(j,i)=temp1
@@ -1143,10 +1253,10 @@ contains
     enddo
 
 !Doing multiplication inv_tAkltAlM=inv_tAkltAl*M
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+inv_tAkltAl(j,k)*Glob_MassMatrix(k,i)
         enddo
         inv_tAkltAlM(j,i)=temp1
@@ -1157,20 +1267,20 @@ contains
 !tAlAvk = tAl*inv_tAkl*tvk, tAlAvl = tAl*inv_tAkl*tvl. Their elements
 !supply the O(1) building blocks of the rank-one based orbit-orbit and
 !mass-velocity sections below.
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+tAl(j,k)*inv_tAkltAl(k,i)
         enddo
         GAl(j,i)=temp1
         GAl(i,j)=temp1
       enddo
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
       temp2=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+tAl(i,k)*tvkinv_tAkl(k)
         temp2=temp2+tAl(i,k)*inv_tAkltvl(k)
       enddo
@@ -1182,8 +1292,8 @@ contains
 !j^{ij}' inv_tAkl tvl
 !tvk' inv_tAkl j^{ij}
 !(moved up: the eta2 evaluation below uses them)
-    do j=1,n
-      do i=1,n
+    do j=1,nn
+      do i=1,nn
         if (i==j) then
           jAtvl(i,i)=inv_tAkltvl(i)
           tvkAj(i,i)=tvkinv_tAkl(i)
@@ -1196,9 +1306,9 @@ contains
 
 !Computing tau1=tr[inv_tAkltAlM*tAk]
     tau1=ZERO
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+inv_tAkltAlM(i,k)*tAk(k,i)
       enddo
       tau1=tau1+temp1
@@ -1208,9 +1318,9 @@ contains
 !by a matrix on the right and computing a dot product in the end.
 
 !tvkinv_tAkltAlM'=tvk'*inv_tAkltAlM
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+tvk(j)*inv_tAkltAlM(j,i)
       enddo
       tvkinv_tAkltAlM(i)=temp1
@@ -1219,9 +1329,9 @@ contains
 !u1=tvkinv_tAkltAlM'*tAk
 !tau2=u1'*inv_tAkltvl (storage for u1 as such is not needed, we use temp1=u1(i))
     tau2=ZERO
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+tvkinv_tAkltAlM(j)*tAk(j,i)
       enddo
       tau2=tau2+temp1*inv_tAkltvl(i)
@@ -1238,7 +1348,7 @@ contains
     temp5=Skl*TWO
     temp1=temp5/Glob_SqrtPi
     temp8=Skl/(Glob_Pi*Glob_SqrtPi)
-    do i=1,n
+    do i=1,nn
       temp2=inv_tAkl(i,i)
       TrAJ(i,i)=temp2
       temp3=sqrt(temp2)
@@ -1263,8 +1373,8 @@ contains
       !prvalkl(i,i)=(temp1/(temp2*temp3))*(1-temp7)*(Glob_EulerConst+log(temp2))
       !prvalkl(i,i)=TWO*PI*(Glob_EulerConst+log(temp2))*deltarkl(i,i)
     enddo
-    do i=1,n
-      do j=i+1,n
+    do i=1,nn
+      do j=i+1,nn
         temp2=inv_tAkl(i,i)+inv_tAkl(j,j)-inv_tAkl(j,i)-inv_tAkl(j,i)
         TrAJ(i,j)=temp2
         TrAJ(j,i)=temp2
@@ -1301,25 +1411,25 @@ contains
     enddo
 
     if (AreMCorrFuncNeeded) then
-      do i=1,n
+      do i=1,nn
         MTrAJ(i,i)=inv_invtAkinvtAl(i,i)
         sqrtMTrAJ(i,i)=sqrt(MTrAJ(i,i))
-        do q=1,n
+        do q=1,nn
           temp4=ZERO
-          do k=1,n
+          do k=1,nn
             temp4=temp4+tvkinv_tAk(k)*inv_invtAkinvtAl(k,i)*inv_invtAkinvtAl(q,i)
           enddo
           u1(q)=temp4
         enddo
         !eta2=u1'*tvl
         temp4=ZERO
-        do k=1,n
+        do k=1,nn
           temp4=temp4+u1(k)*inv_tAltvl(k)
         enddo
         meta2(i,i)=temp4
       enddo
-      do i=1,n
-        do j=i+1,n
+      do i=1,nn
+        do j=i+1,nn
           MTrAJ(i,j)=inv_invtAkinvtAl(i,i)+inv_invtAkinvtAl(j,j)-inv_invtAkinvtAl(j,i)-inv_invtAkinvtAl(j,i)
           MTrAJ(j,i)=MTrAJ(i,j)
           sqrtMTrAJ(j,i)=sqrt(MTrAJ(j,i))
@@ -1333,13 +1443,13 @@ contains
 !Evaluating tr[inv_tAkl Jij inv_tAkl Jpq] and
 !j^{ij}' inv_tAkl j^{p,q}  where j^{ij}=e^i-e^j and
 !the only nonzero element of e^i is the i-th element
-    do i=1,n
+    do i=1,nn
       temp2=inv_tAkl(i,i)
       temp1=temp2*temp2
       TrAJAJ(i,i,i,i)=temp1
       jAj(i,i,i,i)=temp2
-      do p=i+1,n
-        do q=p+1,n
+      do p=i+1,nn
+        do q=p+1,nn
           temp2=inv_tAkl(p,i)-inv_tAkl(q,i)
           temp1=temp2*temp2
           TrAJAJ(i,i,p,q)=temp1
@@ -1352,14 +1462,14 @@ contains
           jAj(q,p,i,i)=-temp2
         enddo
       enddo
-      do j=i+1,n
+      do j=i+1,nn
         temp2=inv_tAkl(j,i)
         temp1=temp2*temp2
         TrAJAJ(j,j,i,i)=temp1
         TrAJAJ(i,i,j,j)=temp1
         jAj(j,j,i,i)=temp2
         jAj(i,i,j,j)=temp2
-        do p=i,n
+        do p=i,nn
           temp2=inv_tAkl(p,i)-inv_tAkl(p,j)
           temp1=temp2*temp2
           TrAJAJ(i,j,p,p)=temp1
@@ -1370,7 +1480,7 @@ contains
           jAj(j,i,p,p)=-temp2
           jAj(p,p,i,j)=temp2
           jAj(p,p,j,i)=-temp2
-          do q=p+1,n
+          do q=p+1,nn
             temp2=inv_tAkl(p,i)-inv_tAkl(q,i)-inv_tAkl(p,j)+inv_tAkl(q,j)
             temp1=temp2*temp2
             TrAJAJ(i,j,p,q)=temp1
@@ -1396,10 +1506,10 @@ contains
 
 !!Evaluating tr [inv_tAkl J_{ij} inv_tAkl J_{pq} inv_tAkl V] where V = tvk tvl'
 !!and tr [inv_tAkl J_{ij} inv_tAkl J_{pq} inv_tAkl J_{ij} inv_tAkl V]
-!do i=1,n
-! do j=i,n
-!   do p=1,n
-!     do q=p,n
+!do i=1,nn
+! do j=i,nn
+!   do p=1,nn
+!     do q=p,nn
 !       temp1=tvkAj(i,j)*jAj(i,j,p,q)*jAtvl(p,q)
 !       temp2=tvkAj(i,j)*jAj(i,j,p,q)*jAj(p,q,i,j)*jAtvl(i,j)
 !       TrAJAJAV(i,j,p,q)=temp1
@@ -1417,10 +1527,10 @@ contains
 
 !Evaluation of (1/r_{ij}*1/r_{pq}))_kl is not implemented yet
     temp1=4*Skl/(3*Glob_Pi)
-    do i=1,n
-      do j=i,n
-        do p=i,n
-          do q=p,n   !try q=max(p,j),n - it may speed things up a little
+    do i=1,nn
+      do j=i,nn
+        do p=i,nn
+          do q=p,nn   !try q=max(p,j),n - it may speed things up a little
             if (((p==i).and.(q==j)).or.((p==j).and.(q==i))) then
               temp2=rm2kl(i,j)
               rmrmkl(i,j,p,q)=temp2
@@ -1474,46 +1584,46 @@ contains
 !write(*,*) '===================================='
 !write(*,'(1x,a,e23.16)') 'Skl=',Skl
 !write(*,*) 'tvk='
-!do i=1,n
+!do i=1,nn
 !    write(*,'(2x,i3)') tvk(i)
 !enddo
 !write(*,*) 'tvl='
-!do i=1,n
+!do i=1,nn
 !    write(*,'(2x,i3)') tvl(i)
 !enddo
 !write(*,*) 'tAk='
-!do i=1,n
-!  do j=1,n
+!do i=1,nn
+!  do j=1,nn
 !    write(*,'(2x,f23.20)',advance='no') tAk(i,j)
 !  enddo
 !  write(*,*)
 !enddo
 !write(*,*) 'tAl='
-!do i=1,n
-!  do j=1,n
+!do i=1,nn
+!  do j=1,nn
 !    write(*,'(2x,f23.20)',advance='no') tAl(i,j)
 !  enddo
 !  write(*,*)
 !enddo
 !write(*,*) 'inv_tAkl='
-!do i=1,n
-!  do j=1,n
+!do i=1,nn
+!  do j=1,nn
 !    write(*,'(2x,f23.20)',advance='no') inv_tAkl(i,j)
 !  enddo
 !  write(*,*)
 !enddo
 !write(*,*) 'M='
-!do i=1,n
-!  do j=1,n
+!do i=1,nn
+!  do j=1,nn
 !    write(*,'(2x,f23.20)',advance='no') Glob_MassMatrix(i,j)
 !  enddo
 !  write(*,*)
 !enddo
 !write(*,*) '1/(rijrpq)='
-!do i=1,n
-!  do j=1,n
-!    do p=1,n
-!      do q=1,n
+!do i=1,nn
+!  do j=1,nn
+!    do p=1,nn
+!      do q=1,nn
 !        write(*,'(2x,i3,i3,i3,i3,2x,e23.16)') i,j,p,q,rmrmkl(i,j,p,q)
 !      enddo
 !    enddo
@@ -1536,131 +1646,131 @@ contains
 !  gv4    : inv_tAkl*tAl*X*tvk = U*(X*tvk)
 !after which each pair costs O(1) (contractions with inv_tAkl*(e_p-e_q)
 !become differences of vector elements).
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+inv_tAkltAl(j,k)*Glob_dmvM(k,i)
         enddo
         UXd(j,i)=temp1
       enddo
     enddo
     dtheta=ZERO
-    do i=1,n
-      do k=1,n
+    do i=1,nn
+      do k=1,nn
         dtheta=dtheta+UXd(i,k)*tAk(k,i)
       enddo
     enddo
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+UXd(j,k)*inv_tAkltAl(i,k)
         enddo
         W1(j,i)=UXd(j,i)-temp1
       enddo
     enddo
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=ONEHALF*(W1(j,i)+W1(i,j))
         Qsd(j,i)=temp1
         Qsd(i,j)=temp1
       enddo
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+Glob_dmvM(i,k)*tAlAvk(k)
       enddo
       wvd(i)=temp1
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+inv_tAkltAl(i,k)*wvd(k)
       enddo
       gvo(i)=wvd(i)-temp1
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+Glob_dmvM(i,k)*(tvk(k)-tAlAvk(k))
       enddo
       wvd(i)=temp1
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+inv_tAkltAl(i,k)*wvd(k)
       enddo
       gvo(i)=ONEHALF*(gvo(i)+temp1)
     enddo
     dlam=ZERO
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+Glob_dmvM(i,k)*(tvl(k)-tAlAvl(k))
       enddo
       wvd(i)=temp1
       dlam=dlam+tAlAvk(i)*temp1
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+inv_tAkltAl(i,k)*wvd(k)
       enddo
       gvc(i)=temp1
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+Glob_dmvM(i,k)*tAlAvl(k)
       enddo
       wvd(i)=temp1
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+inv_tAkltAl(i,k)*wvd(k)
       enddo
       gvc(i)=ONEHALF*(gvc(i)+wvd(i)-temp1)
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+Glob_dmvM(i,k)*tvl(k)
       enddo
       wvd(i)=temp1
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+inv_tAkltAl(i,k)*wvd(k)
       enddo
       gv3(i)=wvd(i)-temp1
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+Glob_dmvM(i,k)*tvk(k)
       enddo
       wvd(i)=temp1
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+inv_tAkltAl(i,k)*wvd(k)
       enddo
       gv4(i)=temp1
     enddo
 
     V2kl=ZERO
-    do p=1,n
-      do q=p,n
+    do p=1,nn
+      do q=p,nn
         temp1=ZERO
-        do i=1,n
+        do i=1,nn
           temp1=temp1+Glob_ScaledPseudoChargeMatrix(0,i)*rmrmkl(p,q,i,i)
-          do j=i+1,n
+          do j=i+1,nn
             temp1=temp1+Glob_ScaledPseudoChargeMatrix(i,j)*rmrmkl(p,q,i,j)
           enddo
         enddo
@@ -1706,14 +1816,14 @@ contains
     Mass_For_Darwin(1:n)=Glob_Mass(2:n+1)
 
     Darwinkl=ZERO
-    do i=1,n
+    do i=1,nn
       Darwinkl=Darwinkl+(   &
                 ONE/(Mass_For_Darwin(0)*Mass_For_Darwin(0)) &
                 +ONE/(Mass_For_Darwin(i)*Mass_For_Darwin(i)) &
                 )*Glob_ScaledPseudoChargeMatrix(0,i)*deltarkl(i,i)
     enddo
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         if(j/=i) then
           Darwinkl=Darwinkl+   &
                     ONE/(Mass_For_Darwin(i)*Mass_For_Darwin(i)) &
@@ -1724,14 +1834,14 @@ contains
     Darwinkl=-Darwinkl*Glob_Pi/2
 !Evaluation of the drachmanized Darwin correction
     drach_Darwinkl=ZERO
-    do i=1,n
+    do i=1,nn
       drach_Darwinkl=drach_Darwinkl+(   &
                       ONE/(Mass_For_Darwin(0)*Mass_For_Darwin(0)) &
                       +ONE/(Mass_For_Darwin(i)*Mass_For_Darwin(i)) &
                       )*Glob_ScaledPseudoChargeMatrix(0,i)*drach_deltarkl(i,i)
     enddo
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         if(j/=i) then
           drach_Darwinkl=drach_Darwinkl+   &
                           ONE/(Mass_For_Darwin(i)*Mass_For_Darwin(i)) &
@@ -1756,20 +1866,20 @@ contains
 !still goes through ME_dWd2 itself.
     inv_tau3=1/tau3
 !W = all ones: qk=sk, ql=sl are the row sum vectors of tAk, tAl
-    do p=1,n
+    do p=1,nn
       temp1=ZERO
       temp2=ZERO
-      do q=1,n
+      do q=1,nn
         temp1=temp1+tAk(q,p)
         temp2=temp2+tAl(q,p)
       enddo
       sk(p)=temp1
       sl(p)=temp2
     enddo
-    do p=1,n
+    do p=1,nn
       temp1=ZERO
       temp2=ZERO
-      do q=1,n
+      do q=1,nn
         temp1=temp1+inv_tAkl(p,q)*sk(q)
         temp2=temp2+inv_tAkl(p,q)*sl(q)
       enddo
@@ -1787,7 +1897,7 @@ contains
     wvl=ZERO
     wqk=ZERO
     wql=ZERO
-    do p=1,n
+    do p=1,nn
       qkk=qkk+sk(p)*Ask(p)
       qll=qll+sl(p)*Asl(p)
       qkl=qkl+sk(p)*Asl(p)
@@ -1812,7 +1922,7 @@ contains
          -FOUR*(trKx+trLx) )
     MVkl=dwd2/(Glob_Mass(1)*Glob_Mass(1)*Glob_Mass(1))
 !W = Eii, i=1..n: everything is an O(1) lookup
-    do i=1,n
+    do i=1,nn
       qkk=tAk(i,i)-tAl(i,i)+GAl(i,i)
       qll=GAl(i,i)
       qkl=tAl(i,i)-GAl(i,i)
@@ -1869,8 +1979,8 @@ contains
 !whole OO evaluation O(n^2) instead of O(n^5).
     OOkl=ZERO
 !First double loop for OO (integral pair (j,j), d=e_j)
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         tr1=tAl(j,i)
         tr3=3*tAl(j,j)
         tr4=tvl(j)*tvk(j)
@@ -1969,8 +2079,8 @@ contains
     OOkl=OOkl/Glob_Mass(1)
 
 !Second double loop for OO (integral pair (i,j), d=e_j-e_i)
-    do i=1,n
-      do j=i+1,n
+    do i=1,nn
+      do j=i+1,nn
         tr1=tAl(j,i)
         tr3=3*tAl(j,j)
         tr4=tvl(j)*tvk(j)
@@ -2073,8 +2183,8 @@ contains
     if (AreCorrFuncNeeded) then
       temp1=Skl/(Glob_Pi*Glob_SqrtPi)
       p=0
-      do i=1,n
-        do j=i,n
+      do i=1,nn
+        do j=i,nn
           p=p+1
           temp2=temp1/(sqrtTrAJ(j,i)*TrAJ(j,i))
           temp3=-1/TrAJ(j,i)
@@ -2092,17 +2202,17 @@ contains
 
     if (ArePartDensNeeded) then
       temp1=Skl/(Glob_Pi*Glob_SqrtPi)
-      do i=1,n+1
+      do i=1,nn+1
         temp2=ZERO
-        do p=1,n
+        do p=1,nn
           temp2=temp2+Glob_bvc(p,i)*Glob_bvc(p,i)*inv_tAkl(p,p)
-          do q=p+1,n
+          do q=p+1,nn
             temp2=temp2+2*Glob_bvc(q,i)*Glob_bvc(p,i)*inv_tAkl(q,p)
           enddo
         enddo
         temp3=ZERO
         temp4=ZERO
-        do p=1,n
+        do p=1,nn
           temp3=temp3+tvkinv_tAkl(p)*Glob_bvc(p,i)
           temp4=temp4+Glob_bvc(p,i)*inv_tAkltvl(p)
         enddo
@@ -2122,8 +2232,8 @@ contains
     if (AreMCorrFuncNeeded) then
       temp1=MSkl/(Glob_Pi*Glob_SqrtPi)
       p=0
-      do i=1,n
-        do j=i,n
+      do i=1,nn
+        do j=i,nn
           p=p+1
           temp2=temp1/(sqrtMTrAJ(j,i)*MTrAJ(j,i))/8
           temp3=-1/MTrAJ(j,i)/4
@@ -2141,17 +2251,17 @@ contains
 
     if (AreMPartDensNeeded) then
       temp1=MSkl/(Glob_Pi*Glob_SqrtPi)
-      do i=1,n+1
+      do i=1,nn+1
         temp2=ZERO
-        do p=1,n
+        do p=1,nn
           temp2=temp2+Glob_bvc(p,i)*Glob_bvc(p,i)*inv_invtAkinvtAl(p,p)
-          do q=p+1,n
+          do q=p+1,nn
             temp2=temp2+2*Glob_bvc(q,i)*Glob_bvc(p,i)*inv_invtAkinvtAl(q,p)
           enddo
         enddo
         temp3=ZERO
         temp4=ZERO
-        do p=1,n
+        do p=1,nn
           temp3=temp3+tvkinv_tAkinv_invtAkinvtAl(p)*Glob_bvc(p,i)
           temp4=temp4+Glob_bvc(p,i)*inv_invtAkinvtAlinv_tAltvl(p)
         enddo
@@ -2183,8 +2293,8 @@ contains
 
     n = Glob_n
 
-    do i = 1,n
-      do j = i+1,n
+    do i = 1,nn
+      do j = i+1,nn
         t=ONEHALF*(W(j,i)+W(i,j))
         W(j,i) = t
         W(i,j) = t
@@ -2215,20 +2325,20 @@ contains
 
     n=Glob_n
     trAX=ZERO
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         trAX=trAX+inv_tAkl(i,j)*X(j,i)
       enddo
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+tvkinv_tAkl(j)*X(j,i)
       enddo
       workvec1(i)=temp1
     enddo
     trAXAtvltvk=ZERO
-    do i=1,n
+    do i=1,nn
       trAXAtvltvk=trAXAtvltvk+workvec1(i)*inv_tAkltvl(i)
     enddo
 
@@ -2263,11 +2373,11 @@ contains
     n=Glob_n
     trAX=ZERO
     trAY=ZERO
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
         temp2=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+inv_tAkl(j,k)*X(k,i)
           temp2=temp2+inv_tAkl(j,k)*Y(k,i)
         enddo
@@ -2278,16 +2388,16 @@ contains
       trAY=trAY+AY(i,i)
     enddo
     trAXAY=ZERO
-    do i=1,n
-      do k=1,n
+    do i=1,nn
+      do k=1,nn
         trAXAY=trAXAY+AX(i,k)*AY(k,i)
       enddo
     enddo
 
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
       temp2=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+tvkinv_tAkl(j)*X(j,i)
         temp2=temp2+tvkinv_tAkl(j)*Y(j,i)
       enddo
@@ -2296,15 +2406,15 @@ contains
     enddo
     trAXAtvltvk=ZERO
     trAYAtvltvk=ZERO
-    do i=1,n
+    do i=1,nn
       trAXAtvltvk=trAXAtvltvk+workvec1(i)*inv_tAkltvl(i)
       trAYAtvltvk=trAYAtvltvk+workvec2(i)*inv_tAkltvl(i)
     enddo
 
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
       temp2=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+workvec1(j)*AY(j,i)
         temp2=temp2+workvec2(j)*AX(j,i)
       enddo
@@ -2313,7 +2423,7 @@ contains
     enddo
     trAXAYAtvltvk=ZERO
     trAYAXAtvltvk=ZERO
-    do i=1,n
+    do i=1,nn
       trAXAYAtvltvk=trAXAYAtvltvk+workvec3(i)*inv_tAkltvl(i)
       trAYAXAtvltvk=trAYAXAtvltvk+workvec4(i)*inv_tAkltvl(i)
     enddo
@@ -2356,11 +2466,11 @@ contains
 !Compute  WorkMat1=W*tAk  WorkMat2=W*tAl  and their traces
     trWorkMat1=ZERO
     trWorkMat2=ZERO
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
         temp2=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+W(j,k)*tAk(k,i)            !  tAk(k,i)*W(j,k)
           temp2=temp2+W(j,k)*tAl(k,i)            !  tAl(k,i)*W(j,k)
         enddo
@@ -2373,10 +2483,10 @@ contains
 
 !Compute tuk' = 4*tvk'*W*tAk + 6*tr[W*tAk]*tvk'
 !        tul' = 4*tvl'*W*tAl + 6*tr[W*tAl]*tvl'
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
       temp2=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+tvk(j)*WorkMat1(j,i)
         temp2=temp2+tvl(j)*WorkMat2(j,i)
       enddo
@@ -2385,11 +2495,11 @@ contains
     enddo
 
 !Compute tAkWtAk=tAk*W*tAk  tAlWtAl=tAl*W*tAl
-    do i=1,n
+    do i=1,nn
       do j=1,i
         temp1=ZERO
         temp2=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+tAk(i,k)*WorkMat1(k,j)
           temp2=temp2+tAl(i,k)*WorkMat2(k,j)
         enddo
@@ -2404,8 +2514,8 @@ contains
 !        trAtAlWtAl=tr[inv_tAkl*tAl*W*tAl]
     trAtAkWtAk=ZERO
     trAtAlWtAl=ZERO
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         trAtAkWtAk=trAtAkWtAk+inv_tAkl(i,j)*tAkWtAk(j,i)
         trAtAlWtAl=trAtAlWtAl+inv_tAkl(i,j)*tAlWtAl(j,i)
       enddo
@@ -2414,7 +2524,7 @@ contains
 !Compute trAtvltuk=tr[inv_tAkl*tvl*tuk], trAtultvk=tr[inv_tAkl*tul*tvk]
     trAtvltuk=ZERO
     trAtultvk=ZERO
-    do i=1,n
+    do i=1,nn
       trAtvltuk=trAtvltuk+tuk(i)*inv_tAkltvl(i)
       trAtultvk=trAtultvk+tvkinv_tAkl(i)*tul(i)
     enddo
@@ -2422,20 +2532,20 @@ contains
 !Compute
 !trAtAkWtAkAtultvk = tr[inv_tAkl*tAkWtAk*inv_tAkl*tul*tvk'] = tvkinv_tAkl'*tAkWtAk*inv_tAkl*tul
 !trAtAlWtAlAtvltuk = tr[inv_tAkl*tAlWtAl*inv_tAkl*tvl*tuk'] = tuk'*inv_tAkl*tAlWtAl*inv_tAkltvl
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
       temp2=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+tvkinv_tAkl(j)*tAkWtAk(j,i)
         temp2=temp2+tuk(j)*inv_tAkl(j,i)
       enddo
       workvec1(i)=temp1
       workvec2(i)=temp2
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
       temp2=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+workvec1(j)*inv_tAkl(j,i)
         temp2=temp2+workvec2(j)*tAlWtAl(j,i)
       enddo
@@ -2444,14 +2554,14 @@ contains
     enddo
     trAtAkWtAkAtultvk=ZERO
     trAtAlWtAlAtvltuk=ZERO
-    do i=1,n
+    do i=1,nn
       trAtAkWtAkAtultvk=trAtAkWtAkAtultvk+workvec3(i)*tul(i)
       trAtAlWtAlAtvltuk=trAtAlWtAlAtvltuk+workvec4(i)*inv_tAkltvl(i)
     enddo
 
 !Compute trAtultuk=tr[inv_tAkl*tul*tuk']
     trAtultuk=ZERO
-    do i=1,n
+    do i=1,nn
       trAtultuk=trAtultuk+workvec2(i)*tul(i)
     enddo
 
@@ -2495,11 +2605,11 @@ contains
 !Compute  WorkMat1=X*tAk  WorkMat2=X*tAl  and their traces
     trWorkMat1=ZERO
     trWorkMat2=ZERO
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
         temp2=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+X(j,k)*tAk(k,i)
           temp2=temp2+Glob_B(j,k)*tAl(k,i)
         enddo
@@ -2513,10 +2623,10 @@ contains
 !Compute tuk' = 4*tvk'*X*tAk + 6*tr[X*tAk]*tvk'
 !        tul' = 4*tvl'*X*tAl + 6*tr[X*tAl]*tvl'
 
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
       temp2=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+tvk(j)*WorkMat1(j,i)
         temp2=temp2+tvl(j)*WorkMat2(j,i)
       enddo
@@ -2525,11 +2635,11 @@ contains
     enddo
 
 !Compute tAkXtAk=tAk*X*tAk  tAlWtAl=tAl*X*tAl
-    do i=1,n
+    do i=1,nn
       do j=1,i
         temp1=ZERO
         temp2=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+tAk(i,k)*WorkMat1(k,j)
           temp2=temp2+tAl(i,k)*WorkMat2(k,j)
         enddo
@@ -2544,8 +2654,8 @@ contains
 !        trAtAlXtAl=tr[inv_tAkl*tAl*X*tAl]
     trAtAkXtAk=ZERO
     trAtAlXtAl=ZERO
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         trAtAkXtAk=trAtAkXtAk+inv_tAkl(i,j)*tAkXtAk(j,i)
         trAtAlXtAl=trAtAlXtAl+inv_tAkl(i,j)*tAlXtAl(j,i)
       enddo
@@ -2554,7 +2664,7 @@ contains
 !Compute trAtvltuk=tr[inv_tAkl*tvl*tuk], trAtultvk=tr[inv_tAkl*tul*tvk]
     trAtvltuk=ZERO
     trAtultvk=ZERO
-    do i=1,n
+    do i=1,nn
       trAtvltuk=trAtvltuk+tuk(i)*inv_tAkltvl(i)
       trAtultvk=trAtultvk+tvkinv_tAkl(i)*tul(i)
     enddo
@@ -2562,20 +2672,20 @@ contains
 !Compute
 !trAtAkXtAkAtultvk = tr[inv_tAkl*tAkXtAk*inv_tAkl*tul*tvk'] = tvkinv_tAkl'*tAkXtAk*inv_tAkl*tul
 !trAtAlXtAlAtvltuk = tr[inv_tAkl*tAlXtAl*inv_tAkl*tvl*tuk'] = tuk'*inv_tAkl*tAlXtAl*inv_tAkltvl
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
       temp2=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+tvkinv_tAkl(j)*tAkXtAk(j,i)
         temp2=temp2+tuk(j)*inv_tAkl(j,i)
       enddo
       workvec1(i)=temp1
       workvec2(i)=temp2
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
       temp2=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+workvec1(j)*inv_tAkl(j,i)
         temp2=temp2+workvec2(j)*tAlXtAl(j,i)
       enddo
@@ -2584,14 +2694,14 @@ contains
     enddo
     trAtAkXtAkAtultvk=ZERO
     trAtAlXtAlAtvltuk=ZERO
-    do i=1,n
+    do i=1,nn
       trAtAkXtAkAtultvk=trAtAkXtAkAtultvk+workvec3(i)*tul(i)
       trAtAlXtAlAtvltuk=trAtAlXtAlAtvltuk+workvec4(i)*inv_tAkltvl(i)
     enddo
 
 !Compute trAtultuk=tr[inv_tAkl*tul*tuk']
     trAtultuk=ZERO
-    do i=1,n
+    do i=1,nn
       trAtultuk=trAtultuk+workvec2(i)*tul(i)
     enddo
 
@@ -2609,34 +2719,34 @@ contains
     real(wp)   inv_tAkltAlX(nn,nn),inv_tAkltAlXtAk(nn,nn),tvkinv_tAkltAlX(nn),inv_tAkltvl(nn)
     real(wp)   temp1, Skl,tau,tau1,tau2,tau3
     n=Glob_n
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+inv_tAkltAl(j,k)*X(k,i)
         enddo
         inv_tAkltAlX(j,i)=temp1
       enddo
     enddo
     tau1=ZERO
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+inv_tAkltAlX(i,k)*tAk(k,i)
       enddo
       tau1=tau1+temp1
     enddo
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+tvk(j)*inv_tAkltAlX(j,i)
       enddo
       tvkinv_tAkltAlX(i)=temp1
     enddo
     tau2=ZERO
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+tvkinv_tAkltAlX(j)*tAk(j,i)
       enddo
       tau2=tau2+temp1*inv_tAkltvl(i)
@@ -2673,19 +2783,19 @@ contains
 !     Aj=inv_tAkl*(ji-jj)   j/=i
 !Remember that Jii=ji*ji' and Jij=(ji-jj)*(ji-jj)'
     if (i==j) then
-      do p=1,n
+      do p=1,nn
         Aj(p)=inv_tAkl(p,i)
       enddo
     else
-      do p=1,n
+      do p=1,nn
         Aj(p)=inv_tAkl(p,i)-inv_tAkl(p,j)
       enddo
     endif
 
 !Compute AjX'=Aj'*X
-    do p=1,n
+    do p=1,nn
       temp1=ZERO
-      do q=1,n
+      do q=1,nn
         temp1=temp1+Aj(q)*X(q,p)
       enddo
       AjX(p)=temp1
@@ -2700,14 +2810,14 @@ contains
 
 !Compute t_XJ=tr[inv_tAkl*X*inv_tAkl*Jij]=AjX'*Aj
     t_XJ=ZERO
-    do p=1,n
+    do p=1,nn
       t_XJ=t_XJ+AjX(p)*Aj(p)
     enddo
 
 !Compute t_X=tr[inv_tAkl*X]
     t_X=ZERO
-    do p=1,n
-      do q=1,n
+    do p=1,nn
+      do q=1,nn
         t_X=t_X+inv_tAkl(q,p)*X(q,p)
       enddo
     enddo
@@ -2751,21 +2861,21 @@ contains
 !     Aj=inv_tAkl*(ji-jj)   j/=i
 !Remember that Jii=ji*ji' and Jij=(ji-jj)*(ji-jj)'
     if (i==j) then
-      do p=1,n
+      do p=1,nn
         Aj(p)=inv_tAkl(p,i)
       enddo
     else
-      do p=1,n
+      do p=1,nn
         Aj(p)=inv_tAkl(p,i)-inv_tAkl(p,j)
       enddo
     endif
 
 !Compute AjX'=Aj'*X
 !    and AjY'=Aj'*Y
-    do p=1,n
+    do p=1,nn
       temp1=ZERO
       temp2=ZERO
-      do q=1,n
+      do q=1,nn
         temp1=temp1+Aj(q)*X(q,p)
         temp2=temp2+Aj(q)*Y(q,p)
       enddo
@@ -2777,11 +2887,11 @@ contains
 !        AY=inv_tAkl*Y  t_Y=tr[inv_tAkl*Y]
     t_X=ZERO
     t_Y=ZERO
-    do p=1,n
-      do q=1,n
+    do p=1,nn
+      do q=1,nn
         temp1=ZERO
         temp2=ZERO
-        do s=1,n
+        do s=1,nn
           temp1=temp1+inv_tAkl(s,q)*X(p,s)
           temp2=temp2+inv_tAkl(s,q)*Y(p,s)
         enddo
@@ -2803,10 +2913,10 @@ contains
 !        AXAj=AX*Aj
 !        AYAj=AY*Aj
     t_XY=ZERO
-    do p=1,n
+    do p=1,nn
       temp3=ZERO
       temp4=ZERO
-      do q=1,n
+      do q=1,nn
         t_XY=t_XY+AX(p,q)*AY(q,p)
         temp3=temp3+AX(p,q)*Aj(q)
         temp4=temp4+AY(p,q)*Aj(q)
@@ -2824,7 +2934,7 @@ contains
     t_YJ=ZERO
     t_XYJ=ZERO
 
-    do p=1,n
+    do p=1,nn
       t_XJ=t_XJ+AjX(p)*Aj(p)
       t_YJ=t_YJ+AjY(p)*Aj(p)
       t_XYJ=t_XYJ+AjX(p)*AYAj(p)
@@ -2873,19 +2983,19 @@ contains
 !     Aj=inv_tAkl*(ji-jj)   j/=i
 !Remember that Jii=ji*ji' and Jij=(ji-jj)*(ji-jj)'
     if (i==j) then
-      do p=1,n
+      do p=1,nn
         Aj(p)=inv_tAkl(p,i)
       enddo
     else
-      do p=1,n
+      do p=1,nn
         Aj(p)=inv_tAkl(p,i)-inv_tAkl(p,j)
       enddo
     endif
 
 !Compute AjX'=Aj'*X
-    do p=1,n
+    do p=1,nn
       temp1=ZERO
-      do q=1,n
+      do q=1,nn
         temp1=temp1+Aj(q)*X(q,p)
       enddo
       AjX(p)=temp1
@@ -2906,7 +3016,7 @@ contains
     t_XJ=ZERO
     temp1=ZERO
     temp2=ZERO
-    do p=1,n
+    do p=1,nn
       Ajtvl=Ajtvl+Aj(p)*tvl(p)
       t_XJ=t_XJ+AjX(p)*Aj(p)
       temp1=temp1+tvk(p)*Aj(p)
@@ -2921,9 +3031,9 @@ contains
     t_X=ZERO
     t_XV=ZERO
     temp2=ZERO
-    do p=1,n
+    do p=1,nn
       temp1=ZERO
-      do q=1,n
+      do q=1,nn
         t_X=t_X+inv_tAkl(q,p)*X(q,p)
         temp1=temp1+tvkinv_tAkl(q)*X(q,p)
       enddo
@@ -2978,21 +3088,21 @@ contains
 !     Aj=inv_tAkl*(ji-jj)   j/=i
 !Remember that Jii=ji*ji' and Jij=(ji-jj)*(ji-jj)'
     if (i==j) then
-      do p=1,n
+      do p=1,nn
         Aj(p)=inv_tAkl(p,i)
       enddo
     else
-      do p=1,n
+      do p=1,nn
         Aj(p)=inv_tAkl(p,i)-inv_tAkl(p,j)
       enddo
     endif
 
 !Compute AjX'=Aj'*X
 !    and AjY'=Aj'*Y
-    do p=1,n
+    do p=1,nn
       temp1=ZERO
       temp2=ZERO
-      do q=1,n
+      do q=1,nn
         temp1=temp1+Aj(q)*X(q,p)
         temp2=temp2+Aj(q)*Y(q,p)
       enddo
@@ -3004,11 +3114,11 @@ contains
 !        AY=inv_tAkl*Y  t_Y=tr[inv_tAkl*Y]
     t_X=ZERO
     t_Y=ZERO
-    do p=1,n
-      do q=1,n
+    do p=1,nn
+      do q=1,nn
         temp1=ZERO
         temp2=ZERO
-        do s=1,n
+        do s=1,nn
           temp1=temp1+inv_tAkl(s,q)*X(p,s)
           temp2=temp2+inv_tAkl(s,q)*Y(p,s)
         enddo
@@ -3034,14 +3144,14 @@ contains
 !        tvkinv_tAklX'=tvkinv_tAkl'*X
 !        tvkinv_tAklY'=tvkinv_tAkl'*Y
     t_XY=ZERO
-    do p=1,n
+    do p=1,nn
       temp1=ZERO
       temp2=ZERO
       temp3=ZERO
       temp4=ZERO
       temp5=ZERO
       temp6=ZERO
-      do q=1,n
+      do q=1,nn
         t_XY=t_XY+AX(p,q)*AY(q,p)
         temp1=temp1+AX(p,q)*inv_tAkltvl(q)
         temp2=temp2+AY(p,q)*inv_tAkltvl(q)
@@ -3097,7 +3207,7 @@ contains
     temp7=ZERO
     temp8=ZERO
     temp9=ZERO
-    do p=1,n
+    do p=1,nn
       Ajtvl=Ajtvl+Aj(p)*tvl(p)
       tvkAj=tvkAj+tvk(p)*Aj(p)
       temp1=temp1+tvk(p)*Aj(p)
@@ -3185,26 +3295,26 @@ contains
 
 !Doing multiplication Xtvl=X*tvl,tvkX=tvk*X
     n=Glob_n
-    do s=1,n
+    do s=1,nn
       temp2=ZERO
-      do c=1,n
+      do c=1,nn
         temp2=temp2+X(c,s)*tvl(c)
       enddo
       Xtvl(s)=temp2
     enddo
-    do s=1,n
+    do s=1,nn
       temp2=ZERO
-      do c=1,n
+      do c=1,nn
         temp2=temp2+tvk(c)*X(c,s)
       enddo
       tvkX(s)=temp2
     enddo
 !Doing multiplication tAlX=tAl*X,tAkX=tAk*X
-    do s=1,n
-      do c=1,n
+    do s=1,nn
+      do c=1,nn
         temp1=ZERO
         temp2=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+tAl(c,k)*X(k,s)
           temp2=temp2+tAk(c,k)*X(k,s)
         enddo
@@ -3214,11 +3324,11 @@ contains
     enddo
 
 !Doing multiplication tAlXtAk=tAlX*tAk,tAkXtAl=tAkX*tAl
-    do s=1,n
-      do c=1,n
+    do s=1,nn
+      do c=1,nn
         temp1=ZERO
         temp2=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+tAlX(c,k)*tAk(k,s)
           temp2=temp2+tAkX(c,k)*tAl(k,s)
         enddo
@@ -3230,10 +3340,10 @@ contains
 !Compute theta=tr[inv_tAkl*(tAl*X*tAk+tAk*X*tAl)]/2
     theta=ZERO
     theta1=ZERO
-    do s=1,n
+    do s=1,nn
       temp1=ZERO
       temp2=ZERO
-      do k=1,n
+      do k=1,nn
         temp1=temp1+inv_tAkl(s,k)*tAlXtAk(k,s)
         temp2=temp2+inv_tAkl(s,k)*tAkXtAl(k,s)
       enddo
@@ -3247,11 +3357,11 @@ contains
 !Remember that Jii=ji*ji' and Jij=(ji-jj)*(ji-jj)'
 
     if (i==j) then
-      do s=1,n
+      do s=1,nn
         Aj(s)=inv_tAkl(s,i)
       enddo
     else
-      do s=1,n
+      do s=1,nn
         Aj(s)=inv_tAkl(s,i)-inv_tAkl(s,j)
       enddo
     endif
@@ -3259,10 +3369,10 @@ contains
 !Compute kappa=tr[inv_tAkl*Jij*inv_tAkl*(tAl*X*tAk+tAk*X*tAl)]/2 = Aj' (tAlXtAk +tAlXtAk)Aj/2
     kappa=ZERO
     kappa1=ZERO
-    do s=1,n
+    do s=1,nn
       temp1=ZERO
       temp2=ZERO
-      do c=1,n
+      do c=1,nn
         temp1=temp1+Aj(c)*tAlXtAk(c,s)*Aj(s)
         temp2=temp2+Aj(c)*tAkXtAl(c,s)*Aj(s)
       enddo
@@ -3294,8 +3404,8 @@ contains
     chi1=ZERO
     h=ZERO
     m=ZERO
-    do s=1,n
-      do c=1,n
+    do s=1,nn
+      do c=1,nn
         lambda=lambda+tvkinv_tAkl(c)*tAlXtAk(c,s)*inv_tAkltvl(s)
         omega=omega+tvkinv_tAkl(c)*tAlXtAk(c,s)*Aj(s)
         omega1=omega1+tvkinv_tAkl(c)*tAkXtAl(c,s)*Aj(s)
@@ -3574,8 +3684,8 @@ contains
 
     !First we build matrices Lk, Ll, Ak, Al from vechLk, vechLl.
     indx=0
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         indx=indx+1
         Lk(i,j)=ZERO
         Lk(j,i)=vechLk(indx)
@@ -3584,8 +3694,8 @@ contains
       enddo
     enddo
 
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=ZERO
         do k=1,i
           temp1=temp1+Lk(i,k)*Lk(j,k)
@@ -3606,11 +3716,11 @@ contains
     !  tAl=Pket'*Al*Pket
 
     !We also form matrix tAkl=tAk+tAl
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
         temp2=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+Pket(k,j)*tAl(k,i)
         enddo
         W1(j,i)=temp1
@@ -3618,11 +3728,11 @@ contains
     enddo
     !tAl=W1*Pket
 
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=ZERO
         temp2=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+W1(j,k)*Pket(k,i)
         enddo
         tAl(j,i)=temp1
@@ -3636,8 +3746,8 @@ contains
     !The Cholesky factor will be temporarily stored in the
     !lower triangle of W1
     det_tAkl=ONE
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=tAkl(i,j)
         do k=i-1,1,-1
           temp1=temp1-W1(i,k)*W1(j,k)
@@ -3654,9 +3764,9 @@ contains
 
     !Inverting tAkl using its Cholesky factor (stored in W1)
     !and placing the result into inv_tAkl
-    do i=1,n
+    do i=1,nn
       W1(i,i)=ONE/W1(i,i)
-      do j=i+1,n
+      do j=i+1,nn
         temp1=ZERO
         do k=i,j-1
           temp1=temp1-W1(j,k)*W1(k,i)
@@ -3665,10 +3775,10 @@ contains
       enddo
     enddo
 
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=ZERO
-        do k=j,n
+        do k=j,nn
           temp1=temp1+W1(k,i)*W1(k,j)
         enddo
         inv_tAkl(i,j)=temp1
@@ -3683,7 +3793,7 @@ contains
     pm_k = m_k
 
     pm_l = m_l
-    do i = 1, n
+    do i = 1, nn
       if (abs(Pket(m_l, i) - 1.0_wp) < 1.0e-13_wp) then ! for integers it would be == 1
         pm_l = i
         exit
@@ -3701,7 +3811,7 @@ contains
     AMM1Finkl = ZERO
     AMM2Finkl = ZERO
 
-    do indexI = 1, n
+    do indexI = 1, nn
 
       i = 0
       do k = 1, numberOfSpinFunctions
@@ -3725,12 +3835,12 @@ contains
       ! variable names: jiAlAklinvVk = (j^i, A_l A_{kl}^(-1) v_k) (names doesn't account for permutations)
 
       jiAlAklinvVl = ZERO
-      do i = 1, n
+      do i = 1, nn
         jiAlAklinvVl = jiAlAklinvVl + tAl(indexI, i) * inv_tAkl(i, pm_l)
       enddo
 
       jiAlAklinvVk = ZERO
-      do i = 1, n
+      do i = 1, nn
         jiAlAklinvVk = jiAlAklinvVk + tAl(indexI, i) * inv_tAkl(i, pm_k)
       enddo
 
@@ -3752,7 +3862,7 @@ contains
 
       ! these traces are needed for spin-other orbit contribution
 
-      do indexJ = 1, n
+      do indexJ = 1, nn
         if (indexI == indexJ) cycle
 
         gamma = ONE / sqrt(inv_tAkl(indexI, indexI) + inv_tAkl(indexJ, indexJ) - &
@@ -3761,12 +3871,12 @@ contains
         ! we need more traces
 
         jjAlAklinvVl = ZERO
-        do i = 1, n
+        do i = 1, nn
           jjAlAklinvVl = jjAlAklinvVl + tAl(indexJ, i) * inv_tAkl(i, pm_l)
         enddo
 
         jjAlAklinvVk = ZERO
-        do i = 1, n
+        do i = 1, nn
           jjAlAklinvVk = jjAlAklinvVk + tAl(indexJ, i) * inv_tAkl(i, pm_k)
         enddo
 
@@ -3819,8 +3929,8 @@ contains
 
     ! SS term (separate loop for not to interfere with the case Siz == 0 at previous loop)
     SSNCkl = ZERO
-    do indexI = 1,n
-      do indexJ = indexI + 1,n !(we need only indexJ > indexI)
+    do indexI = 1,nn
+      do indexJ = indexI + 1,nn !(we need only indexJ > indexI)
 
         gamma = ONE / sqrt(inv_tAkl(indexI, indexI) + inv_tAkl(indexJ, indexJ) - &
                            inv_tAkl(indexI, indexJ) - inv_tAkl(indexJ, indexI))
@@ -3900,8 +4010,8 @@ contains
     np=Glob_np
 !First we build matrices Lk, Ll, Ak, Al from vechLk, vechLl.
     indx=0
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         indx=indx+1
         Lk(i,j)=ZERO
         Lk(j,i)=vechLk(indx)
@@ -3910,8 +4020,8 @@ contains
       enddo
     enddo
 
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=ZERO
         do k=1,i
           temp1=temp1+Lk(i,k)*Lk(j,k)
@@ -3931,19 +4041,19 @@ contains
 !the action of the permutation matrix
 !tAl=P'*Al*P
 !We also form matrix tAkl=Ak+tAl
-    do i=1,n
-      do j=1,n
+    do i=1,nn
+      do j=1,nn
         temp1=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+P(k,j)*tAl(k,i)
         enddo
         W1(j,i)=temp1
       enddo
     enddo
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=ZERO
-        do k=1,n
+        do k=1,nn
           temp1=temp1+W1(i,k)*P(k,j)
         enddo
         tAl(i,j)=temp1
@@ -3957,8 +4067,8 @@ contains
 !The Cholesky factor will be temporarily stored in the
 !lower triangle of W1
     det_tAkl=ONE
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=tAkl(i,j)
         do k=i-1,1,-1
           temp1=temp1-W1(i,k)*W1(j,k)
@@ -3975,9 +4085,9 @@ contains
 
 !Inverting tAkl using its Cholesky factor (stored in W1)
 !and placing the result into inv_tAkl
-    do i=1,n
+    do i=1,nn
       W1(i,i)=ONE/W1(i,i)
-      do j=i+1,n
+      do j=i+1,nn
         temp1=ZERO
         do k=i,j-1
           temp1=temp1-W1(j,k)*W1(k,i)
@@ -3986,10 +4096,10 @@ contains
       enddo
     enddo
 
-    do i=1,n
-      do j=i,n
+    do i=1,nn
+      do j=i,nn
         temp1=ZERO
-        do k=j,n
+        do k=j,nn
           temp1=temp1+W1(k,i)*W1(k,j)
         enddo
         inv_tAkl(i,j)=temp1
@@ -3998,27 +4108,27 @@ contains
     enddo
 
 !Computing tvl=P'*vl
-    do i=1,n
+    do i=1,nn
       tvl(i)=P(m_k,i)
     enddo
 
 !Compute inv_tAkltvl = inv_tAkl * tvl
-    do i=1,n
+    do i=1,nn
       temp1=ZERO
-      do j=1,n
+      do j=1,nn
         temp1=temp1+inv_tAkl(j,i)*tvl(j)
       enddo
       inv_tAkltvl(i)=temp1
     enddo
 
 !Compute vkinv_tAkl=vk'*inv_tAkl
-    do i=1,n
+    do i=1,nn
       vkinv_tAkl(i)=inv_tAkl(m_k,i)
     enddo
 
 !Compute tau3=vkinv_tAkl*tvl
     tau3=ZERO
-    do i=1,n
+    do i=1,nn
       tau3=tau3+vkinv_tAkl(i)*tvl(i)
     enddo
 

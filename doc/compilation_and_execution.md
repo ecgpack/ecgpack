@@ -79,6 +79,53 @@ All energy codes (`CG_0S`, `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`) as an option can 
 
 Note that an optimized BLAS/LAPACK library can be used only when `PREC=8`. For `PREC=10` and `PREC=16` only the `LINALG=netlib` option is available, because vendor-provided optimized BLAS/LAPACK libraries do not support extended or quadruple precision. In the off-diagonal matrix-element codes the `LINALG` argument is accepted for convenience in the `make` command but it has no effect because those codes do not use and do not link any BLAS/LAPACK library.
 
+### GPU acceleration (CUDA Fortran)
+
+The four energy codes (`RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`) can additionally be compiled with a native CUDA Fortran GPU backend (`src/gpu_backend.f90`). It moves the two hot phases of a run onto an NVIDIA GPU: the assembly of the $H$ and $S$ matrices (with and without gradients), and — optionally — the generalized symmetric eigensolve, through cuSOLVER. The physics itself is *not* duplicated: `MatrixElementsHS_*` in `src/matelem.f90` is compiled twice from the same source, once for the host and once for the device (`attributes(host,device)`), so the CPU and GPU paths cannot drift apart.
+
+The backend is enabled with `USE_CUDA=yes`, which requires `COMPILER=nvfortran` and `PREC=8`:
+
+```bash
+cd RG_2D
+make release COMPILER=nvfortran MACHINE=shabyt PREC=8 LINALG=netlib USE_CUDA=yes EXEFILE=mybinaryfile
+```
+
+or, through the batch script, with the `cuda=yes` argument (the binary then gets a `_cuda` suffix):
+
+```bash
+./build.bash machine=shabyt toolchain=nvhpc-25.9 config=release code=RG_0S,RG_1P,RG_2D,RG_2P nparticles=6 cuda=yes
+```
+
+On Irgetas/H100, NVHPC 26.5 is available directly:
+
+```bash
+./build.bash machine=irgetas toolchain=nvhpc-26.5 config=release code=RG_0S,RG_1P,RG_2D,RG_2P nparticles=6 cuda=yes
+```
+
+The GPU compute capability is inferred from `MACHINE`: Shabyt targets `sm_70`
+(V100), Aurora targets `sm_86`, and Irgetas targets `sm_90` (H100). Pass
+`CUDA_ARCH=sm_XX` to `make` (or `cuda_arch=sm_XX` to `build.bash`) for an
+unlisted machine. Device link-time optimization is on, and `maxregcount:255`
+is **not** a tuning choice — lower register caps have been observed to
+miscompile the matrix-element kernel, so do not lower it.
+
+The backend frees every application-owned CUDA allocation at shutdown but does
+not call `cudaDeviceReset()`. NVHPC 26.5/CUDA 13.2 performs CUDA Fortran runtime
+cleanup after the application finalizer; resetting the context first makes that
+cleanup fail with CUDA error 709 (`CONTEXT_IS_DESTROYED`). Normal process
+teardown releases the context safely.
+
+A CUDA-enabled binary is still an ordinary CPU MPI binary and behaves identically to one until GPU execution is requested at runtime through environment variables:
+
+| Variable | Effect |
+| :--- | :--- |
+| `ECG_GPU=1` | Build $H$ and $S$ (and their gradients) on the GPU |
+| `ECG_GPU_EIG=1` | Also run the generalized eigensolve on the GPU through cuSOLVER (implies `ECG_GPU=1`) |
+| `ECG_GPU_BATCH=<n>` | Maximum number of basis-function pairs per GPU call (default 16384) |
+| `ECG_DETERM=1` | Sum the symmetry terms of each energy-path H/S matrix element in a fixed order instead of with `atomicAdd`. This makes fixed-basis H/S builds bit-reproducible and lets them be compared against the CPU term by term; performance depends on the system. The derivative kernel still uses `atomicAdd`, so optimization runs are not bit-reproducible. The ordered reduction also needs `16 * NumYHYTerms` bytes of dynamic shared memory per block and cannot run when that exceeds the device limit (for example, Oxygen with 40,320 terms). |
+
+Each MPI rank takes the device `(node-local rank) mod (number of visible GPUs)`, so `mpirun -np 2` on a two-GPU node uses both, and the mapping stays correct when a job spans several nodes. Because the GPU path is selected at runtime and not from the input file, the same binary serves CPU-only and GPU users.
+
 ### Number of particles
 
 It is very important to keep in mind that the number of particles is hardcoded at compile-time rather than passed as a runtime argument. An executable compiled for a specific number of particles will fail to run if the input file specifies a different count. This design constraint is strictly enforced for performance optimization, ensuring the code runs at maximum efficiency.
@@ -172,4 +219,3 @@ A few remarks on these numbers and how they should be read:
 * Bases with a higher angular momentum are more expensive: at a fixed $N$, `RG_1P` costs about 15–40% more than `RG_0S`, while `RG_2D` and `RG_2P` cost anywhere from about 40% more to about twice as much, with the largest relative penalty at small $N$. `RG_2D` and `RG_2P` are practically indistinguishable from each other in this respect, and the small differences between their columns above are well within the noise of the measurement.
 * Permutational symmetry acts as an additional multiplicative factor on top of the numbers in the table. The complete matrix element is a sum over the terms retained in the symmetry projector ( $Y^\dagger Y$ operator), and each such term costs about as much as one entry of the table. The number of these terms grows very rapidly, normally as $\sim n!$ , where $n$ is the number of identical particles. For systems with many identical particles it easily exceeds the cost increase due to $N$ itself. This is the reason why calculations with 5 or more electrons are heavily dominated by the evaluation of matrix elements (see [Note on parallel scaling](#note-on-parallel-scaling) above).
 * Finally, the total number of matrix elements to be evaluated grows as $K(K+1)/2$ with the basis size $K$, so the total time spent per optimization step is the product of that number, the cost from the table, and the permutational factor.
-

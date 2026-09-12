@@ -1,0 +1,9 @@
+source_commit=e9de0fae74e976082a1817eac874c9b9bf366cfa
+node=g001.irgetas.nu.edu.kz
+started=2026-08-31T10:08:44+05:00
+
+nvfortran 26.5-0 64-bit target on x86-64 Linux -tp znver4
+Build cuda_13.2.r13.2/compiler.37434383_0
+mpirun (Open MPI) 5.0.10rc2
+
+NVIDIA H100 80GB HBM3, 610.43.02, 81559 MiB, 9.0

@@ -1,0 +1,40 @@
+compiler:
+=== nvfortran -O1 ===
+particles = 5   (n = 4 pseudoparticles)
+
+                 loops to runtime n        loops to constant nn
+  Skl      3.6969619658033764E-01    3.6969619658033764E-01
+  Tkl      2.6471399201938408E+00    2.6471399201938408E+00
+  Vkl     -5.1554360571275870E+00   -5.1554360571275870E+00
+  Hkl     -2.5082961369337462E+00   -2.5082961369337462E+00
+
+  maximum relative difference:   0.0000E+00
+  OK: the two agree
+
+=== nvfortran -O2 ===
+Warning: ieee_inexact is signaling
+ERROR STOP 1
+particles = 5   (n = 4 pseudoparticles)
+
+                 loops to runtime n        loops to constant nn
+  Skl      3.6969619658033770E-01    3.6969619658033770E-01
+  Tkl      2.6471399201938413E+00    2.6471399201938413E+00
+  Vkl     -5.1554360571275870E+00   -2.1192447057525272E+00
+  Hkl     -2.5082961369337458E+00    5.2789521444131404E-01
+
+  maximum relative difference:   1.2105E+00
+  *** MISCOMPILED: results differ or are non-finite (n == nn) ***
+
+=== nvfortran -O3 ===
+Warning: ieee_inexact is signaling
+ERROR STOP 1
+particles = 5   (n = 4 pseudoparticles)
+
+                 loops to runtime n        loops to constant nn
+  Skl      3.6969619658033770E-01    3.6969619658033770E-01
+  Tkl      2.6471399201938413E+00    2.6471399201938413E+00
+  Vkl     -5.1554360571275870E+00   -2.1192447057525272E+00
+  Hkl     -2.5082961369337458E+00    5.2789521444131404E-01
+
+  maximum relative difference:   1.2105E+00
+  *** MISCOMPILED: results differ or are non-finite (n == nn) ***

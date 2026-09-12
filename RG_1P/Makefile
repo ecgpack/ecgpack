@@ -44,6 +44,38 @@ PREC=8
 # quadruple precision. For PREC=10 and PREC=16 the value of LINALG must be netlib.
 LINALG=netlib
 
+# GPU backend. Requires COMPILER=nvfortran (the NVIDIA HPC SDK): the host Fortran
+# and the device kernels are both compiled by nvfortran -cuda, so there is a single
+# toolchain (nvfortran + HPC-X MPI). Load the nvhpc module first. GPU builds are
+# PREC=8 only and use LINALG=netlib so the bundled reference BLAS/LAPACK are
+# compiled by nvfortran (avoids linking a system optimized library against nvfortran).
+#
+#   make release COMPILER=nvfortran MACHINE=shabyt USE_CUDA=yes LINALG=netlib   # arch from MACHINE
+#
+# USE_CUDA: build the native CUDA Fortran GPU backend (src/gpu_backend.f90,
+# nvfortran -cuda) -- orchestration, matrix-element kernels, device lifecycle, and
+# the cuSOLVER eigensolver, all Fortran in one module. Ported from RG_0S.
+USE_CUDA=no
+# CUDA_ARCH: the GPU compute capability (nvfortran -gpu=ccXX). It defaults
+# from MACHINE so you don't have to remember it per host; override by passing
+# CUDA_ARCH=... explicitly for any other GPU.
+#   sm_70 = V100 (shabyt)   sm_80 = A100   sm_86 = RTX 3060 Ti (aurora)   sm_90 = H100 (irgetas)
+CUDA_ARCH_shabyt = sm_70
+CUDA_ARCH_aurora = sm_86
+CUDA_ARCH_irgetas = sm_90
+CUDA_ARCH = $(or $(CUDA_ARCH_$(MACHINE)),sm_86)
+
+# CUF_GPU is the nvfortran -gpu=ccXX arch, derived from CUDA_ARCH (sm_70 -> cc70).
+CUF_GPU=$(subst sm_,cc,$(CUDA_ARCH))
+# CUF_MAXREG: cap registers/thread for the GPU device code. This is a global
+# -gpu cap (not per-kernel launch_bounds) because MatrixElementsHS_RG_1P would
+# otherwise be a non-inlined device callee that launch_bounds cannot reach.
+# 255 (no effective cap) + device LTO is inherited from the RG_0S backend, where
+# lower caps were measured slower AND (for the optimized routine) shown to
+# MISCOMPILE on NVHPC 25.9 -- see RG_0S/Makefile for the full history. Do not
+# lower this for RG_1P without an RG_1P-specific correctness gate.
+CUF_MAXREG=255
+
 # Set the default name for the generated executable file
 EXEFILE=ecg
 
@@ -52,13 +84,13 @@ SRC_DIR=./src
 
 # Set compiler flags for each machine and compiler type (for both release and debug builds).
 
-ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma ocelote elgato),)
+ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt aurora muon puma ocelote elgato),)
   # gfortran and Open MPI (default on most Linux systems)
   ifeq ($(COMPILER), gfortran)
     FC=mpif90
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
-    export FCFLAGS=-J$(CONFIG)
+    export FCFLAGS=-J$(CONFIG) -cpp
     export LINKFLAGS=-J$(CONFIG)
     ifeq ($(CONFIG), debug)
       export FCFLAGS+=-C -O0 -g -fbounds-check -fbacktrace -finit-real=nan -fcheck=all -fimplicit-none -ffpe-trap=invalid,zero,overflow
@@ -87,7 +119,7 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
     FC=mpiifort
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
-    export FCFLAGS=-module $(CONFIG)
+    export FCFLAGS=-module $(CONFIG) -fpp
     export LINKFLAGS=-module $(CONFIG)
     ifeq ($(CONFIG), debug)
       export FCFLAGS+=-C -O0 -g -check bounds -check all -check uninit -traceback -ftrapuv -debug full -fpe0
@@ -111,7 +143,7 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
     FC=mpiifx
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
-    export FCFLAGS=-module $(CONFIG)
+    export FCFLAGS=-module $(CONFIG) -fpp
     export LINKFLAGS=-module $(CONFIG)
     ifeq ($(CONFIG), debug)
       export FCFLAGS+=-O0 -g -check all -check uninit -traceback -ftrapuv -fpe0
@@ -135,8 +167,8 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
     FC=mpif90
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
-    export FCFLAGS=-module $(CONFIG)
-    export LINKFLAGS=-module $(CONFIG)
+    export FCFLAGS=-module $(CONFIG) -Mpreprocess -Kieee
+    export LINKFLAGS=-module $(CONFIG) -Kieee
     ifeq ($(CONFIG), debug)
       export FCFLAGS+=-O0 -g -Mbounds -Ktrap=fp -traceback
       export LINKFLAGS+=-O0 -g -Mbounds -Ktrap=fp -traceback
@@ -206,6 +238,31 @@ export BARE_OBJS=wp_def_$(PREC).o X1MACH.o dmng.o globvars.o misc.o linalg.o \
 export OBJS=$(addprefix $(CONFIG)/,$(BARE_OBJS))
 export OBJS+=$(OBJS_LPKBLS)
 
+# CUDA backend (USE_CUDA=yes). nvfortran -cuda compiles the device kernels and pulls
+# in the CUDA runtime; -cudalib links cuSOLVER/cuBLAS. Requires COMPILER=nvfortran and PREC=8.
+export CUDA_OBJS=
+GPU_DEP=
+ifeq ($(USE_CUDA), yes)
+  ifneq ($(COMPILER), nvfortran)
+    $(error USE_CUDA=yes requires COMPILER=nvfortran)
+  endif
+  ifneq ($(PREC), 8)
+    $(error USE_CUDA=yes is only supported with PREC=8)
+  endif
+  # Native CUDA Fortran GPU build: the whole backend -- run-time orchestration,
+  # the matrix-element kernels + host launchers, the device lifecycle, and the
+  # cuSOLVER eigensolver -- lives in one module, gpu_backend.f90, compiled by
+  # nvfortran -cuda. cuSOLVER/cuBLAS are linked for the eigensolver. -DUSE_CUDA guards BOTH
+  # the backend (gpu_backend.f90 + the dispatch touchpoints) and the
+  # attributes(host,device) on MatrixElementsHS_RG_1P so the shared physics is device-capable.
+  export FCFLAGS+=-DUSE_CUDA -cuda -gpu=$(CUF_GPU),maxregcount:$(CUF_MAXREG),lto
+  export LINKFLAGS+=-cuda -gpu=$(CUF_GPU),maxregcount:$(CUF_MAXREG),lto -cudalib=cusolver,cublas
+  export BARE_OBJS+=gpu_backend.o
+  export OBJS=$(addprefix $(CONFIG)/,$(BARE_OBJS)) $(OBJS_LPKBLS)
+  GPU_DEP=$(CONFIG)/gpu_backend.o
+  GPUBACK_MODDEP=$(CONFIG)/matelem.o
+endif
+
 .PHONY: release debug all clean cleaner cleanest cleandebug cleanrelease ptarg
 
 release:
@@ -242,7 +299,7 @@ cleanest:
 ptarg:
 	@echo CONFIG=$(CONFIG)
 ifeq ($(COMPILER_SUPPORTED), yes)
-	@echo Using COMPILER=$(COMPILER) MACHINE=$(MACHINE) PREC=$(PREC) LINALG=$(LINALG) EXEFILE=$(CONFIG)/$(EXEFILE)
+	@echo Using COMPILER=$(COMPILER) MACHINE=$(MACHINE) PREC=$(PREC) LINALG=$(LINALG) EXEFILE=$(CONFIG)/$(EXEFILE)$(if $(filter yes,$(USE_CUDA)), USE_CUDA=yes CUDA_ARCH=$(CUDA_ARCH),)
 else
 	@echo Error - there is no support for COMPILER=$(COMPILER) MACHINE=$(MACHINE) PREC=$(PREC) LINALG=$(LINALG)
 	@false
@@ -250,8 +307,8 @@ endif
 
 # The real targets
 
-$(CONFIG)/$(EXEFILE): ptarg $(OBJS)
-	$(FC) $(OBJS) -o $(CONFIG)/$(EXEFILE) $(LINKFLAGS) $(MPILINKFLAGS)
+$(CONFIG)/$(EXEFILE): ptarg $(OBJS) $(CUDA_OBJS)
+	$(FC) $(OBJS) $(CUDA_OBJS) -o $(CONFIG)/$(EXEFILE) $(LINKFLAGS) $(MPILINKFLAGS)
 
 $(CONFIG)/wp_def_$(PREC).o: $(SRC_DIR)/wp_def_$(PREC).f90
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/wp_def_$(PREC).f90 -o $(CONFIG)/wp_def_$(PREC).o
@@ -283,12 +340,14 @@ $(CONFIG)/misc.o: $(SRC_DIR)/misc.f90 $(CONFIG)/globvars.o
 $(CONFIG)/matelem.o: $(SRC_DIR)/matelem.f90 $(CONFIG)/globvars.o $(CONFIG)/spin.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/matelem.f90 -o $(CONFIG)/matelem.o
 
-$(CONFIG)/matform.o: $(SRC_DIR)/matform.f90 $(CONFIG)/matelem.o
+$(CONFIG)/gpu_backend.o: $(SRC_DIR)/gpu_backend.f90 $(CONFIG)/globvars.o $(GPUBACK_MODDEP)
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/gpu_backend.f90 -o $(CONFIG)/gpu_backend.o
+
+$(CONFIG)/matform.o: $(SRC_DIR)/matform.f90 $(CONFIG)/matelem.o $(GPU_DEP)
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/matform.f90 -o $(CONFIG)/matform.o
 
-$(CONFIG)/workproc.o: $(SRC_DIR)/workproc.f90 $(CONFIG)/misc.o $(CONFIG)/linalg.o $(CONFIG)/matform.o $(CONFIG)/matelem.o $(CONFIG)/dmng.o $(OBJS_LPKBLS)
+$(CONFIG)/workproc.o: $(SRC_DIR)/workproc.f90 $(CONFIG)/misc.o $(CONFIG)/linalg.o $(CONFIG)/matform.o $(CONFIG)/matelem.o $(CONFIG)/dmng.o $(GPU_DEP) $(OBJS_LPKBLS)
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/workproc.f90 -o $(CONFIG)/workproc.o
 
-$(CONFIG)/main.o: $(SRC_DIR)/main.f90 $(CONFIG)/workproc.o
+$(CONFIG)/main.o: $(SRC_DIR)/main.f90 $(CONFIG)/workproc.o $(GPU_DEP)
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/main.f90 -o $(CONFIG)/main.o
-

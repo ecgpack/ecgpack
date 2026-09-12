@@ -93,6 +93,10 @@ Common Makefile parameters:
 - `PREC`: `8`, `10`, or `16`
 - `LINALG`: `netlib`, `mkl`, `lblas`, `openblas`, or `aocl`
 - `EXEFILE`: output executable name for direct Makefile builds
+- `USE_CUDA`: `yes` enables the native CUDA Fortran backend in the four real-ECG
+  energy codes; this requires `COMPILER=nvfortran` and `PREC=8`
+- `CUDA_ARCH`: optional explicit GPU target such as `sm_70`; machine profiles provide
+  a default for known clusters (`shabyt=sm_70` for V100 and `irgetas=sm_90` for H100)
 
 Precision notes:
 
@@ -160,6 +164,20 @@ Important files:
 - `matform.f90`: assembly of Hamiltonian and overlap matrices
 - `workproc.f90`: the bulk of the program, including `ReadIOFile`/`SaveResults` I/O, basis construction, optimization cycles, generalized symmetric eigensolvers (methods `G` and `I`), expectation values, densities, and swap-file handling
 - `main.f90`: MPI initialization, random-number seeding, and top-level execution of BBOP input steps
+- `gpu_backend.f90`: CUDA Fortran device lifecycle, basis/permutation staging,
+  matrix-element kernels, and the optional cuSOLVER eigensolver; present only in
+  `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`, and compiled only with `USE_CUDA=yes`
+
+The GPU backend reuses the physics body in `MatrixElementsHS_*` through
+`attributes(host,device)`. Code in that routine must remain device-compilable: pass data
+that device code needs explicitly rather than reading host module variables, and do not add
+host I/O or unsupported allocatable operations. Runtime selection uses `ECG_GPU=1` for H/S
+and gradient assembly and `ECG_GPU_EIG=1` for the optional cuSOLVER path; CUDA-enabled
+binaries remain CPU-only by default.
+
+GPU shutdown explicitly frees application-owned device allocations but must not call
+`cudaDeviceReset()`: NVHPC 26.5 performs later CUDA Fortran runtime cleanup, and an early
+reset makes that cleanup fail with CUDA error 709 (`CONTEXT_IS_DESTROYED`).
 
 Common BBOP steps handled from `main.f90` include:
 

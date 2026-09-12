@@ -1,0 +1,70 @@
+ Program RG_0S started
+ Number of parallel MPI processes running: 1
+
+ ---------------- GPU backend ----------------
+   ME on GPU=T   eig on GPU=F   batch=16384   determ=F
+ ---------------------------------------------
+ gpu_init: rank 0 (node-local 0) -> device 0 NVIDIA H100 80GB HBM3
+ Reading initial conditions from data file inout.txt
+ BASIS_TYPE RG_0S
+ PARTICLES      7
+ MASSES  0.2186866385000000E+05  0.1000000000000000E+01  0.1000000000000000E+01  0.1000000000000000E+01  0.1000000000000000E+01  0.1000000000000000E+01  0.1000000000000000E+01
+ CHARGES  0.6000000000000000E+01 -0.1000000000000000E+01 -0.1000000000000000E+01 -0.1000000000000000E+01 -0.1000000000000000E+01 -0.1000000000000000E+01 -0.1000000000000000E+01
+ SYMMETRY (1-P35)(1-P73-P75)(1-P24)(1-P62-P64)(1+P23)(1+P45)(1+P67)
+ BASIS_SIZE   1000
+ CURRENT_ENERGY -0.3774411733937866E+02
+ WHICH_EIGENVALUE      1
+ EIGVAL_TOLERANCE  0.9999999999999999E-11
+ INVITPARAMETER  0.1000001000000000E+01
+ LAST_EIGVAL_TOL  0.7072623373417874E-15
+ BEST_EIGVAL_TOL  0.1100000000000000E+00
+ WORST_EIGVAL_TOL  0.1938640857549973E-07
+ GENERATOR_PARAM  0.7000000000000000E+00  0.1000000000000000E+01  0.3000000000000000E+01
+ ==============================
+   1000 -0.3774411733937866E+02      1      0      0
+ ==============================
+
+ Initializing program data
+ Total number of terms in nonsimplified Y operator:            288
+ Total number of terms in nonsimplified Y^{+}Y operator:     82944
+ Total number of terms in simplified Y operator:               288
+ Total number of terms in simplified Y^{+}Y operator:          720
+
+ Routine ExpectationValues started
+ Number of basis functions         1000
+ GSEP solution method G
+ Matrices H and S were not read from swap file
+ All H and S matrix elements need be (re)computed
+ Computing Hamiltonian and overlap matrix elements... GPU ME (energy): 500500 pairs in 31 chunks of 16384 max
+ done
+ Solving eigenvalue problem... done
+ Energy:    -37.74411733775175
+
+ Lowest eigenvalues:
+            1     -37.74411733775175
+            2     -37.38817698798533
+            3     -36.90262651288693
+            4     -36.82011547830565
+            5     -36.75201536413868
+            6     -36.68327362114507
+            7     -36.38322306728445
+            8     -36.03893152420068
+            9     -35.82233537236056
+           10     -35.72198924682881
+           11     -35.70408965437327
+
+ BENCH K=   1000 E= -3.774411733775175292748826905153692E+001 MEE=      0.2403s MEG=      0.0000s EIG=      0.2186
+
+ Swap file has been cleaned up
+
+ Basis Building and Optimization Program is completed
+ Program has stopped
+
+ =============== PER-PHASE WALL TIME ===============
+ Matrix elements, energy   :        0.240 s over          1 builds
+ Matrix elements, gradient :        0.000 s over          0 builds
+ Eigensolve (method G)     :        0.219 s over          1 solves
+ ==================================================
+
+Failing in Thread:1
+Accelerator Fatal Error: call to cuMemFree returned error 709 (CUDA_ERROR_CONTEXT_IS_DESTROYED): Context is destroyed or not yet created

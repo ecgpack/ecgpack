@@ -1,0 +1,64 @@
+diff --git a/src/matelem_RG_1P.f90 b/src/matelem_RG_1P.f90
+index 4a1e20b..f3ec4bf 100644
+--- a/src/matelem_RG_1P.f90
++++ b/src/matelem_RG_1P.f90
+@@ -342,7 +342,11 @@ contains
+     tau2=ZERO
+     do i=1,nn
+       temp1=ZERO
+-      do j=1,nn
++      !nvfortran 25.9/26.3 miscompile this nest when BOTH bounds are the
++      !compile-time nn: at nparticles=5, -O2/-O3, Hkl comes back ~50% wrong
++      !with no warning. Either bound as the runtime n avoids it, and n == nn
++      !always. Measured cost ~0.5%. See NVFORTRAN_BUG.md section 7.
++      do j=1,n
+         temp1=temp1+vkinv_tAkltAlM(j)*Ak(j,i)
+       enddo
+       tau2=tau2+temp1*inv_tAkltvl(i)
+@@ -615,7 +619,11 @@ contains
+         enddo
+         u3(i)=temp1
+       enddo
+-      do i=1,nn
++      !nvfortran 25.9 miscompiles RG_1P's gradient path when this and three
++      !neighbouring nests are all constant-bound (nparticles>=7, -cuda builds
++      !only). Any one of the four as the runtime n avoids it.
++      !See NVFORTRAN_BUG.md section 8.
++      do i=1,n
+         temp1=ZERO
+         do j=1,nn
+           temp1=temp1+inv_tAkltAlM(i,j)*u3(j)
+diff --git a/src/matelem_RG_2D.f90 b/src/matelem_RG_2D.f90
+index 46ea905..4bbe55a 100644
+--- a/src/matelem_RG_2D.f90
++++ b/src/matelem_RG_2D.f90
+@@ -333,7 +333,11 @@ contains
+     do i=1,nn
+       temp1=ZERO
+       temp2=ZERO
+-      do j=1,nn
++      !nvfortran 25.9/26.3 miscompile this nest when BOTH bounds are the
++      !compile-time nn: at nparticles=5, -O2/-O3, Hkl comes back ~50% wrong
++      !with no warning. Either bound as the runtime n avoids it, and n == nn
++      !always. Measured cost ~0.5%. See NVFORTRAN_BUG.md section 7.
++      do j=1,n
+         temp1=temp1+vkinv_tAkltAlM(j)*Ak(j,i)
+         temp2=temp2+bkinv_tAkltAlM(j)*Ak(j,i)
+       enddo
+diff --git a/src/matelem_RG_2P.f90 b/src/matelem_RG_2P.f90
+index e59690a..296170c 100644
+--- a/src/matelem_RG_2P.f90
++++ b/src/matelem_RG_2P.f90
+@@ -333,7 +333,11 @@ contains
+     do i=1,nn
+       temp1=ZERO
+       temp2=ZERO
+-      do j=1,nn
++      !nvfortran 25.9/26.3 miscompile this nest when BOTH bounds are the
++      !compile-time nn: at nparticles=5, -O2/-O3, Hkl comes back ~50% wrong
++      !with no warning. Either bound as the runtime n avoids it, and n == nn
++      !always. Measured cost ~0.5%. See NVFORTRAN_BUG.md section 7.
++      do j=1,n
+         temp1=temp1+vkinv_tAkltAlM(j)*Ak(j,i)
+         temp2=temp2+bkinv_tAkltAlM(j)*Ak(j,i)
+       enddo

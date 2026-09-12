@@ -7,7 +7,7 @@ usage_print() {
   echo "Missing arguments or invalid arguments."
   echo ""  
   echo "PROPER USAGE:"
-  echo "$0 machine=<machinename> toolchain=<toolchainnames> config=<confignames> code=<codenames> nparticles=<nparticles> precision=<precisions> linalg=<linalgnames>"
+  echo "$0 machine=<machinename> toolchain=<toolchainnames> config=<confignames> code=<codenames> nparticles=<nparticles> precision=<precisions> linalg=<linalgnames> cuda=<yes|no>"
   echo ""
   echo "NOTE:"
   echo "All arguments are optional except nparticles. If multiple values are specified for an argument, they must be separated by a comma."
@@ -21,6 +21,7 @@ usage_print() {
   echo "<nparticles> defines for how many particles each code must be build for. There is no default value. This argument must be present."
   echo "<precisions> is the kind parameter for real type. 8 corresponds to double precision (fp64), 10 corresponds to extended precision (fp80), 16 corresponds to quadruple precision. Different compilers/toolchain support different kinds. For example, Intel compilers supports only 8 and 16, while modern GNU compilers support 8, 10, and 16. The default value is 8."
   echo "<linalgnames> specifies which BLAS/LAPACK implementation to link against. Possible values are: netlib (default; non-optimized reference BLAS/LAPACK built from the bundled source), mkl (Intel Math Kernel Library), lblas (optimized BLAS/LAPACK exposed through the -lblas/-llapack symbolic links), openblas (OpenBLAS), and aocl (AMD AOCL-BLAS and AOCL-LAPACK). For precision=10 and precision=16 only netlib is available, so any other value is skipped because optimized BLAS/LAPACK is unavailable for these two precisions."
+  echo "cuda=yes additionally compiles the native CUDA Fortran GPU backend into the binary (default is no). It requires an nvhpc toolchain (nvfortran) and precision=8, and currently only the four energy codes (RG_0S, RG_1P, RG_2D, RG_2P) have a GPU backend; any other combination is skipped. The binary gets a _cuda suffix. A CUDA-enabled binary behaves exactly like a regular CPU binary until GPU execution is requested at runtime by setting the environment variable ECG_GPU=1 (see <code>/src/gpu_backend.f90 for the other ECG_GPU* runtime options). The GPU architecture is inferred from the machine name; pass cuda_arch=sm_XX to override it for machines whose GPU model is not known to the Makefile."
   echo "" 
   echo "Supported toolchains on different machines are listed below."
   echo ""   
@@ -59,6 +60,8 @@ usage_print() {
   echo ""
   echo "    $0 machine=irgetas toolchain=foss-2023b config=release code=RG_0S,RG_1P nparticles=3,4,5,6 precision=8,10,16 linalg=netlib"
   echo ""
+  echo "    $0 machine=irgetas toolchain=nvhpc-26.5 config=release code=RG_0S,RG_1P,RG_2D,RG_2P nparticles=6 cuda=yes"
+  echo ""
   echo "    $0 machine=muon toolchain=foss-2023b,intel-2023b config=debug,release code=RG_0S nparticles=4,5 precision=8,16 linalg=mkl,netlib"
   echo ""
   echo "    $0 machine=puma toolchain=ohpc config=debug,release code=RG_0S nparticles=5 precision=8,16 linalg=lblas"  
@@ -66,7 +69,9 @@ usage_print() {
   echo "    $0 machine=ocelote toolchain=intel-2020.4 config=debug,release code=RG_0S nparticles=5 precision=8,16 linalg=mkl,netlib"
   echo ""  
   echo "    $0 machine=shabyt nparticles=4,5 precision=10"
-  echo ""  
+  echo ""
+  echo "    $0 machine=shabyt toolchain=nvhpc-25.9 config=release code=RG_0S nparticles=6 cuda=yes"
+  echo ""
   echo "    $0 nparticles=6"
   exit 1
 }
@@ -80,6 +85,8 @@ code="RG_0S, RG_1P, RG_2D, RG_2P, RG_0S-1P, RG_1P-2D, RG_1P-2P, RG_0S-2D, RG_0S-
 nparticles=""
 precision="8"
 linalg="netlib"
+cuda="no"
+cuda_arch=""
 
 # Parse the arguments
 for arg in "$@"; do
@@ -91,6 +98,8 @@ for arg in "$@"; do
     nparticles=*) nparticles="${arg#*=}" ;;
     precision=*) precision="${arg#*=}" ;;
     linalg=*) linalg="${arg#*=}" ;;
+    cuda=*) cuda="${arg#*=}" ;;
+    cuda_arch=*) cuda_arch="${arg#*=}" ;;
     *) echo "ERROR, INVALID ARGUMENT: $arg" ; echo "" ; usage_print ;;
   esac
 done
@@ -168,6 +177,18 @@ for linalg_value in ${linalg_list[@]}; do
   fi
 done
 
+# Check if cuda is set properly
+if [[ " yes no " != *" $cuda "* ]]; then
+  echo "ERROR, WRONG VALUE OF ARGUMENT: cuda (must be yes or no)"
+  usage_print
+  exit 1
+fi
+if [[ -n "$cuda_arch" ]] && ! [[ $cuda_arch =~ ^sm_[0-9]+$ ]]; then
+  echo "ERROR, WRONG VALUE OF ARGUMENT: cuda_arch (must look like sm_70)"
+  usage_print
+  exit 1
+fi
+
 # Set the name of the directory where all binaries will be stored
 bindirname="bin"
 
@@ -240,6 +261,8 @@ for toolchain_value in ${toolchain_list[@]}; do
       load_toolchain "intel/2024a" ifx ifx "software/intel-compilers/2024.2.0/compiler/2024.2/bin/ifx" mpiifx "software/impi/2021.13.0-intel-compilers-2024.2.0/mpi/2021.13/bin/mpiifx" || continue
     elif [ "$toolchain_value" = "intel-2023b" ]; then
       load_toolchain "intel/2023b" ifort ifort "software/intel-compilers/2023.2.1/compiler/2023.2.1/linux/bin/intel64/ifort" mpiifort "software/impi/2021.10.0-intel-compilers-2023.2.1/mpi/2021.10.0/bin/mpiifort" || continue
+    elif [ "$toolchain_value" = "nvhpc-26.5" ]; then
+      load_toolchain "NVHPC/26.5-CUDA-13.2.0" nvfortran nvfortran "software/nvidia-compilers/26.5-CUDA-13.2.0/Linux_x86_64/26.5/compilers/bin/nvfortran" mpif90 "software/NVHPC/26.5-CUDA-13.2.0/Linux_x86_64/26.5/comm_libs/hpcx/bin/mpif90" || continue
     elif [ "$toolchain_value" = "nvhpc-25.3" ]; then
       load_toolchain "NVHPC/25.3-CUDA-12.8.0" nvfortran nvfortran "software/nvidia-compilers/25.3-CUDA-12.8.0/Linux_x86_64/25.3/compilers/bin/nvfortran" mpif90 "software/NVHPC/25.3-CUDA-12.8.0/Linux_x86_64/25.3/comm_libs/hpcx/bin/mpif90" || continue
     elif [ "$toolchain_value" = "nvhpc-25.9" ]; then
@@ -310,10 +333,34 @@ for toolchain_value in ${toolchain_list[@]}; do
             fi
             # Always add the linalg value as a suffix to the binary file name
             binaryfilename=${binaryfilename}_${linalg_value}
+            # cuda=yes: the GPU backend needs nvfortran and precision=8, and only the four
+            # energy codes have one; skip (with a message) any combination that cannot be
+            # built, mirroring how unavailable linalg values are skipped. CUDA-enabled
+            # binaries get a _cuda suffix.
+            cuda_makeargs=""
+            if [[ "$cuda" = "yes" ]]; then
+              if [[ "$compiler" != "nvfortran" ]]; then
+                echo "NOTE: cuda=yes requires an nvhpc toolchain (nvfortran); skipping toolchain $toolchain_value for code $code_value."
+                continue
+              fi
+              if [[ "$precision_value" != "8" ]]; then
+                echo "NOTE: cuda=yes supports only precision=8; skipping precision $precision_value for code $code_value."
+                continue
+              fi
+              if [[ " RG_0S RG_1P RG_2D RG_2P " != *" $code_value "* ]]; then
+                echo "NOTE: only the energy codes (RG_0S, RG_1P, RG_2D, RG_2P) have a GPU backend; skipping cuda build of $code_value."
+                continue
+              fi
+              cuda_makeargs="USE_CUDA=yes"
+              if [[ -n "$cuda_arch" ]]; then
+                cuda_makeargs="$cuda_makeargs CUDA_ARCH=$cuda_arch"
+              fi
+              binaryfilename=${binaryfilename}_cuda
+            fi
             echo ""
             echo "════════════════════════ Starting a new build ═════════════════════════"
             echo "machine="$machine "   toolchain="$toolchain_value "   config="$config_value
-            echo "code="$code_value "   nparticles="$nparticles_value "   precision="$precision_value "   linalg="$linalg_value
+            echo "code="$code_value "   nparticles="$nparticles_value "   precision="$precision_value "   linalg="$linalg_value$([ "$cuda" = "yes" ] && echo "    cuda=yes${cuda_arch:+ cuda_arch=$cuda_arch}")
             echo "───────────────────────────── make output ─────────────────────────────"
             # Check if file ${code_value}/src/wp_def_${precision_value}.f90 exists. This way
             # we also automtically test if the directory ${code_value} for this specific code exists
@@ -332,7 +379,7 @@ for toolchain_value in ${toolchain_list[@]}; do
             sed -i "s/MPI_DPREC=[^ ][^ ]*/MPI_DPREC=${MPI_REALX_name}/g" src/wp_def_${precision_value}.f90
             # Build the code
             make clean > /dev/null 2>&1
-            make ${config_value} COMPILER=${compiler} MACHINE=${machine} PREC=${precision_value} LINALG=${linalg_value} EXEFILE=ecg
+            make ${config_value} COMPILER=${compiler} MACHINE=${machine} PREC=${precision_value} LINALG=${linalg_value} ${cuda_makeargs} EXEFILE=ecg
             # Check if the build was successful
             if [ $? -eq 0 ]; then
               echo "═════════════════════ Build finished succesfully ══════════════════════"
