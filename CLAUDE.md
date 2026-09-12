@@ -19,7 +19,7 @@ Each code lives in its own top-level directory with an identical structure: a `M
 
 Most codes ship with a `sample_input/` subdirectory of worked examples — the four real-ECG energy codes (`RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`) plus all nine off-diagonal codes (`RG_0S-1P`, `RG_0S-2D`, `RG_0S-2P`, `RG_1P-1P`, `RG_1P-2D`, `RG_1P-2P`, `RG_2D-2D`, `RG_2P-2D`, `RG_2P-2P`). Only `CG_0S` currently has no sample inputs. See the Running section below.
 
-`RG_0S` is the most complete reference implementation; other codes share much of its source and Makefile. Non-code directories: `doc/` (documentation), `utilities/`, and `bin/` + `jobs/` (created by the user, not in git). The root also holds `README.md` (the repository manual), `AUTHORS.md` (list of contributors), and `.code-workspace` (a VSCode multi-folder workspace grouping all the code directories).
+`RG_0S` is the most complete reference implementation; other codes share much of its source and Makefile. Non-code directories: `doc/` (documentation, including developer-facing design guides in `doc/devnotes/`), `utilities/`, and `bin/` + `jobs/` (created by the user, not in git). The root also holds `README.md` (the repository manual), `AUTHORS.md` (list of contributors), and `.code-workspace` (a VSCode multi-folder workspace grouping all the code directories).
 
 ## Building
 
@@ -70,7 +70,7 @@ Within each `src/`, the module compile/dependency order (see the Makefile) is:
 - **`linalg.f90`** — linear-algebra wrappers over BLAS/LAPACK. `BLAS.f`/`LAPACK.f` are bundled, lightly modified netlib reference sources used only when `LINALG=netlib`. `dmng.f` (lightly modified TOMS nonlinear minimizer) and `X1MACH.f90` (machine constants) support the optimizer.
 - **`spin.f90`** — spin algebra and permutational-symmetry projection.
 - **`matelem.f90`** — matrix elements between individual basis functions; **`matform.f90`** assembles the full Hamiltonian (H) and overlap (S) matrices.
-- **`qrlinalg.f90` and `qrupdate/`** — QR factorization/update support for generalized-eigenvalue method `'Q'` in the four real-ECG energy codes. The canonical H/S layout and porting procedure are documented in `RG_0S/docs/Q_METHOD_DESIGN.md`.
+- **`qrlinalg.f90` and `qrupdate/`** — QR factorization/update support for generalized-eigenvalue method `'Q'` in the four real-ECG energy codes. The canonical H/S layout and porting procedure are documented in `doc/devnotes/Q_method_design.md`.
 - **`workproc.f90`** — the bulk of the program (often >8000 lines): `ReadIOFile`/`SaveResults` I/O, basis enlargement, optimization cycles, the generalized symmetric eigenvalue solvers (methods `'G'`, `'I'`, and `'Q'` in the real-ECG energy codes), expectation values, densities, and swap-file handling.
 - **`main.f90`** — initializes MPI, seeds RNGs, then drives a sequence of **BBOP** (Basis Building and Optimization Program) steps read from the input file. Each step is a `case` in the main `select`: `BASIS_ENL`, `OPT_CYCLE`, `FULL_OPT1`, `ELIM_LCFN`, `ELIM_LND1`, `SEPR_LND1`, `SEPR_FLCF`, `EXPC_VALS`, `DENSITIES`, `MOMT_DENS`, `SAVE_FILE`, `SAVE_HSWF`. Adding a calculation mode means adding a case here plus the corresponding routine in `workproc.f90`.
 

@@ -28,6 +28,10 @@ Machine-readable citation metadata is provided in [`CITATION.cff`](CITATION.cff)
 
 For theoretical background and mathematical notations please see [Theoretical background](doc/theoretical_background.md) in the documetation folder, where relevant references are provided.
 
+## Developer notes
+
+Developer-facing architecture and maintenance guides live in [`doc/devnotes/`](doc/devnotes/). These documents complement the user manuals with implementation invariants, performance models, validation requirements, and porting procedures. The first guide describes the [Q generalized-eigenvalue method](doc/devnotes/Q_method_design.md).
+
 ## Directory structure
 
 The ECGPACK project repository has the following directory structure:
@@ -51,6 +55,7 @@ The ECGPACK project repository has the following directory structure:
 | `ecgpack/RG_2P-2P/` | The code for the calculation of the offdiagonal matrix elements between states that are expanded using RG_2P and RG_2P bases. Currently this includes the evaluation of the spin--orbit and noncontact spin-spin interactions. |
 | `ecgpack/bin/` | Binary files for calculations (may be created by user) |
 | `ecgpack/doc/` | Directory containing manuals and documentation |
+| `ecgpack/doc/devnotes/` | Developer-facing architecture and maintenance notes for implemented numerical methods |
 | `ecgpack/jobs/` | Work directory for calculations (may be created by user) |
 | `ecgpack/utilities/` | Various utilities and scripts |
 
@@ -78,7 +83,7 @@ There are several files located in the project's root directory `ecgpack/`. Thei
 | `CITATION.cff` | Machine-readable citation metadata in the Citation File Format. GitHub uses it to generate the "Cite this repository" link. |
 | `CLAUDE.md` | Configuration and system instructions for Anthropic's Claude Code CLI. |
 | `LICENSE.md` | The license under which ECGPACK is distributed (BSD 3-Clause). |
-| `THIRD-PARTY-NOTICES.md` | Copyright and license notices for the third-party source code bundled with the codes (the netlib reference BLAS and LAPACK, the PORT optimization routines, and the SLATEC machine constants). |
+| `THIRD-PARTY-NOTICES.md` | Copyright and license notices for the third-party source code bundled with the codes (qrupdate-ng, the netlib reference BLAS and LAPACK, the PORT optimization routines, and the SLATEC machine constants). |
 | `build.bash` | A Bash-script for batch compilation of multiple codes corresponding to different particle counts, toolchains, configurations, precisions, linear-algebra providers, and serial/OpenMP modes. It is convenient for building a large number of different binaries that are later used in production calculations. The generated binaries are automatically moved to directory `/ecgpack/bin`. For more information run this script in a terminal without arguments or read its header. |
 | `.code-workspace` | A JSON configuration file for Microsoft Visual Studio Code (VS Code) that contains information used to group separate code project directories into a single, unified workspace that can be opened in VS Code. |
 
@@ -98,4 +103,4 @@ For editing, compiling, debugging, and browsing the code locally, we recommend u
 
 ECGPACK is distributed under the BSD 3-Clause License. The full text is in [`LICENSE.md`](LICENSE.md).
 
-Some amount of source code written by others is bundled with the codes and remains under the terms of its original authors: the netlib reference BLAS and LAPACK (`src/BLAS.f` and `src/LAPACK.f`), the PORT unconstrained minimization routines of David M. Gay (`src/dmng.f`), and the SLATEC machine constants `I1MACH` and `D1MACH` (`src/X1MACH.f90`). The corresponding copyright and license notices are collected in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
+Some amount of source code written by others is bundled with the codes and remains under the terms of its original authors: qrupdate-ng (`src/qrupdate/` in the real-ECG energy codes), the netlib reference BLAS and LAPACK (`src/BLAS.f` and `src/LAPACK.f`), the PORT unconstrained minimization routines of David M. Gay (`src/dmng.f`), and the SLATEC machine constants `I1MACH` and `D1MACH` (`src/X1MACH.f90`). The corresponding copyright and license notices are collected in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).

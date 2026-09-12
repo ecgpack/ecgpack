@@ -30,7 +30,7 @@ The main code groups overlap:
 
 Non-code directories:
 
-- `doc/`: project documentation
+- `doc/`: project documentation; `doc/devnotes/` contains developer-facing design and maintenance guides
 - `utilities/`: utility scripts and related tools
 - `bin/`: generated/user-created binaries, not normally committed
 - `jobs/`: user-created calculation work directories, not normally committed
@@ -41,7 +41,7 @@ Root files of interest:
 - `AUTHORS.md`: contributor list
 - `CITATION.cff`: machine-readable citation metadata
 - `LICENSE.md`: BSD 3-Clause license for ECGPACK
-- `THIRD-PARTY-NOTICES.md`: notices for bundled BLAS, LAPACK, PORT, and SLATEC-derived sources
+- `THIRD-PARTY-NOTICES.md`: notices for bundled qrupdate-ng, BLAS, LAPACK, PORT, and SLATEC-derived sources
 - `build.bash`: batch build driver
 - `.code-workspace`: VS Code multi-folder workspace
 - `CLAUDE.md`: Claude-specific project context; keep it consistent with this file when relevant
@@ -198,7 +198,7 @@ Off-diagonal codes use specialized operator routines and basis-specific overlap 
 - Input format: `doc/input_file_format.md`
 - Physics and notation: `doc/theoretical_background.md`
 - VS Code setup: `doc/use_of_visual_studio_code.md`
-- Q-method architecture, canonical H/S layout, porting steps, and validation: `RG_0S/docs/Q_METHOD_DESIGN.md`
+- Q-method architecture, canonical H/S layout, porting steps, and validation: `doc/devnotes/Q_method_design.md`
 
 For behavior questions, prefer these project docs over inference from code alone.
 
