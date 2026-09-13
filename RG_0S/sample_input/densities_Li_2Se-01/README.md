@@ -1,6 +1,6 @@
-# Lithium $2\,{}^2S^e$ density example
+# Lithium ${}^2S^e$ density example
 
-This directory contains a 100-function `RG_0S` example for the four-particle lithium atom. It evaluates coordinate- and momentum-space particle densities and pair correlation functions on the supplied radial grid.
+This directory contains a 100-function `RG_0S` example for the four-particle Lithium atom (Li-7 isotope). It evaluates coordinate- and momentum-space particle densities and pair correlation functions on the supplied radial grid.
 
 ## Build and run
 
@@ -37,11 +37,11 @@ The executable must be built for the `PARTICLES 4` value in `inout.txt`.
 The general command forms are:
 
 ```text
-DENSITIES <G|I> <basis_size> <cf_grid> <cf_output> <dens_grid> <dens_output>
-MOMT_DENS <G|I> <basis_size> <mom_cf_grid> <mom_cf_output> <mom_dens_grid> <mom_dens_output>
+DENSITIES <G|I|Q> <basis_size> <cf_grid> <cf_output> <dens_grid> <dens_output>
+MOMT_DENS <G|I|Q> <basis_size> <mom_cf_grid> <mom_cf_output> <mom_dens_grid> <mom_dens_output>
 ```
 
-`G` and `I` select the generalized-eigenvalue solver; this example uses inverse iteration (`I`). `<basis_size>` must equal the current basis size. The first file pair controls correlation functions and the second controls particle densities. Use `none` as the corresponding grid name to disable one family, while retaining all positional arguments. The same grid may be supplied to both families, as in this example.
+`G`, `I`, and `Q` select the direct generalized solver, inverse iteration, and QR-based inverse iteration, respectively; this example uses inverse iteration (`I`). `<basis_size>` must equal the current basis size. The first file pair controls correlation functions and the second controls particle densities. Use `none` as the corresponding grid name to disable one family, while retaining all positional arguments. The same grid may be supplied to both families, as in this example.
 
 `DENSITIES` evaluates center-of-mass-frame coordinate-space functions. `MOMT_DENS` evaluates their momentum-space analogues. Both commands also perform the `EXPC_VALS` work, so no separate `EXPC_VALS` command is required.
 

@@ -11914,8 +11914,8 @@ contains
   subroutine ExpectationValues(Action,SymmAdaptMethod,FileName1,FileName2,FileName3,FileName4,GSEPSolMethod)
 !ExpectationValues computes expectation values in the basis of
 !Glob_CurrBasisSize functions. Depending on the argument GSEPsolMethod,
-!it can use either LAPACK subroutine DSYGVX or the inverse iteration method to
-!solve GSEP.
+!it can use LAPACK subroutine DSYGVX, inverse iteration, or QR-based inverse
+!iteration to solve GSEP.
 !Input parameters:
 !  Action - defines the action that needs to be used. It can be either
 !  "DENSITIES" or "MOMT_DENS".

@@ -1,8 +1,6 @@
-# Lithium $2\,{}^2D^e$ density example
+# Lithium ${}^2D^e$ density example
 
-This directory contains a 100-function `RG_2D` example for the four-particle lithium atom. It evaluates coordinate- and momentum-space particle densities and pair correlation functions on a piecewise cylindrical grid.
-
-The legacy directory name is retained because historical helium-analysis utilities refer to this path; the current `inout.txt` and generated results are for lithium.
+This directory contains a 100-function `RG_2D` example for the four-particle Lithium atom (Li-7 isotope). It evaluates coordinate- and momentum-space particle densities and pair correlation functions on a piecewise cylindrical grid.
 
 ## Build and run
 
@@ -15,14 +13,14 @@ To reproduce the results, from the repository root, build the double-precision, 
 then generate the grid and run the ECGPACK calculations:
 
 ```bash
-cd RG_2D/sample_input/densities_He_1De-01
+cd RG_2D/sample_input/densities_Li_2De-01
 python3 create_cyl_grid.py
 mkdir -p output_cyl
 mpirun -np 1 ../../../bin/systemdefault/release/RG_2D_N4_P8_netlib
 mv -f cf.dat dens.dat mcf.dat mdens.dat expvals.txt spinData.txt swapfile.dat output_cyl/
 ```
 
-The paths in this command sequence are relative to the working directory `RG_2D/sample_input/densities_He_1De-01`, and the example starts one MPI process. To change the number of MPI processes, edit:
+The paths in this command sequence are relative to the working directory `RG_2D/sample_input/densities_Li_2De-01`, and the example starts one MPI process. To change the number of MPI processes, edit:
 
 ```bash
 mpirun -np 1 ../../../bin/systemdefault/release/RG_2D_N4_P8_netlib
@@ -39,11 +37,11 @@ The executable must be built for the `PARTICLES 4` value in `inout.txt`.
 The general command forms are:
 
 ```text
-DENSITIES <G|I> <basis_size> <cf_grid> <cf_output> <dens_grid> <dens_output>
-MOMT_DENS <G|I> <basis_size> <mom_cf_grid> <mom_cf_output> <mom_dens_grid> <mom_dens_output>
+DENSITIES <G|I|Q> <basis_size> <cf_grid> <cf_output> <dens_grid> <dens_output>
+MOMT_DENS <G|I|Q> <basis_size> <mom_cf_grid> <mom_cf_output> <mom_dens_grid> <mom_dens_output>
 ```
 
-`G` and `I` select the generalized-eigenvalue solver; this example uses inverse iteration (`I`). `<basis_size>` must equal the current basis size. The first file pair controls correlation functions and the second controls particle densities. Use `none` as the corresponding grid name to disable one family, while retaining all positional arguments. The same grid may be supplied to both families, as in this example.
+`G`, `I`, and `Q` select the direct generalized solver, inverse iteration, and QR-based inverse iteration, respectively; this example uses inverse iteration (`I`). `<basis_size>` must equal the current basis size. The first file pair controls correlation functions and the second controls particle densities. Use `none` as the corresponding grid name to disable one family, while retaining all positional arguments. The same grid may be supplied to both families, as in this example.
 
 `DENSITIES` evaluates center-of-mass-frame coordinate-space functions. `MOMT_DENS` evaluates their momentum-space analogues. Both commands also perform the `EXPC_VALS` work, so no separate `EXPC_VALS` command is required.
 

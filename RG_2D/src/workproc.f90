@@ -12319,8 +12319,8 @@ contains
   subroutine ExpectationValues(Action,SymmAdaptMethod,FileName1,FileName2,FileName3,FileName4,GSEPSolMethod)
 !ExpectationValues computes expectation values in the basis of
 !Glob_CurrBasisSize functions. Depending on the argument GSEPsolMethod,
-!it can use either LAPACK subroutine DSYGVX or the inverse iteration method to
-!solve GSEP.
+!it can use LAPACK subroutine DSYGVX, inverse iteration, or QR-based inverse
+!iteration to solve GSEP.
 !Input parameters:
 !  SymmAdaptMethod  - defines how the expectation values should be
 !calculated. If SymmAdaptMethod=1 then Y^{\dagger}Y operator is applied
@@ -12337,7 +12337,9 @@ contains
 !              If FileName1 is equal to 'none','NONE', or 'None' then correlation
 !              functions are not computed.
 !  FileName2 - the name of the file where correlation functions will be stored
-!  FileName3 - the name of the file that defines the density grid
+!  FileName3 - the name of the file that defines the density grid.
+!              If FileName3 is equal to 'none','NONE', or 'None' then particle
+!              densities are not computed.
 !  FileName4 - the name of the file where particle densities will be stored
 !  GSEPsolMethod - can be 'G', 'I', or 'Q'. It defines the method used to solve GSEP
 
