@@ -1,75 +1,84 @@
-# Description
+# Lithium ${}^2P^o$ density example
 
-Sample file `inout.txt` in this directory contains a basis of 100 ECG functions for the lowest $^2 P^o$ state of Li atom (Li-7 isotope) and sets up calculations of particle distributions in the coordinate space: particle densities in the center-of-mass frame, $\rho_i(\xi_\rho,\xi_z)$ , and pair correlation functions $g_{i}(\xi_\rho,\xi_z)$ and $g_{ij}(\xi_\rho,\xi_z)$ . Here $\xi_\rho=\sqrt{\xi_x^2+\xi_y^2}$ . Expectation values of various operators are also computed in one go.
-The calculations with this input file `inout.txt` and the grids used in the example should take roughly 15 seconds on a single CPU core when double precision is used (gfortran compiler / AMD Ryzen AI 9 HX 370).
+This directory contains a 100-function `RG_1P` example for the four-particle lithium atom (Li-7 isotope). It evaluates coordinate- and momentum-space particle densities and pair correlation functions on a piecewise cylindrical grid.
 
-The instruction that is used in `inout.txt` to run calculations of distributions has the following format:  
-`DENSITIES I 100 cf_grid.dat cf.dat dens_grid.dat dens.dat`  
-Here `cf_grid.dat` and `dens_grid.dat` are files that contain the 2D grids of $\xi_\rho$ and $\xi_z$ values where the correlation functions and densities need to be computed. Both of these grid files have two columns and look like this:  
+## Build and run
 
-```
-0.000000 -1.500000
-0.000000 -1.480000
-0.000000 -1.460000
-0.000000 -1.440000
-...
-...
-...
-```
-
-In principle, the grids for both the correlation functions and densities could come from the same file (e.g. `grid.dat`) if the expected range of all distributions is comparable. The grids do not need to be uniform. The points do not have to be sorted in any particular order, although doing so may be convenient for further processing and visualization later.
-
-For atomic systems with a finite-mass nucleus, such as Li, the density of the first particle (nucleus) is expected to be highly localized around the origin (center of mass), $\xi=0$ . In other words, the effective range of the nuclear distribution is about 3 orders of magnitude shorter than that for electrons. If both the electronic and nuclear densities are needed then the calculations for them should be run independently and use different grids.  
-
-When the calculations are executed the grid files must be in the same directory where the `inout.txt` is located and where the program runs.
-
-A Bash script `create_grid.bash` is also provided for convenience. One can adjust grid parameters in this script. When executed it creates files `cf_grid.dat` and `dens_grid.dat`.
-
-After correlation functions and densities have been calculated, files `cf.dat` and `dens.dat` are created in the execution directory. They have the following format:
-
-```
-      #xi_rho                     xi_z                     g1                      g12
-  0.0000000000000000E+00 -0.1500000000000000E+01  0.3963529627411734E-02  0.6918869335184548E-02
-  0.0000000000000000E+00 -0.1480000000000000E+01  0.4132513711459111E-02  0.7148840535921017E-02
-  0.0000000000000000E+00 -0.1460000000000000E+01  0.4318856778477886E-02  0.7397359829233206E-02
-  0.0000000000000000E+00 -0.1440000000000000E+01  0.4524441074520022E-02  0.7665890303721264E-02
-  ...
-  ...
-  ...
-```
-
-```
-      #xi_rho                     xi_z                    rho1                    rho2
-  0.0000000000000000E+00 -0.1500000000000000E+01  0.0000000000000000E+00  0.3963670099161181E-02
-  0.0000000000000000E+00 -0.1480000000000000E+01  0.0000000000000000E+00  0.4132621704230993E-02
-  0.0000000000000000E+00 -0.1460000000000000E+01  0.0000000000000000E+00  0.4318929489442429E-02
-  0.0000000000000000E+00 -0.1440000000000000E+01  0.0000000000000000E+00  0.4524475524150619E-02
-  ...
-  ...
-  ...
-```
-
-Note that if there are identical particles in the system (e.g. three electrons in Li atom), the number of $\rho_{i}$ distributions written in the `dens.dat` file is less than the number of particles. In the case of Li atom $\rho_1(\xi_\rho,\xi_z)$ is the nuclear density, while $\rho_2(\xi_\rho,\xi_z)=\rho_3(\xi_\rho,\xi_z)=\rho_4(\xi_\rho,\xi_z)$ are the electronic densities (so only $\rho_2(\xi_\rho,\xi_z)$ is written). Likewise, the number of pair correlation functions $g_i(\xi_\rho,\xi_z)$ and $g_{ij}(\xi_\rho,\xi_z)$ is less than the number of all possible pairs. In the case of Li, the only physically different pair correlation functions are the nucleus-electron one, $g_1=g_2=g_3$, and the electron-electron one, $g_{12}=g_{13}=g_{23}$.
-
-The data in `cf.dat` and `dens.dat` can be further processed or visualized according to the needs of the user.
-
-As an example of further processing, two gnuplot scripts (`create_plots_g.gp` and `create_plots_rho.gp`) are provided. They can be executed as follows:
+To reproduce the results, from the repository root, build the double-precision, four-particle executable:
 
 ```bash
-gnuplot create_plots_g.gp
-gnuplot create_plots_rho.gp
+./build.bash machine=linux-generic toolchain=systemdefault config=release code=RG_1P nparticles=4 precision=8 linalg=netlib
 ```
 
-They read files `cf.dat` and `dens.dat`, respectively, and create contour plots in the `png` format for all distributions. Two plots are created for each 2D distribution: the function itself, e.g. $g_{12}(\xi_\rho,\xi_z)$ or $\rho_1(\xi_\rho,\xi_z)$ , and the corresponding axial probability density, e.g. $2 \pi \xi_\rho g_{12}(\xi_\rho,\xi_z)$ or $2 \pi \xi_\rho \rho_1(\xi_\rho,\xi_z)$ . The resulting `png` files generated by gnuplot for the considered case of Li atom are provided.  
+then generate the grid and run the ECGPACK calculations:
 
-![electron density in the center of mass frame](rho2.png)  
+```bash
+cd RG_1P/sample_input/densities_Li_2Po-01
+python3 create_cyl_grid.py
+mkdir -p output_cyl
+mpirun -np 1 ../../../bin/systemdefault/release/RG_1P_N4_P8_netlib
+mv -f cf.dat dens.dat mcf.dat mdens.dat expvals.txt spinData.txt swapfile.dat output_cyl/
+```
 
-![electron radial probability in the center of mass frame](rho2_axial_dist.png)  
+The paths in this command sequence are relative to the working directory `RG_1P/sample_input/densities_Li_2Po-01`, and the example starts one MPI process. To change the number of MPI processes, edit:
 
-![nucleus-electron correlation function](g1.png)  
+```bash
+mpirun -np 1 ../../../bin/systemdefault/release/RG_1P_N4_P8_netlib
+```
 
-![electron-electron correlation function](g12.png)  
+The final command moves the generated files into `output_cyl/`, overwriting the sample outputs. Remove that command if you want to keep the files next to `inout.txt`.
 
-![nucleus-electron radial probability distribution](g1_axial_dist.png)  
+On a four-core Intel Core i5-1135G7 system under WSL, the supplied 16,836-point grid and 100-function basis take approximately 30 seconds with four MPI processes. This is a separate four-process benchmark; the command above uses one process. Build time is not included. Runtime varies with the compiler, linear-algebra library, processor, system load, basis size, grid size, and MPI process count.
 
-![electron-electron radial probability distribution](g12_axial_dist.png)
+The executable must be built for the `PARTICLES 4` value in `inout.txt`.
+
+## Density commands in `inout.txt`
+
+The general command forms are:
+
+```text
+DENSITIES <G|I|Q> <basis_size> <cf_grid> <cf_output> <dens_grid> <dens_output>
+MOMT_DENS <G|I|Q> <basis_size> <mom_cf_grid> <mom_cf_output> <mom_dens_grid> <mom_dens_output>
+```
+
+`G`, `I`, and `Q` select the direct generalized solver, inverse iteration, and QR-based inverse iteration, respectively; this example uses inverse iteration (`I`). `<basis_size>` must equal the current basis size. The first file pair controls correlation functions and the second controls particle densities. Use `none` as the corresponding grid name to disable one family, while retaining all positional arguments. The same grid may be supplied to both families, as in this example.
+
+`DENSITIES` evaluates center-of-mass-frame coordinate-space functions. `MOMT_DENS` evaluates their momentum-space analogues. Both commands also perform the `EXPC_VALS` work, so no separate `EXPC_VALS` command is required.
+
+The BBOP commands create the following tables in the working directory; the run instructions above then archive them in `output_cyl/`:
+
+- `output_cyl/cf.dat`: coordinate-space correlation functions;
+- `output_cyl/dens.dat`: coordinate-space particle densities;
+- `output_cyl/mcf.dat`: momentum-space correlation functions;
+- `output_cyl/mdens.dat`: momentum-space particle densities.
+
+Each table starts with a `#` header. Coordinate-space tables use cylindrical variables $(\xi_\rho,\xi_z)$, correlation functions $g$, and densities $\rho$. Momentum-space tables use $(\eta_\rho,\eta_z)$, correlation functions $f$, and densities $\varrho$. `expvals.txt`, `spinData.txt`, and `swapfile.dat` are ancillary calculation files.
+
+## Grid generation
+
+`create_cyl_grid.py` constructs `sample_cyl_ecg_grid.dat` as the tensor product of separately generated $\rho$ and $z$ axes. Edit `axis_values`, `axis_powers`, `rho_counts`, and `z_counts` in `main()` to change the piecewise grid. Counts are numbers of intervals, shared boundaries are emitted once, $\rho$ is nonnegative, and the positive $z$ axis is reflected to form an increasing signed axis. The supplied grid contains 92 $\rho$ points and 183 $z$ points, for 16,836 points in total, and extends to 48 a.u.
+
+The same two columns are interpreted as $(\xi_\rho,\xi_z)$ by `DENSITIES` and as $(\eta_\rho,\eta_z)$ by `MOMT_DENS`; all quantities are in atomic units. Re-running the script replaces `sample_cyl_ecg_grid.dat`, and re-running ECGPACK replaces the four requested tables. `create_radial_grid.py` remains available as an alternative generator, but no radial-grid output tables or plots are supplied in this example.
+
+## Plots
+
+The four gnuplot scripts read the cylindrical-grid tables in `output_cyl/` and write direct functions and axisymmetric, volume-weighted distributions to `cyl_plots/`:
+
+```bash
+gnuplot create_plots_coor_cf.gp
+gnuplot create_plots_coor_dens.gp
+gnuplot create_plots_mom_cf.gp
+gnuplot create_plots_mom_dens.gp
+```
+
+Only cylindrical-grid sample plots are provided. To read tables from another directory or write plots elsewhere, define the `output_dir` or `plot_dir` gnuplot variables.
+
+The plotting windows intentionally emphasize the significant, rapidly varying part of each function rather than its long, low-valued tail. The committed examples are in `cyl_plots/`.
+
+## Nuclear-density resolution
+
+Particle 1 is the finite-mass lithium nucleus. Its center-of-mass-frame density is extremely narrow compared with the electronic density, with a three-orders-of-magnitude difference in width. Thus, a highly resolved region within approximately $10^{-3}$ a.u. of the origin is necessary if the nuclear density is of interest.
+
+## Pointwise density and cylindrical distribution
+
+The direct density and the plotted cylindrical distribution are different quantities. The axisymmetric volume element contributes $2\pi\xi_{\rho}$, so $2\pi\xi_{\rho}\,\rho_i(\xi_{\rho},\xi_z)$ vanishes on the symmetry axis even when the pointwise density does not.

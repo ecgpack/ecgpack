@@ -800,7 +800,8 @@ contains
                                           Hkl, Skl, Tkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
                                           MVkl, drach_MVkl1, drach_MVkl2, Darwinkl, drach_Darwinkl, OOkl, rmrmkl, prvalkl, &
                                           NumCFGridPoints, CFGrid, &
-                                          CFkl, NumDensGridPoints, DensGrid, Denskl, AreCorrFuncNeeded, ArePartDensNeeded)
+                                          CFkl, NumDensGridPoints, DensGrid, Denskl, &
+                                          AreCorrFuncNeeded, ArePartDensNeeded, AreMCorrFuncNeeded, AreMomDensNeeded)
 
 !Arguments
     integer,intent(in)       :: m_k,m_l,mm_k,mm_l
@@ -818,6 +819,7 @@ contains
     real(wp),intent(out)  :: CFkl(Glob_n*(Glob_n+1)/2,NumCFGridPoints)
     real(wp),intent(out)  :: Denskl(Glob_n+1,NumDensGridPoints)
     logical,intent(in)       :: AreCorrFuncNeeded,ArePartDensNeeded
+    logical,intent(in)       :: AreMCorrFuncNeeded,AreMomDensNeeded
 
     integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
     integer,parameter :: nnp=nn*(nn+1)/2
@@ -836,10 +838,12 @@ contains
     real(wp)       W44b(nn,nn),W55b(nn,nn),W77b(nn,nn),temp444,temp4444,temp444b,temp4444b
     real(wp)       inv_tAkltvl(nn),tvkinv_tAkl(nn),tvkinv_tAkltAlM(nn),u1(nn)
     real(wp)       inv_tAkltbl(nn),tbkinv_tAkl(nn),tbkinv_tAkltAlM(nn),u11(nn)
+    real(wp)       inv_invtAkinvtAl(nn,nn),Zeta(nn+1,nn+1)
+    real(wp)       lambda_k1(nn+1),lambda_k2(nn+1),lambda_l1(nn+1),lambda_l2(nn+1)
     real(wp)       temp1,temp2,temp3,temp4,temp5,temp6,temp7,temp8,temp9,temp44
     real(wp)       temp55,temp66,temp55b,temp66b,temp44b,temp4b,temp5b,temp6b,temp1b,temp11b
     real(wp)       temp10,temp11,temp12,temp13,temp14,threshold,tr1, tr2, tr3, tr4,tr4vkvl,tr4bkbl,tr4bkvl,tr4vkbl
-    real(wp)       det_Lk, det_Ll, det_tAkl,tau1,tau2,tau3,inv_tau3 ,V2kl,tau22,tau33,m
+    real(wp)       det_Lk, det_Ll, det_tAkl,tau1,tau2,tau3,inv_tau3 ,V2kl,tau22,tau33,m,Ckl
     integer           i,j,k,t,indx,p,q
     real(wp)       TrAJ(nn,nn),sqrtTrAJ(nn,nn),TrAJAJ(nn,nn,nn,nn)
     real(wp)       jAj(nn,nn,nn,nn),jAtvl(nn,nn),tvkAj(nn,nn),Mass_For_Darwin(0:nn)
@@ -848,6 +852,7 @@ contains
     real(wp)   temp31,temp331,temp32,temp332,temp33,temp333,temp34,temp334,temp35,temp335,templast
     real(wp)   eta221(nn,nn),eta222(nn,nn),eta223(nn,nn),eta224(nn,nn),u111(nn)
     real(wp)   temp441,temp442,temp443,temp4440,temp4441,temp4442,h,term1,term2
+    real(wp)   chi3,chi33,chi333,chi334
     real(wp)   inv_tAkltAk(nn,nn),inv_tAkltAkM(nn,nn)
     real(wp)   inv_tAkltbk(nn),tvlinv_tAkl(nn),tvlinv_tAkltAkM(nn),tvlinv_tAkltAlM(nn)
     real(wp)   tbltbk(nn,nn),tvltvk(nn,nn),tbltvk(nn,nn),tvltbk(nn,nn)
@@ -1072,8 +1077,8 @@ contains
 !Evaluating overlap
 !temp1=abs(det_Ll*det_Lk)/det_tAkl
 !Skl=Glob_2Raised3n2*tau3*temp1*sqrt(temp1/(inv_Akk(m_k,m_k)*inv_All(m_l,m_l)))
-    temp1=FOUR*det_tAkl*sqrt(det_tAkl)
-    Skl=Glob_PiRaised3n2*m/temp1
+    Ckl=Glob_PiRaised3n2/(det_tAkl*sqrt(det_tAkl))
+    Skl=ONEFOURTH*Ckl*m
 
     do i=1,n
       temp1=ZERO
@@ -1659,27 +1664,34 @@ contains
 
 !Evaluation of correlation functions
     if (AreCorrFuncNeeded) then
-      temp1=Skl/(Glob_Pi*Glob_SqrtPi)
+      temp1=Ckl/(Glob_Pi*Glob_SqrtPi)
       p=0
       do i=1,n
         do j=i,n
           p=p+1
           temp2=temp1/(sqrtTrAJ(j,i)*TrAJ(j,i))
           temp3=-1/TrAJ(j,i)
-          temp4=2/TrAJ(j,i)
-          temp5=eta2(j,i)/(TrAJ(j,i)*tau3)
+!For the normalized Pe angular factor, Eq. (S44) is
+!R0*(M_Pe+K_Pe*xi_rho^2/(2*kappa^2)).
+          chi3=ONEHALF*(tau3-eta22(j,i)/TrAJ(j,i))
+          chi33=ONEHALF*(tau33-eta2(j,i)/TrAJ(j,i))
+          chi333=ONEHALF*(tau333-eta224(j,i)/TrAJ(j,i))
+          chi334=ONEHALF*(tau334-eta223(j,i)/TrAJ(j,i))
+          temp44b=chi3*chi33-chi333*chi334
+          temp55b=chi3*eta2(j,i)+chi33*eta22(j,i) &
+              -chi333*eta223(j,i)-chi334*eta224(j,i)
           do k=1,NumCFGridPoints
-            temp6=CFGrid(2,k)*CFGrid(2,k)         !this is \xi_z^2
-            temp7=temp6+CFGrid(1,k)*CFGrid(1,k)   !this is  \xi^2
-            temp8=ONE+(temp4*temp6-ONE)*temp5
-            CFkl(p,k)=temp2*temp8*exp(temp7*temp3)
+            temp4=CFGrid(1,k)*CFGrid(1,k)         !this is \xi_rho^2
+            temp5=CFGrid(2,k)*CFGrid(2,k)
+            temp6=temp4+temp5                     !this is \xi^2
+            CFkl(p,k)=temp2*(temp44b+temp4*temp55b/(TWO*TrAJ(j,i)*TrAJ(j,i)))*exp(temp6*temp3)
           enddo
         enddo
       enddo
     endif
 
     if (ArePartDensNeeded) then
-      temp1=Skl/(Glob_Pi*Glob_SqrtPi)
+      temp1=Ckl/(Glob_Pi*Glob_SqrtPi)
       do i=1,n+1
         temp2=ZERO
         do p=1,n
@@ -1694,15 +1706,155 @@ contains
           temp3=temp3+tvkinv_tAkl(p)*Glob_bvc(p,i)
           temp4=temp4+Glob_bvc(p,i)*inv_tAkltvl(p)
         enddo
-        temp5=temp3*temp4/(temp2*tau3)
-        temp6=-1/temp2
-        temp7=2/temp2
+        temp5=ZERO
+        temp6=ZERO
+        do p=1,n
+          temp5=temp5+tbkinv_tAkl(p)*Glob_bvc(p,i)
+          temp6=temp6+Glob_bvc(p,i)*inv_tAkltbl(p)
+        enddo
+!Use the same normalized Pe kernel with the center-of-mass density selector.
+        chi3=ONEHALF*(tau3-temp3*temp4/temp2)
+        chi33=ONEHALF*(tau33-temp5*temp6/temp2)
+        chi333=ONEHALF*(tau333-temp3*temp6/temp2)
+        chi334=ONEHALF*(tau334-temp5*temp4/temp2)
+        temp44b=chi3*chi33-chi333*chi334
+        temp55b=chi3*temp5*temp6+chi33*temp3*temp4 &
+            -chi333*temp5*temp4-chi334*temp3*temp6
+        temp7=-1/temp2
         temp8=temp1/(sqrt(temp2)*temp2)
         do k=1,NumDensGridPoints
-          temp9=DensGrid(2,k)*DensGrid(2,k)          !this is  \xi_z^2
-          temp10=temp9+DensGrid(1,k)*DensGrid(1,k)   !this is -\xi^2
-          temp11=ONE+(temp7*temp9-ONE)*temp5
-          Denskl(i,k)=temp8*temp11*exp(temp10*temp6)
+          temp9=DensGrid(1,k)*DensGrid(1,k)         !this is \xi_rho^2
+          temp10=temp9+DensGrid(2,k)*DensGrid(2,k)  !this is \xi^2
+          Denskl(i,k)=temp8*(temp44b+temp9*temp55b/(TWO*temp2*temp2))*exp(temp10*temp7)
+        enddo
+      enddo
+    endif
+
+!Evaluation of momentum-space correlation functions and particle densities.
+!For computational efficiency, we compute zeta=eta/4 and lambdas that are 2 times less than
+!those defined in the paper.  Products lambda_r*lambda_s/eta remain unchanged.
+    if (AreMCorrFuncNeeded.or.AreMomDensNeeded) then
+      !inv_invtAkinvtAl=(inv(tAk)+inv(tAl))^{-1}
+      !                =tAl-tAl*inv(tAkl)*tAl.
+      do i=1,n
+        do j=i,n
+          temp1=ZERO
+          do q=1,n
+            temp1=temp1+tAl(i,q)*inv_tAkltAl(q,j)
+          enddo
+          inv_invtAkinvtAl(i,j)=tAl(i,j)-temp1
+          inv_invtAkinvtAl(j,i)=inv_invtAkinvtAl(i,j)
+        enddo
+      enddo
+!Zeta(I,J)=a_I'*inv_invtAkinvtAl*a_J for physical-particle momentum selectors
+!a_1=-(1,...,1)' and a_I=e_(I-1), I=2,...,n+1.
+      Zeta(1,1)=ZERO
+      do i=1,n
+        temp1=ZERO
+        do j=1,n
+          Zeta(j+1,i+1)=inv_invtAkinvtAl(j,i)
+          temp1=temp1+inv_invtAkinvtAl(j,i)
+        enddo
+        Zeta(1,i+1)=-temp1
+        Zeta(i+1,1)=-temp1
+        Zeta(1,1)=Zeta(1,1)+temp1
+      enddo
+!The four angular-vector couplings use the independently permuted bra
+!and ket global vectors:
+! lambda_k1= tvk'*inv(tAkl)*tAl*a, lambda_k2= tbk'*inv(tAkl)*tAl*a,
+! lambda_l1=-tvl'*inv(tAkl)*tAk*a, lambda_l2=-tbl'*inv(tAkl)*tAk*a.
+      lambda_k1=ZERO
+      lambda_k2=ZERO
+      lambda_l1=ZERO
+      lambda_l2=ZERO
+      do i=1,n
+        temp1=ZERO
+        temp2=ZERO
+        temp3=ZERO
+        temp4=ZERO
+        do j=1,n
+          temp1=temp1+tvkinv_tAkl(j)*tAl(j,i)
+          temp2=temp2+tbkinv_tAkl(j)*tAl(j,i)
+          temp3=temp3-inv_tAkltvl(j)*tAk(j,i)
+          temp4=temp4-inv_tAkltbl(j)*tAk(j,i)
+        enddo
+        lambda_k1(i+1)=temp1
+        lambda_k2(i+1)=temp2
+        lambda_l1(i+1)=temp3
+        lambda_l2(i+1)=temp4
+        lambda_k1(1)=lambda_k1(1)-temp1
+        lambda_k2(1)=lambda_k2(1)-temp2
+        lambda_l1(1)=lambda_l1(1)-temp3
+        lambda_l2(1)=lambda_l2(1)-temp4
+      enddo
+    endif
+
+    if (AreMCorrFuncNeeded) then
+      temp1=Ckl/(EIGHT*Glob_Pi*Glob_SqrtPi)
+      p=0
+      do i=1,n
+        do j=i,n
+          p=p+1
+!Correlation function coefficients.
+          if (i==j) then
+            temp2=Zeta(1,1)+Zeta(i+1,i+1)-TWO*Zeta(1,i+1)
+            temp7=lambda_k1(1)-lambda_k1(i+1)
+            temp8=lambda_l1(1)-lambda_l1(i+1)
+            temp9=lambda_k2(1)-lambda_k2(i+1)
+            temp10=lambda_l2(1)-lambda_l2(i+1)
+          else
+            temp2=Zeta(i+1,i+1)+Zeta(j+1,j+1)-TWO*Zeta(i+1,j+1)
+            temp7=lambda_k1(i+1)-lambda_k1(j+1)
+            temp8=lambda_l1(i+1)-lambda_l1(j+1)
+            temp9=lambda_k2(i+1)-lambda_k2(j+1)
+            temp10=lambda_l2(i+1)-lambda_l2(j+1)
+          endif
+          if (temp2<=ZERO) then
+            write(*,'(1x,a,1x,i0)') 'Non-positive momentum correlation width on MPI rank',Glob_ProcID
+            call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+          endif
+!Assembly of the total matrix element.
+          chi3=ONEHALF*(tau3+temp7*temp8/temp2)
+          chi33=ONEHALF*(tau33+temp9*temp10/temp2)
+          chi333=ONEHALF*(tau333+temp7*temp10/temp2)
+          chi334=ONEHALF*(tau334+temp9*temp8/temp2)
+          temp44b=chi3*chi33-chi333*chi334
+          temp55b=chi3*temp9*temp10+chi33*temp7*temp8 &
+              -chi333*temp9*temp8-chi334*temp7*temp10
+          temp3=temp1/(temp2*sqrt(temp2))
+          do k=1,NumCFGridPoints
+            temp4=CFGrid(1,k)*CFGrid(1,k)
+            temp5=CFGrid(2,k)*CFGrid(2,k)
+            temp6=temp4+temp5
+            CFkl(p,k)=temp3*(temp44b-temp4*temp55b/(EIGHT*temp2*temp2))* &
+                       exp(-temp6/(FOUR*temp2))
+          enddo
+        enddo
+      enddo
+    endif
+
+    if (AreMomDensNeeded) then
+      temp1=Ckl/(EIGHT*Glob_Pi*Glob_SqrtPi)
+      do i=1,n+1
+        temp2=Zeta(i,i)
+        if (temp2<=ZERO) then
+          write(*,'(1x,a,1x,i0)') 'Non-positive momentum density width on MPI rank',Glob_ProcID
+          call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+        endif
+        chi3=ONEHALF*(tau3+lambda_k1(i)*lambda_l1(i)/temp2)
+        chi33=ONEHALF*(tau33+lambda_k2(i)*lambda_l2(i)/temp2)
+        chi333=ONEHALF*(tau333+lambda_k1(i)*lambda_l2(i)/temp2)
+        chi334=ONEHALF*(tau334+lambda_k2(i)*lambda_l1(i)/temp2)
+        temp44b=chi3*chi33-chi333*chi334
+        temp55b=chi3*lambda_k2(i)*lambda_l2(i)+chi33*lambda_k1(i)*lambda_l1(i) &
+            -chi333*lambda_k2(i)*lambda_l1(i)-chi334*lambda_k1(i)*lambda_l2(i)
+        temp3=temp1/(temp2*sqrt(temp2))
+        do k=1,NumDensGridPoints
+          temp4=DensGrid(1,k)*DensGrid(1,k)
+          temp5=DensGrid(2,k)*DensGrid(2,k)
+          temp6=temp4+temp5
+          Denskl(i,k)=temp3*(temp44b-temp4*temp55b/(EIGHT*temp2*temp2))* &
+                       exp(-temp6/(FOUR*temp2))
         enddo
       enddo
     endif

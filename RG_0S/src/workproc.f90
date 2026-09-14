@@ -111,7 +111,7 @@ contains
     integer        WorkInt(max(max(Glob_YOperatorStringLength,20),Glob_FileNameLength))
     real(wp),allocatable,dimension(:) :: WorkBuffReal
     integer,allocatable,dimension(:)     :: WorkBuffInt
-    integer        i,j,Line,j1,j2,j3,j4
+    integer        i,j,Line,j1,j2,j3,j4,j5,j6
     character(70)  ReadChar
     character(5)   ReadBasisType  !Basis type specifier from the optional BASIS_TYPE line
     character(256) ReadLine
@@ -454,6 +454,7 @@ contains
           !call writestring(6,Glob_BBOP(i)%FileName1,j1)
           !call writestring(6,Glob_BBOP(i)%FileName2,j2)
           !call writestring(6,Glob_BBOP(i)%FileName3,j3)
+          !call writestring(6,Glob_BBOP(i)%FileName4,j4)
           !call writestringadv(6,Glob_BBOP(i)%FileName4,j4)
         case('MOMT_DENS')
           read(1,*) Glob_BBOP(i)%Action(1:9),Glob_BBOP(i)%GSEPSolutionMethod, &
@@ -674,7 +675,7 @@ contains
     character(*)   FileName,Sort
     optional   ::  FileName,Sort
 !Local variables:
-    integer i,j,j1,j2,j3,j4
+    integer i,j,j1,j2,j3,j4,j5,j6
     logical SortNeeded
 
     if (Glob_ProcID==0) then
@@ -11610,8 +11611,8 @@ contains
   subroutine ExpectationValues(Action,SymmAdaptMethod,FileName1,FileName2,FileName3,FileName4,GSEPSolMethod)
 !ExpectationValues computes expectation values in the basis of
 !Glob_CurrBasisSize functions. Depending on the argument GSEPsolMethod,
-!it can use either LAPACK subroutine DSYGVX or the inverse iteration method to
-!solve GSEP.
+!it can use LAPACK subroutine DSYGVX, inverse iteration, or QR-based inverse
+!iteration to solve GSEP.
 !Input parameters:
 !  Action - defines the action that needs to be used. It can be either
 !  "DENSITIES" or "MOMT_DENS".
@@ -11645,7 +11646,7 @@ contains
     character(1)            ::    GSEPSolMethod
 
 !Local variables:
-    integer        i,j,k,kk,counter,a,b,c,d,a1,b1
+    integer        i,j,k,kk,l,ll,counter,a,b,c,d,a1,b1
     integer        n,np,npt,cbs
     integer        OpenFileErr,ErrorCode
     logical        IsSwapFileOK
@@ -11660,7 +11661,7 @@ contains
     real(wp)    temp1,temp2
     real(wp),allocatable,dimension(:,:)    ::  IdentityPerm
     real(wp)    beta,mu
-    logical        AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMPartDensNeeded
+    logical        AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMomDensNeeded
     logical        IsFile1OK,IsFile3OK
 
 !Local variables used to store temporary data
@@ -11673,7 +11674,7 @@ contains
     real(wp),allocatable,dimension(:)       :: DensGrid
     real(wp),allocatable,dimension(:,:)     :: Denskl
     real(wp),allocatable,dimension(:,:)     :: Dens
-    integer                                    :: NumOfCFAndDensExpVals
+    integer                                 :: NumOfCFAndDensExpVals
     real(wp),allocatable,dimension(:)       :: CFDMEkl_s
     real(wp),allocatable,dimension(:)       :: MEkl,MEkl_s
     real(wp)                                :: Hkl,Skl,Tkl,Vkl
@@ -11728,41 +11729,20 @@ contains
 
 !Setting logical variables that determine whether correlation
 !functions and particle densities need to be computed
+
+AreCorrFuncNeeded  = .false.
+ArePartDensNeeded  = .false.
+AreMCorrFuncNeeded = .false.
+AreMomDensNeeded   = .false.
+
     if(Action=='DENSITIES') then
-      if ((FileName1==' ').or.(FileName1=='none').or. &
-          (FileName1=='NONE').or.(FileName1=='None')) then
-        AreCorrFuncNeeded=.false.
-      else
-        AreCorrFuncNeeded=.true.
-        AreMCorrFuncNeeded=.false.
-      endif
-      if ((FileName3==' ').or.(FileName3=='none').or. &
-          (FileName3=='NONE').or.(FileName3=='None')) then
-        ArePartDensNeeded=.false.
-      else
-        ArePartDensNeeded=.true.
-        AreMPartDensNeeded=.false.
-      endif
-    else if(Action=='MOMT_DENS') then
-      if ((FileName1==' ').or.(FileName1=='none').or. &
-          (FileName1=='NONE').or.(FileName1=='None')) then
-        AreMCorrFuncNeeded=.false.
-      else
-        AreMCorrFuncNeeded=.true.
-        AreCorrFuncNeeded=.false.
-      endif
-      if ((FileName3==' ').or.(FileName3=='none').or. &
-          (FileName3=='NONE').or.(FileName3=='None')) then
-        AreMPartDensNeeded=.false.
-      else
-        AreMPartDensNeeded=.true.
-        ArePartDensNeeded=.false.
-      endif
-    else
-      AreCorrFuncNeeded=.false.
-      AreMCorrFuncNeeded=.false.
-      AreMPartDensNeeded=.false.
-      ArePartDensNeeded=.false.
+      if (.not.((FileName1==' ').or.(FileName1=='none').or.(FileName1=='NONE').or.(FileName1=='None'))) AreCorrFuncNeeded=.true.
+      if (.not.((FileName3==' ').or.(FileName3=='none').or.(FileName3=='NONE').or.(FileName3=='None'))) ArePartDensNeeded=.true.
+    endif
+
+    if(Action=='MOMT_DENS') then
+      if (.not.((FileName1==' ').or.(FileName1=='none').or.(FileName1=='NONE').or.(FileName1=='None'))) AreMCorrFuncNeeded=.true.
+      if (.not.((FileName3==' ').or.(FileName3=='none').or.(FileName3=='NONE').or.(FileName3=='None'))) AreMomDensNeeded=.true.
     endif
 !If correlation functions and/or particle densities are needed
 !then we open files FileName1 and FileName3 that contain grids for
@@ -11770,6 +11750,7 @@ contains
 
 !Here we determine the number of grid points for correlation
 !function calculation
+    NumCFGridPoints   = 0
     if (AreCorrFuncNeeded.or.AreMCorrFuncNeeded) then
       if (Glob_ProcID==0) then
         IsFile1OK=.true.
@@ -11806,9 +11787,10 @@ contains
       endif
     endif
 
-!Here we determine the number of grid points for particle density
+!Here we determine the number of grid points for density
 !calculations
-    if (ArePartDensNeeded.or.AreMPartDensNeeded) then
+    NumDensGridPoints = 0
+    if (ArePartDensNeeded.or.AreMomDensNeeded) then
       if (Glob_ProcID==0) then
         IsFile3OK=.true.
         open(1,file=FileName3,status='old',iostat=OpenFileErr)
@@ -11835,7 +11817,7 @@ contains
       endif
       call MPI_BCAST(IsFile3OK,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
       call MPI_BCAST(NumDensGridPoints,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-      !stop if there were problems with particle density grid file
+      !stop if there were problems with density grid file
       if (.not.IsFile3OK) then
         if (Glob_ProcID==0) then
           write(*,*) 'Error EC0199 in ExpectationValues: cannot open density grid file ',FileName3
@@ -11845,34 +11827,48 @@ contains
     endif
 
 !Allocate arrays that will be used to store grid points and the
-!function values for correlation function and particle density
+!function values for correlation function and density
 !calculations
 
     NumOfCFAndDensExpVals=0
 
     if (AreCorrFuncNeeded.or.AreMCorrFuncNeeded) then
       allocate(CFGrid(NumCFGridPoints))
-      NumOfCFAndDensExpVals=NumOfCFAndDensExpVals+NumCFGridPoints*n*(n+1)/2
+    else
+      allocate(CFGrid(1))
+    endif
+
+    if (AreCorrFuncNeeded.or.AreMCorrFuncNeeded) then
       allocate(CFkl(n*(n+1)/2,NumCFGridPoints))
-      allocate(CF(n*(n+1)/2,NumCFGridPoints))
     else
       !allocate just one element to have a valid pointer
-      allocate(CFGrid(1))
       allocate(CFkl(1,1))
     endif
 
-    if (ArePartDensNeeded.or.AreMPartDensNeeded) then
+    if (AreCorrFuncNeeded.or.AreMCorrFuncNeeded) then
+      NumOfCFAndDensExpVals=NumOfCFAndDensExpVals+NumCFGridPoints*n*(n+1)/2
+      allocate(CF(n*(n+1)/2,NumCFGridPoints))
+    endif
+
+    if (ArePartDensNeeded.or.AreMomDensNeeded) then
       allocate(DensGrid(NumDensGridPoints))
-      NumOfCFAndDensExpVals=NumOfCFAndDensExpVals+NumDensGridPoints*(n+1)
+    else
+      allocate(DensGrid(1))
+    endif
+
+    if (ArePartDensNeeded.or.AreMomDensNeeded) then
       allocate(Denskl(n+1,NumDensGridPoints))
-      allocate(Dens(n+1,NumDensGridPoints))
     else
       !allocate just one element to have a valid pointer
-      allocate(DensGrid(1))
       allocate(Denskl(1,1))
     endif
 
-    if((AreCorrFuncNeeded.or.AreMCorrFuncNeeded).or.(ArePartDensNeeded.or.AreMPartDensNeeded)) then
+    if (ArePartDensNeeded.or.AreMomDensNeeded) then
+      NumOfCFAndDensExpVals=NumOfCFAndDensExpVals+NumDensGridPoints*(n+1)
+      allocate(Dens(n+1,NumDensGridPoints))
+    endif
+
+    if(AreCorrFuncNeeded.or.ArePartDensNeeded.or.AreMCorrFuncNeeded.or.AreMomDensNeeded) then
       allocate(CFDMEkl_s(NumOfCFAndDensExpVals))
     endif
 
@@ -11888,7 +11884,7 @@ contains
       endif
       call MPI_BCAST(CFGrid,NumCFGridPoints,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
     endif
-    if (ArePartDensNeeded.or.AreMPartDensNeeded) then
+    if (ArePartDensNeeded.or.AreMomDensNeeded) then
       if (Glob_ProcID==0) then
         open(1,file=FileName3,status='old')
         do i=1,NumDensGridPoints
@@ -12212,7 +12208,7 @@ contains
 
 !main loop
     MEkl_s(1:NumOfExpcVals)=ZERO
-    if (AreCorrFuncNeeded.or.AreMCorrFuncNeeded.or.ArePartDensNeeded.or.AreMPartDensNeeded) CFDMEkl_s(1:NumOfCFAndDensExpVals)=ZERO
+    if (allocated(CFDMEkl_s))  CFDMEkl_s  = ZERO
     counter=0
     do i=1,cbs
       do j=1,i  !j=1,i
@@ -12229,7 +12225,7 @@ contains
                                              IdentityPerm,Glob_YHYMatr(1:n,1:n,k),Hkl,Skl,Tkl,Vkl,rm2kl,rmkl,rkl,r2kl,          &
                            deltarkl,drach_deltarkl,MVkl,drach_MVkl1,drach_MVkl2,drach_MVkl3,Darwinkl,drach_Darwinkl,OOkl,rmrmkl,   &
                                              del2kl,prvalkl,wf2originkl,NumCFGridPoints,CFGrid,CFkl,NumDensGridPoints,DensGrid, &
-                                             Denskl,AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMPartDensNeeded)
+                                             Denskl,AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMomDensNeeded)
               c=0
               do a=1,n
                 do b=a,n
@@ -12341,7 +12337,7 @@ contains
               endif
 
               c=0
-              if (AreCorrFuncNeeded.or.AreMCorrFuncNeeded) then
+              if (AreCorrFuncNeeded) then
                 do a=1,NumCFGridPoints
                   do b=1,n*(n+1)/2
                     c=c+1
@@ -12349,7 +12345,25 @@ contains
                   enddo
                 enddo
               endif
-              if (ArePartDensNeeded.or.AreMPartDensNeeded) then
+              if (ArePartDensNeeded) then
+                do a=1,NumDensGridPoints
+                  do b=1,n+1
+                    c=c+1
+                    CFDMEkl_s(c)=CFDMEkl_s(c)+factor*Glob_YHYCoeff(k)*Denskl(b,a)
+                  enddo
+                enddo
+              endif
+
+              c=0
+              if (AreMCorrFuncNeeded) then
+                do a=1,NumCFGridPoints
+                  do b=1,n*(n+1)/2
+                    c=c+1
+                    CFDMEkl_s(c)=CFDMEkl_s(c)+factor*Glob_YHYCoeff(k)*CFkl(b,a)
+                  enddo
+                enddo
+              endif
+              if (AreMomDensNeeded) then
                 do a=1,NumDensGridPoints
                   do b=1,n+1
                     c=c+1
@@ -12369,7 +12383,7 @@ contains
                                                Glob_YMatr(1:n,1:n,k),Glob_YMatr(1:n,1:n,kk),Hkl,Skl,Tkl,Vkl,rm2kl,rmkl,rkl,r2kl,  &
                             deltarkl,drach_deltarkl,MVkl,drach_MVkl1,drach_MVkl2,drach_MVkl3,Darwinkl,drach_Darwinkl,OOkl,rmrmkl,  &
                                                del2kl,prvalkl,wf2originkl,NumCFGridPoints,CFGrid,CFkl,NumDensGridPoints,DensGrid, &
-                                               Denskl,AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMPartDensNeeded)
+                                               Denskl,AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMomDensNeeded)
                 c=0
                 do a=1,n
                   do b=a,n
@@ -12442,7 +12456,7 @@ contains
                 enddo
 
                 c=0
-                if (AreCorrFuncNeeded.or.AreMCorrFuncNeeded) then
+                if (AreCorrFuncNeeded) then
                   do a=1,NumCFGridPoints
                     do b=1,n*(n+1)/2
                       c=c+1
@@ -12450,7 +12464,25 @@ contains
                     enddo
                   enddo
                 endif
-                if (ArePartDensNeeded.or.AreMPartDensNeeded) then
+                if (ArePartDensNeeded) then
+                  do a=1,NumDensGridPoints
+                    do b=1,n+1
+                      c=c+1
+                      CFDMEkl_s(c)=CFDMEkl_s(c)+factor*Glob_YCoeff(k)*Glob_YCoeff(kk)*Denskl(b,a)
+                    enddo
+                  enddo
+                endif
+
+                c=0
+                if (AreMCorrFuncNeeded) then
+                  do a=1,NumCFGridPoints
+                    do b=1,n*(n+1)/2
+                      c=c+1
+                      CFDMEkl_s(c)=CFDMEkl_s(c)+factor*Glob_YCoeff(k)*Glob_YCoeff(kk)*CFkl(b,a)
+                    enddo
+                  enddo
+                endif
+                if (AreMomDensNeeded) then
                   do a=1,NumDensGridPoints
                     do b=1,n+1
                       c=c+1
@@ -12473,16 +12505,33 @@ contains
       call MPI_ALLREDUCE(temp1,temp2,1,MPI_WP,MPI_SUM,MPI_COMM_WORLD,Glob_MPIErrCode)
       MEkl_s(a)=temp2
     enddo
-    k=0
-    if (AreCorrFuncNeeded.or.AreMCorrFuncNeeded) then
-      k=NumCFGridPoints*n*(n+1)/2
-      call MPI_ALLREDUCE(CFDMEkl_s,CF,k,MPI_WP,MPI_SUM,MPI_COMM_WORLD,Glob_MPIErrCode)
-    endif
-    if (ArePartDensNeeded.or.AreMPartDensNeeded) then
-      kk=NumDensGridPoints*(n+1)
-      call MPI_ALLREDUCE(CFDMEkl_s(k+1:k+kk),Dens,kk,MPI_WP,MPI_SUM,MPI_COMM_WORLD,Glob_MPIErrCode)
+
+    ! Combining coordinate-space results
+    k  = 0
+    kk = 0
+    if (AreCorrFuncNeeded) then
+        k = NumCFGridPoints*n*(n+1)/2
+        call MPI_ALLREDUCE(CFDMEkl_s(1:k), CF, k, MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
     endif
 
+    if (ArePartDensNeeded) then
+        kk = NumDensGridPoints*(n+1)
+        call MPI_ALLREDUCE(CFDMEkl_s(k+1:k+kk), Dens, kk, MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
+    endif
+
+    ! Combining momentum-space results
+    l  = 0
+    ll = 0
+    if (AreMCorrFuncNeeded) then
+        l = NumCFGridPoints*n*(n+1)/2
+        call MPI_ALLREDUCE(CFDMEkl_s(1:l), CF, l, MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
+    endif
+    if (AreMomDensNeeded) then
+        ll = NumDensGridPoints*(n+1)
+        call MPI_ALLREDUCE(CFDMEkl_s(l+1:l+ll), Dens, ll, MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
+    endif
+
+    !Combining spin dependent results
     if (spinDependentValuesNeeded == 1) then
       do c = 1, numberOfSpinFunctions
         do a = 1, n
@@ -13128,7 +13177,7 @@ contains
       close(2)
 
       !Saving correlation functions
-      if (AreCorrFuncNeeded.or.AreMCorrFuncNeeded) then
+      if (AreCorrFuncNeeded) then
         open(1,file=FileName2,status='replace')
         !first we print titles of all data columns
         write(1,'(10x,a2,1x)',advance='no') '#r'
@@ -13169,8 +13218,50 @@ contains
         write(*,*)
       endif
 
+      !Saving momentum correlation functions
+      if (AreMCorrFuncNeeded) then
+        open(1,file=FileName2,status='replace')
+        !first we print titles of all data columns
+        write(1,'(9x,a4)',advance='no') '#eta'
+        do i=1,Glob_NumOfNoneqvPairSets
+          a=Glob_EqvPairList(1,1,i)
+          b=Glob_EqvPairList(2,1,i)
+          if (a>b) then
+            c=a; a=b; b=c
+          endif
+          if (a==b) then
+            write(1,'(21x,a1,i1,1x)',advance='no') 'f',a
+          else
+            write(1,'(21x,a1,i1,i1)',advance='no') 'f',a,b
+          endif
+        enddo
+        write(1,*)
+        !then we print the data columns themselves
+        do kk=1,NumCFGridPoints
+          write(1,'(1x,e23.16)',advance='no') CFGrid(kk)
+          do i=1,Glob_NumOfNoneqvPairSets
+            mu=ZERO
+            k=Glob_NumOfPairsInEqvPairSet(i)
+            do j=1,k
+              a=Glob_EqvPairList(1,j,i)
+              b=Glob_EqvPairList(2,j,i)
+              if (a>b) then
+                c=a; a=b; b=c
+              endif
+              mu=mu+CF(b-(a-1)*(a-2*n)/2,kk)
+            enddo
+            write(1,'(1x,e23.16)',advance='no') mu/k
+          enddo
+          write(1,*)
+        enddo
+        close(1)
+        i=len_trim(FileName2)
+        write(*,*) 'Momentum correlation functions have been stored in file',FileName2(1:i)
+        write(*,*)
+      endif
+
       !Saving particle densities
-      if (ArePartDensNeeded.or.AreMPartDensNeeded) then
+      if (ArePartDensNeeded) then
         open(1,file=FileName4,status='replace')
         !first we print titles of all data columns
         write(1,'(10x,a2,2x)',advance='no') '#r'
@@ -13197,6 +13288,33 @@ contains
         write(*,*)
       endif
 
+      !Saving momentum particle densities
+      if (AreMomDensNeeded) then
+        open(1,file=FileName4,status='replace')
+        !first we print titles of all data columns
+        write(1,'(9x,a4)',advance='no') '#eta'
+        do i=1,Glob_NumOfIdentPartSets
+          write(1,'(17x,a6,i1)',advance='no') 'varrho',Glob_IdentPartList(1,i)
+        enddo
+        write(1,*)
+        !then we print the data columns themselves
+        do kk=1,NumDensGridPoints
+          write(1,'(1x,e23.16)',advance='no') DensGrid(kk)
+          do i=1,Glob_NumOfIdentPartSets
+            mu=ZERO
+            k=Glob_NumOfPartInIdentPartSet(i)
+            do j=1,k
+              mu=mu+Dens(Glob_IdentPartList(j,i),kk)
+            enddo
+            write(1,'(1x,e23.16)',advance='no') mu/k
+          enddo
+          write(1,*)
+        enddo
+        close(1)
+        i=len_trim(FileName4)
+        write(*,*) 'Momentum densities have been stored in file',FileName4(1:i)
+        write(*,*)
+      endif
     endif
 
 !deallocate local arrays
@@ -13257,13 +13375,13 @@ contains
     deallocate(Glob_S)
     deallocate(Glob_H)
 
-    if((AreCorrFuncNeeded.or.AreMCorrFuncNeeded).or.(ArePartDensNeeded.or.AreMPartDensNeeded)) then
+    if(AreCorrFuncNeeded.or.ArePartDensNeeded.or.AreMCorrFuncNeeded.or.AreMomDensNeeded) then
       deallocate(CFDMEkl_s)
     endif
 
     deallocate(DensGrid)
     deallocate(Denskl)
-    if (ArePartDensNeeded.or.AreMPartDensNeeded) deallocate(Dens)
+    if (ArePartDensNeeded.or.AreMomDensNeeded) deallocate(Dens)
     deallocate(CFGrid)
     deallocate(CFkl)
     if (AreCorrFuncNeeded.or.AreMCorrFuncNeeded) deallocate(CF)

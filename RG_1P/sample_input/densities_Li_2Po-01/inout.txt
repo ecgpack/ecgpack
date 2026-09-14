@@ -15,7 +15,8 @@
  ==============================
     100 -0.7409341827026370E+01     10      0      0
  ==============================
- DENSITIES I 100 cf_grid.dat cf.dat dens_grid.dat dens.dat
+ DENSITIES I 100 sample_cyl_ecg_grid.dat cf.dat sample_cyl_ecg_grid.dat dens.dat
+ MOMT_DENS I 100 sample_cyl_ecg_grid.dat mcf.dat sample_cyl_ecg_grid.dat mdens.dat
  ==============================
       1 -0.3396167371169315E+01      0      0      0
       2 -0.6322097914157797E+01      0      0      0
