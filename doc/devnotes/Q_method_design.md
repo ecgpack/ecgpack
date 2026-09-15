@@ -556,21 +556,21 @@ the routines required by both ECGPACK and qrlinalg. Optimized precision-8
 providers resolve both call sets externally. Precisions 10 and 16 require the
 bundled generic provider.
 
-Serial objects use `debug/` or `release/`. `OPENMP=1` uses isolated
+Serial objects use `debug/` or `release/`. `OPENMP=yes` uses isolated
 `debug-omp/` or `release-omp/` trees so incompatible objects cannot be reused.
 
 Example direct build:
 
 ```bash
 make -C RG_0S release COMPILER=gfortran MACHINE=linux-generic \
-  PREC=8 LINALG=netlib OPENMP=1 EXEFILE=ecg
+  PREC=8 LINALG=netlib OPENMP=yes EXEFILE=ecg
 ```
 
 Example batch build:
 
 ```bash
 ./build.bash machine=linux-generic toolchain=systemdefault config=release \
-  code=RG_0S nparticles=4 precision=8 linalg=netlib openmp=1
+  code=RG_0S nparticles=4 precision=8 linalg=netlib openmp=yes
 ```
 
 The bundled QR-update kernels come from Martin Köhler's `qrupdate-ng`:

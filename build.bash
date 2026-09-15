@@ -7,7 +7,7 @@ usage_print() {
   echo "Missing arguments or invalid arguments."
   echo ""  
   echo "PROPER USAGE:"
-  echo "$0 machine=<machinename> toolchain=<toolchainnames> config=<confignames> code=<codenames> nparticles=<nparticles> precision=<precisions> linalg=<linalgnames> openmp=<0,1>"
+  echo "$0 machine=<machinename> toolchain=<toolchainnames> config=<confignames> code=<codenames> nparticles=<nparticles> precision=<precisions> linalg=<linalgnames> openmp=<openmpflags>"
   echo ""
   echo "NOTE:"
   echo "All arguments are optional except nparticles. If multiple values are specified for an argument, they must be separated by a comma."
@@ -21,7 +21,7 @@ usage_print() {
   echo "<nparticles> defines for how many particles each code must be build for. There is no default value. This argument must be present."
   echo "<precisions> is the kind parameter for real type. 8 corresponds to double precision (fp64), 10 corresponds to extended precision (fp80), 16 corresponds to quadruple precision. Different compilers/toolchain support different kinds. For example, Intel compilers supports only 8 and 16, while modern GNU compilers support 8, 10, and 16. The default value is 8."
   echo "<linalgnames> specifies which BLAS/LAPACK implementation to link against. Possible values are: netlib (default; non-optimized reference BLAS/LAPACK built from the bundled source), mkl (Intel Math Kernel Library), lblas (optimized BLAS/LAPACK exposed through the -lblas/-llapack symbolic links), openblas (OpenBLAS), and aocl (AMD AOCL-BLAS and AOCL-LAPACK). For precision=10 and precision=16 only netlib is available, so any other value is skipped because optimized BLAS/LAPACK is unavailable for these two precisions."
-  echo "<0,1> selects serial or OpenMP builds. The default is 0. Multiple values may be requested as openmp=0,1. OpenMP is currently supported by RG_0S, RG_1P, RG_2D, and RG_2P. OpenMP binaries are stored under a debug-omp or release-omp output directory."
+  echo "<openmpflags> selects serial (no) or OpenMP (yes) builds. The default is no. Multiple values may be requested as openmp=no,yes. OpenMP is currently supported by RG_0S, RG_1P, RG_2D, and RG_2P. OpenMP binaries are stored in the same debug or release output directory as the serial ones, but their file name carries an additional _omp suffix."
   echo "" 
   echo "Supported toolchains on different machines are listed below."
   echo ""   
@@ -54,7 +54,7 @@ usage_print() {
   echo ""  
   echo "EXECUTION EXAMPLES:"
   echo ""  
-  echo "    $0 machine=linux-generic toolchain=foss-2025b config=release code=RG_0S,RG_1P,RG_2D,RG_2P nparticles=3,4,5,6,7,8 precision=8,10,16 linalg=netlib openmp=1"
+  echo "    $0 machine=linux-generic toolchain=foss-2025b config=release code=RG_0S,RG_1P,RG_2D,RG_2P nparticles=3,4,5,6,7,8 precision=8,10,16 linalg=netlib openmp=yes"
   echo ""
   echo "    $0 machine=linux-generic toolchain=foss-2025a config=release code=RG_0S,RG_1P,RG_2D,RG_2P,RG_0S-1P,RG_1P-2D,RG_1P-2P,RG_0S-2D,RG_0S-2P,RG_1P-1P,RG_2D-2D,RG_2P-2D,RG_2P-2P nparticles=3,4,5,6,7,8 precision=8 linalg=openblas"
   echo ""
@@ -81,7 +81,7 @@ code="RG_0S, RG_1P, RG_2D, RG_2P, RG_0S-1P, RG_1P-2D, RG_1P-2P, RG_0S-2D, RG_0S-
 nparticles=""
 precision="8"
 linalg="netlib"
-openmp="0"
+openmp="no"
 
 # Parse the arguments
 for arg in "$@"; do
@@ -174,7 +174,7 @@ done
 
 # Check if OpenMP selection is set properly
 for openmp_value in ${openmp_list[@]}; do
-  if [[ " 0 1 " != *" $openmp_value "* ]]; then
+  if [[ " no yes " != *" $openmp_value "* ]]; then
     echo "ERROR, WRONG VALUE(S) OF ARGUMENT: openmp"
     usage_print
     exit 1
@@ -319,22 +319,27 @@ for toolchain_value in ${toolchain_list[@]}; do
             # four real-ECG energy codes currently provide OPENMP-aware
             # Makefiles; skip unsupported code/OpenMP combinations explicitly.
             for openmp_value in ${openmp_list[@]}; do
-            if [[ "$openmp_value" = "1" && " RG_0S RG_1P RG_2D RG_2P " != *" $code_value "* ]]; then
-              echo "Skipping code=$code_value with openmp=1: its Makefile does not support OpenMP builds."
+            if [[ "$openmp_value" = "yes" && " RG_0S RG_1P RG_2D RG_2P " != *" $code_value "* ]]; then
+              echo "Skipping code=$code_value with openmp=yes: its Makefile does not support OpenMP builds."
               continue
             fi
-            openmp_suffix=""
-            if [[ "$openmp_value" = "1" ]]; then
-              openmp_suffix="-omp"
+            # The Makefile places OpenMP build artifacts in a separate <config>-omp
+            # directory, but the resulting binaries are stored together with the
+            # serial ones and are distinguished by an _omp suffix in their name.
+            openmp_builddir_suffix=""
+            openmp_binary_suffix=""
+            if [[ "$openmp_value" = "yes" ]]; then
+              openmp_builddir_suffix="-omp"
+              openmp_binary_suffix="_omp"
             fi
-            binsubdirname=${bindirname}/${machinedirname}${toolchain_value}/${config_value}${openmp_suffix}
+            binsubdirname=${bindirname}/${machinedirname}${toolchain_value}/${config_value}
             binaryfilename=${code_value}_N${nparticles_value}_P${precision_value}
             # For precision=10 and precision=16 only netlib is available, so skip any other linalg value
             if [[ "$precision_value" != "8" && "$linalg_value" != "netlib" ]]; then
               continue
             fi
             # Always add the linalg value as a suffix to the binary file name
-            binaryfilename=${binaryfilename}_${linalg_value}
+            binaryfilename=${binaryfilename}_${linalg_value}${openmp_binary_suffix}
             echo ""
             echo "════════════════════════ Starting a new build ═════════════════════════"
             echo "machine="$machine "   toolchain="$toolchain_value "   config="$config_value
@@ -363,7 +368,7 @@ for toolchain_value in ${toolchain_list[@]}; do
               echo "═════════════════════ Build finished succesfully ══════════════════════"
               # Copy the code to the bin directory
               mkdir -p ../${binsubdirname}
-              mv ${config_value}${openmp_suffix}/ecg ../${binsubdirname}/${binaryfilename}
+              mv ${config_value}${openmp_builddir_suffix}/ecg ../${binsubdirname}/${binaryfilename}
               counter_successful_builds=$((counter_successful_builds+1))
             else
               echo "════════════════════════════ Build failed ═════════════════════════════"

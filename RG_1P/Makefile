@@ -2,7 +2,7 @@
 # This is a Makefile to compile an ECGPACK code. Here are some examples of compilations
 # with this Makefile:
 #    make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=openblas EXEFILE=ecg
-#    make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib OPENMP=1 EXEFILE=ecg
+#    make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib OPENMP=yes EXEFILE=ecg
 #    make release COMPILER=gfortran MACHINE=ubuntu-generic PREC=8 LINALG=lblas EXEFILE=ecg
 #    make debug COMPILER=gfortran MACHINE=irgetas PREC=10 LINALG=netlib EXEFILE=ecg
 #    make release COMPILER=ifort MACHINE=puma PREC=8 LINALG=mkl EXEFILE=ecg
@@ -49,14 +49,14 @@ LINALG=netlib
 # existing serial build remains the default. OpenMP and serial objects use
 # different directories; changing OPENMP therefore cannot silently reuse
 # objects compiled with incompatible flags.
-# Supported values: 0 (serial, default), 1 (OpenMP).
-OPENMP ?= 0
+# Supported values: no (serial, default), yes (OpenMP).
+OPENMP ?= no
 
-ifneq ($(OPENMP),$(filter $(OPENMP),0 1))
-  $(error OPENMP must be 0 or 1)
+ifneq ($(OPENMP),$(filter $(OPENMP),no yes))
+  $(error OPENMP must be no or yes)
 endif
 
-OPENMP_SUFFIX := $(if $(filter 1,$(OPENMP)),-omp)
+OPENMP_SUFFIX := $(if $(filter yes,$(OPENMP)),-omp)
 BUILD_DIR := $(CONFIG)$(OPENMP_SUFFIX)
 
 # Set the default name for the generated executable file
@@ -183,7 +183,7 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
     endif
   endif
 
-  ifeq ($(OPENMP), 1)
+  ifeq ($(OPENMP), yes)
     export FCFLAGS+=$(OPENMP_FLAG)
     export LINKFLAGS+=$(OPENMP_FLAG)
   endif

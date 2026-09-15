@@ -26,7 +26,7 @@ Most codes ship with a `sample_input/` subdirectory of worked examples — the f
 The canonical entry point is `build.bash` in the root directory — run it with no arguments for full usage. It loops over toolchains/configs/codes/precisions/linalg choices, builds via each code's Makefile, and stores binaries in `bin/<toolchain>/<config>/<CODE>_N<nparticles>_P<precision>_<linalg>` (the `<linalg>` suffix is always present — e.g. `_netlib`, `_mkl`, `_openblas`). The `nparticles` argument is required. The `linalg` argument (see below) takes one of `netlib` (default), `mkl`, `lblas`, `openblas`, `aocl`; for `precision=10`/`16` only `netlib` is built (other values are skipped).
 
 ```bash
-./build.bash machine=ubuntu-generic toolchain=systemdefault config=release code=RG_0S nparticles=4 precision=8 openmp=0
+./build.bash machine=ubuntu-generic toolchain=systemdefault config=release code=RG_0S nparticles=4 precision=8 openmp=no
 ```
 
 To build a single code directly, invoke its Makefile (this is what `build.bash` calls under the hood):
@@ -34,7 +34,7 @@ To build a single code directly, invoke its Makefile (this is what `build.bash` 
 ```bash
 cd RG_0S
 make release COMPILER=gfortran MACHINE=ubuntu-generic PREC=8 LINALG=openblas EXEFILE=ecg
-make release COMPILER=gfortran MACHINE=ubuntu-generic PREC=8 LINALG=openblas OPENMP=1 EXEFILE=ecg
+make release COMPILER=gfortran MACHINE=ubuntu-generic PREC=8 LINALG=openblas OPENMP=yes EXEFILE=ecg
 make debug   COMPILER=gfortran MACHINE=ubuntu-generic PREC=8 LINALG=netlib   EXEFILE=ecg
 make clean   # also: cleaner, cleanest, cleanrelease, cleandebug
 ```
@@ -44,7 +44,7 @@ Key build parameters:
 - `CONFIG` (`release`/`debug`) — set by the `make release`/`make debug` target. `release` uses `-O3 -march=native`; `debug` enables bounds/uninit/FPE checks. Object and `.mod` files go in `release/` or `debug/`.
 - `PREC` — real `kind`: `8` (double/fp64), `10` (extended/fp80, GNU only), `16` (quadruple). Selects which `src/wp_def_<PREC>.f90` is compiled.
 - `LINALG` — selects which BLAS/LAPACK implementation to link against (default `netlib`). `netlib` compiles the bundled, lightly modified reference `src/BLAS.f`/`src/LAPACK.f` and adds no extra link flags; `mkl` (Intel MKL — compiler-dependent `-lmkl_*` flags), `lblas` (`-llapack -lblas`), `openblas` (`-lopenblas`), and `aocl` (AMD AOCL `-lflame -lblis …`) instead link an external optimized library and skip the bundled sources. Only `PREC=8` honors the optimized choices; for `PREC=10`/`16` only `LINALG=netlib` is supported (any other value leaves the build unsupported). In the off-diagonal codes `LINALG` is accepted but a no-op (they link no BLAS/LAPACK). The bundled `src/BLAS.f`/`src/LAPACK.f` and the `BARE_OBJS_LPKBLS` object list are compiled only when `LINALG=netlib`.
-- `OPENMP` (`0`/`1`) — enables compiler OpenMP flags in the four real-ECG energy codes. OpenMP objects are isolated in `debug-omp/` or `release-omp/`; every MPI rank may create its own OpenMP thread team.
+- `OPENMP` (`no`/`yes`) — enables compiler OpenMP flags in the four real-ECG energy codes. OpenMP objects are isolated in `debug-omp/` or `release-omp/`; every MPI rank may create its own OpenMP thread team.
 - `COMPILER` (`gfortran`→`mpif90`, `ifort`→`mpiifort`, `ifx`→`mpiifx`, `nvfortran`→`mpif90`) and `MACHINE` select compiler flags. Supported machines are hardcoded in both `build.bash` and the Makefiles; adding a machine means editing both.
 
 Note: the **number of particles is compiled in**, not a runtime argument. `build.bash` does an in-place `sed` on `src/wp_def_<PREC>.f90` to set `Glob_AllowedNumOfParticles`, builds, then restores the original from `wp_def_temporary.f90`. A binary built for N particles rejects input files with a different particle count.

@@ -63,7 +63,7 @@ Root files of interest:
 The preferred batch build entry point is the root script:
 
 ```bash
-./build.bash machine=linux-generic toolchain=systemdefault config=release code=RG_0S nparticles=4 precision=8 linalg=netlib openmp=0
+./build.bash machine=linux-generic toolchain=systemdefault config=release code=RG_0S nparticles=4 precision=8 linalg=netlib openmp=no
 ```
 
 Run `./build.bash` with no arguments to see its usage. It loops over requested toolchains, configurations, codes, particle counts, precisions, and linear-algebra choices, then places binaries under:
@@ -79,12 +79,12 @@ To build a single code directly, use its Makefile:
 ```bash
 cd RG_0S
 make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=openblas EXEFILE=ecg
-make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=openblas OPENMP=1 EXEFILE=ecg
+make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=openblas OPENMP=yes EXEFILE=ecg
 make debug   COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib   EXEFILE=ecg
 make clean
 ```
 
-The Makefiles also provide `cleaner`, `cleanest`, `cleanrelease`, and `cleandebug`. Object and module files are written under `release/` or `debug/`; the four real-ECG energy codes use separate `release-omp/` or `debug-omp/` trees when `OPENMP=1`.
+The Makefiles also provide `cleaner`, `cleanest`, `cleanrelease`, and `cleandebug`. Object and module files are written under `release/` or `debug/`; the four real-ECG energy codes use separate `release-omp/` or `debug-omp/` trees when `OPENMP=yes`.
 
 Common Makefile parameters:
 

@@ -30,10 +30,10 @@ The four real-ECG energy codes (`RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`) also pro
 
 ```bash
 cd RG_0S
-make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib OPENMP=1 EXEFILE=ecg
+make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib OPENMP=yes EXEFILE=ecg
 ```
 
-`OPENMP=0` is the default. Serial objects and executables are written under `debug/` or `release/`; OpenMP builds use `debug-omp/` or `release-omp/`. The executable name itself is not changed, so the command above produces `release-omp/ecg`.
+`OPENMP=no` is the default. Serial objects and executables are written under `debug/` or `release/`; OpenMP builds use `debug-omp/` or `release-omp/`. The executable name itself is not changed, so the command above produces `release-omp/ecg`.
 
 Note that even though the option `COMPILER` here specifies a Fortran compiler name, what is actually called under the hood is the corresponding MPI wrapper (`mpif90`, `mpiifort`, etc).  
 
@@ -109,7 +109,7 @@ The number of particles is hardcoded in files `src/wp_def_*.f90` (here `*` stand
 
 ### Batch compilation of multiple code variants
 
-The easiest way to compile all or some number of selected codes (basis type, number of particles, precisions, external libraries, etc.) in **one step** on a specific machine/OS using specific toolchains is to invoke the `build.bash` script located in the root directory. This script requires arguments. **Please read its source or run it with no arguments** to see instructions regarding how to run it properly. When this script is run, it will automatically move all individual binaries built to directory `ecgpack/bin/<toolchainname>/<configuration>`, where `<toolchainname>` (e.g. `systemdefault`) is the name of the toolchain specified and `<configuration>` is `debug` or `release` for a serial build and `debug-omp` or `release-omp` for an OpenMP build. The binary files are named `<code_name>_N<particle_number>_P<precision>_<linalg>` (e.g. `RG_0S_N4_P8_netlib` for `RG_0S`, 4 particles, double precision, and bundled netlib BLAS/LAPACK). The `<linalg>` suffix identifies the selected linear algebra library (`netlib`, `mkl`, `lblas`, `openblas`, or `aocl`) and is always present.
+The easiest way to compile all or some number of selected codes (basis type, number of particles, precisions, external libraries, etc.) in **one step** on a specific machine/OS using specific toolchains is to invoke the `build.bash` script located in the root directory. This script requires arguments. **Please read its source or run it with no arguments** to see instructions regarding how to run it properly. When this script is run, it will automatically move all individual binaries built to directory `ecgpack/bin/<toolchainname>/<configuration>`, where `<toolchainname>` (e.g. `systemdefault`) is the name of the toolchain specified and `<configuration>` is `debug` or `release`. Serial and OpenMP binaries are stored side by side in the same directory. The binary files are named `<code_name>_N<particle_number>_P<precision>_<linalg>` (e.g. `RG_0S_N4_P8_netlib` for `RG_0S`, 4 particles, double precision, and bundled netlib BLAS/LAPACK). The `<linalg>` suffix identifies the selected linear algebra library (`netlib`, `mkl`, `lblas`, `openblas`, or `aocl`) and is always present. OpenMP builds carry an additional `_omp` suffix at the end of the file name (e.g. `RG_0S_N4_P8_netlib_omp`).
 
 An example of executing the `build.bash` script to build production (optimized) binaries for `RG_0S` and `RG_1P` codes using double and extended precision and bundled BLAS/LAPACK source for the case of 4, 5, and 6 particles:
 
@@ -117,13 +117,13 @@ An example of executing the `build.bash` script to build production (optimized) 
 ./build.bash machine=linux-generic toolchain=systemdefault config=release code=RG_0S,RG_1P nparticles=4,5,6 precision=8,10 linalg=netlib
 ```
 
-The optional `openmp` argument accepts `0` (serial, the default), `1` (OpenMP), or a comma-separated list such as `openmp=0,1` to build both forms. OpenMP requests are supported for the four real-ECG energy codes and are skipped explicitly for other codes. For example:
+The optional `openmp` argument accepts `no` (serial, the default), `yes` (OpenMP), or a comma-separated list such as `openmp=no,yes` to build both forms. OpenMP requests are supported for the four real-ECG energy codes and are skipped explicitly for other codes. For example:
 
 ```bash
-./build.bash machine=linux-generic toolchain=systemdefault config=release code=RG_0S,RG_1P nparticles=4 precision=8 linalg=netlib openmp=1
+./build.bash machine=linux-generic toolchain=systemdefault config=release code=RG_0S,RG_1P nparticles=4 precision=8 linalg=netlib openmp=yes
 ```
 
-This command creates `bin/systemdefault/release-omp/RG_0S_N4_P8_netlib` and `bin/systemdefault/release-omp/RG_1P_N4_P8_netlib`.
+This command creates `bin/systemdefault/release/RG_0S_N4_P8_netlib_omp` and `bin/systemdefault/release/RG_1P_N4_P8_netlib_omp`.
 
 Note that `systemdefault` toolchain assumes that the system's default `mpif90` wrapper is accessible out of the box without loading any environment modules - regardless of the underlying compiler or MPI implementation it wraps.
 
