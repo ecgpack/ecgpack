@@ -12,12 +12,14 @@ Below is a list of individuals (in alphabetical order) who have made direct cont
 
 | Name | ORCID iD |
 | :--- | :--- |
+| Amir Almukhanov | [![ORCID](https://img.shields.io/badge/ORCID-0009--0001--6025--6177-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0009-0001-6025-6177) |
 | Amir Bralin | [![ORCID](https://img.shields.io/badge/ORCID-0009--0008--0675--2824-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0009-0008-0675-2824) |
 | Sergiy Bubin | [![ORCID](https://img.shields.io/badge/ORCID-0000--0002--2783--078X-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0000-0002-2783-078X) |
 | Istvan Hornyak | [![ORCID](https://img.shields.io/badge/ORCID-0000--0002--4718--9387-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0000-0002-4718-9387) |
 | Saeed Nasiri | [![ORCID](https://img.shields.io/badge/ORCID-0000--0001--8501--9859-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0000-0001-8501-9859) |
 | Pavel Rzhevskii | [![ORCID](https://img.shields.io/badge/ORCID-0009--0005--5996--3981-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0009-0005-5996-3981) |
 | Toreniyaz Shomenov | [![ORCID](https://img.shields.io/badge/ORCID-0000--0003--1153--4238-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0000-0003-1153-4238) |
+| Dias Suleimenov | [![ORCID](https://img.shields.io/badge/ORCID-0009--0004--7252--3289-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0009-0004-7252-3289) |
 | Dmitry Tumakov | [![ORCID](https://img.shields.io/badge/ORCID-0000--0003--0708--2427-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0000-0003-0708-2427) |
 | Aidynbek Tussipzhan | [![ORCID](https://img.shields.io/badge/ORCID-0009--0000--3751--0053-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0009-0000-3751-0053) |
 
