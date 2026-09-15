@@ -547,12 +547,13 @@ wp_def
 ```
 
 `qrlinalg.f90` requires preprocessing: `-cpp` for gfortran, `-fpp` for
-ifort/ifx, or `-Mpreprocess` for nvfortran. Fixed-form qrupdate BLAS/LAPACK
+ifort/ifx, or `-Mpreprocess` for nvfortran. The fixed-form bundled BLAS/LAPACK
 sources also require the compiler-specific unlimited-line-length option.
 
 Only one BLAS/LAPACK provider may be linked. With `LINALG=netlib`, the build
-uses the qrupdate directory's aggregate `BLAS.f` and `LAPACK.f`, which contain
-the routines required by both ECGPACK and qrlinalg. Optimized precision-8
+uses `src/BLAS.f` and `src/LAPACK.f`, which contain the routines required by
+both ECGPACK and qrlinalg. No second copy is kept under `src/qrupdate/`.
+Optimized precision-8
 providers resolve both call sets externally. Precisions 10 and 16 require the
 bundled generic provider.
 
@@ -600,7 +601,8 @@ The primary production entry points are:
 | `src/workproc.f90` | `DeleteQMaskedFunctions` and Q branches in cleanup/output routines. |
 | `src/main.f90` | BBOP dispatch for method Q. |
 | `src/qrlinalg.f90` | QR state, structural updates, inverse iteration, and factor residual. |
-| `src/qrupdate/` | Generic real/complex QR-update kernels and required Netlib aggregates. |
+| `src/qrupdate/` | Generic real/complex QR-update kernels. |
+| `src/BLAS.f`, `src/LAPACK.f` | Bundled Netlib provider shared by ECGPACK and qrlinalg. |
 | `Makefile` | Dependency order, preprocessing, provider selection, and OpenMP build isolation. |
 
 Line numbers are intentionally omitted. Search by routine name because the

@@ -80,7 +80,7 @@ To use Fortran compilers and MPI wrappers other than those listed above, the use
 
 All energy codes (`CG_0S`, `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`) as an option can invoke the slow eigenvalue solver from standard LAPACK. This requires linking of these codes against some BLAS/LAPACK library. The choice of this library can be controlled with the `LINALG` argument of the `make` command:
 
-* `LINALG=netlib` (default) - The bundled, lightly modified netlib reference BLAS/LAPACK subroutines are compiled from source. The real-ECG energy codes use `src/qrupdate/BLAS.f` and `src/qrupdate/LAPACK.f`, which satisfy both ECGPACK and qrlinalg; other energy codes use their local `src/BLAS.f` and `src/LAPACK.f`. No external LAPACK/BLAS library is required in this case.
+* `LINALG=netlib` (default) - The bundled, lightly modified netlib reference BLAS/LAPACK subroutines are compiled from `src/BLAS.f` and `src/LAPACK.f`. In the real-ECG energy codes these aggregates contain the routines required by both ECGPACK and qrlinalg, so no duplicate provider is kept under `src/qrupdate/`. No external LAPACK/BLAS library is required in this case.
 * `LINALG=mkl` - Intel Math Kernel Library (MKL).
 * `LINALG=lblas` - An optimized BLAS/LAPACK exposed through the `-llapack -lblas` symbolic links. For example, if an NVHPC module is loaded last, this will lead to linking against BLAS/LAPACK that comes with NVIDIA HPC SDK. If an Easybuild's module `foss/2025b` is loaded last it will result in routing through FlexiBLAS, which will back-end directly into OpenBLAS.
 * `LINALG=openblas` - OpenBLAS library is used through the `-lopenblas` link flag.
