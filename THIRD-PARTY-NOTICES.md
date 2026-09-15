@@ -10,23 +10,21 @@ all other files in this repository are covered by the ECGPACK license.
 ## Reference BLAS and LAPACK (University of Tennessee et al.)
 
 **Files:** `BLAS.f` and `LAPACK.f` in each of `CG_0S/src/`, `RG_0S/src/`,
-`RG_1P/src/`, `RG_2D/src/` and `RG_2P/src/` (five identical copies of
-each file).
+`RG_1P/src/`, `RG_2D/src/` and `RG_2P/src/`. The four real-ECG codes use
+identical expanded aggregates shared by ECGPACK and qrlinalg; `CG_0S` retains
+the smaller aggregate required by that code.
 
 **Origin:** the netlib reference implementations of BLAS and LAPACK,
 <https://www.netlib.org/lapack/>. The routine headers retained in the
 sources identify them as version 3.4.0, with one Level 1 BLAS routine
 carrying a version 3.1 header.
 
-**Scope:** these are subsets, not the complete libraries. `BLAS.f`
-contains 42 routines — the real double precision (`D`) and complex
-(`Z`) Level 1, 2 and 3 routines used by the codes, plus `LSAME`,
-`XERBLA`, `IDAMAX` and `DCABS1`. `LAPACK.f` contains 87 routines
-supporting the symmetric and Hermitian generalized eigenvalue problem:
-the `DSYEVX`/`DSYGVX`/`ZHEEVX`/`ZHEGVX` drivers, Cholesky factorization
-(`DPOTRF`/`ZPOTRF`), reduction to tridiagonal form (`DSYTRD`/`ZHETRD`),
-bisection and inverse iteration (`DSTEBZ`, `DSTEIN`), the QL/QR
-iterations (`DSTEQR`, `DSTERF`) and their supporting auxiliaries.
+**Scope:** these are subsets, not the complete libraries. They contain the
+real double precision (`D`) and complex (`Z`) Level 1, 2 and 3 BLAS routines
+and the LAPACK routines used by the ECGPACK eigensolvers. The expanded
+real-ECG aggregates additionally contain the factorization and rotation
+routines required by qrlinalg and qrupdate-ng, including `DROT`, `DGEQRF`,
+`ZGEQRF`, `ZLARTG`, and their supporting routines.
 
 These two files are compiled only when the build selects
 `LINALG=netlib`. When an optimized library is chosen instead (`mkl`,
@@ -41,7 +39,9 @@ module `wp_def`, so that the codes can be built in double (fp64),
 extended (fp80) or quadruple (fp128) precision. The individual netlib
 source files were also concatenated into the two aggregate files
 `BLAS.f` and `LAPACK.f`, with separator comment lines inserted between
-routines. Problems observed in these copies should be reported to the
+routines. The real-ECG aggregates were extended with the qrlinalg-required
+Netlib routines and are stored only at the top level of each code's `src/`
+directory. Problems observed in these copies should be reported to the
 ECGPACK authors rather than to the LAPACK developers.
 
 ### Copyright and license (BSD 3-Clause)

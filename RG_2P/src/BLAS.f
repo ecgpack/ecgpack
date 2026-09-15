@@ -24,7 +24,8 @@
 *---------------------------------------------------------------------
 *
 *  The real kind has been made selectable: DOUBLE PRECISION
-*  declarations were replaced by REAL(wp) and the corresponding
+*  declarations, including DROT, were replaced by REAL(wp) and the
+*  corresponding
 *  complex declarations by COMPLEX(wp), and the routines obtain the
 *  kind parameter wp from module wp_def, so that the codes can be
 *  built in double (fp64), extended (fp80) or quadruple (fp128)
@@ -320,6 +321,108 @@
       RETURN
       END      
 *####################################################################
+*> \brief \b DROT
+*
+*  =========== DOCUMENTATION ===========
+*
+* Online html documentation available at 
+*            http://www.netlib.org/lapack/explore-html/ 
+*
+*  Definition:
+*  ===========
+*
+*       SUBROUTINE DROT(N,DX,INCX,DY,INCY,C,S)
+* 
+*       .. Scalar Arguments ..
+*       DOUBLE PRECISION C,S
+*       INTEGER INCX,INCY,N
+*       ..
+*       .. Array Arguments ..
+*       DOUBLE PRECISION DX(*),DY(*)
+*       ..
+*  
+*
+*> \par Purpose:
+*  =============
+*>
+*> \verbatim
+*>
+*>    DROT applies a plane rotation.
+*> \endverbatim
+*
+*  Authors:
+*  ========
+*
+*> \author Univ. of Tennessee 
+*> \author Univ. of California Berkeley 
+*> \author Univ. of Colorado Denver 
+*> \author NAG Ltd. 
+*
+*> \date November 2011
+*
+*> \ingroup double_blas_level1
+*
+*> \par Further Details:
+*  =====================
+*>
+*> \verbatim
+*>
+*>     jack dongarra, linpack, 3/11/78.
+*>     modified 12/3/93, array(1) declarations changed to array(*)
+*> \endverbatim
+*>
+*  =====================================================================
+      SUBROUTINE DROT(N,DX,INCX,DY,INCY,C,S)
+      USE wp_def
+*
+*  -- Reference BLAS level1 routine (version 3.4.0) --
+*  -- Reference BLAS is a software package provided by Univ. of Tennessee,    --
+*  -- Univ. of California Berkeley, Univ. of Colorado Denver and NAG Ltd..--
+*     November 2011
+*
+*     .. Scalar Arguments ..
+      REAL(wp) C,S
+      INTEGER INCX,INCY,N
+*     ..
+*     .. Array Arguments ..
+      REAL(wp) DX(*),DY(*)
+*     ..
+*
+*  =====================================================================
+*
+*     .. Local Scalars ..
+      REAL(wp) DTEMP
+      INTEGER I,IX,IY
+*     ..
+      IF (N.LE.0) RETURN
+      IF (INCX.EQ.1 .AND. INCY.EQ.1) THEN
+*
+*       code for both increments equal to 1
+*
+         DO I = 1,N
+            DTEMP = C*DX(I) + S*DY(I)
+            DY(I) = C*DY(I) - S*DX(I)
+            DX(I) = DTEMP
+         END DO
+      ELSE
+*
+*       code for unequal increments or equal increments not equal
+*         to 1
+*
+         IX = 1
+         IY = 1
+         IF (INCX.LT.0) IX = (-N+1)*INCX + 1
+         IF (INCY.LT.0) IY = (-N+1)*INCY + 1
+         DO I = 1,N
+            DTEMP = C*DX(IX) + S*DY(IY)
+            DY(IY) = C*DY(IY) - S*DX(IX)
+            DX(IX) = DTEMP
+            IX = IX + INCX
+            IY = IY + INCY
+         END DO
+      END IF
+      RETURN
+      END
 *> \brief \b DCABS1
 *
 *  =========== DOCUMENTATION ===========
@@ -800,6 +903,11 @@
 *> \endverbatim
 *>
 *  =====================================================================
+#ifndef QRLINALG_WP
+#error "QRLINALG_WP must match the selected wp_def module"
+#elif QRLINALG_WP != 8 && QRLINALG_WP != 10 && QRLINALG_WP != 16
+#error "QRLINALG_WP must be 8, 10, or 16"
+#endif
       SUBROUTINE DGEMM(TRANSA,TRANSB,M,N,K,ALPHA,A,LDA,B,LDB,BETA,C,LDC)
       USE wp_def      
 *
@@ -827,13 +935,21 @@
       EXTERNAL XERBLA
 *     ..
 *     .. Local Scalars ..
-      REAL(wp) TEMP
-      INTEGER I,INFO,J,L,NCOLA,NROWA,NROWB
+      REAL(wp) A_FIRST,A_SECOND,B_FIRST,B_SECOND,B_THIRD,B_FOURTH,
+     +         TEMP,TEMP11,TEMP12,TEMP13,TEMP14,TEMP21,TEMP22,
+     +         TEMP23,TEMP24
+      INTEGER I,I_BLOCK,I_LIMIT,INFO,J,J_FULL,J_TAIL,L,NCOLA,NROWA,NROWB
       LOGICAL NOTA,NOTB
 *     ..
 *     .. Parameters ..
       REAL(wp) ONE,ZERO
       PARAMETER (ONE=1.0_wp,ZERO=0.0_wp)
+      INTEGER ROW_BLOCK
+      PARAMETER (ROW_BLOCK=256)
+*     OpenMP builds distribute only sufficiently large independent output
+*     columns or column tiles.  Serial builds treat the directives as comments.
+      INTEGER OMP_MIN_WORK
+      PARAMETER (OMP_MIN_WORK=2000000)
 *     ..
 *
 *     Set  NOTA  and  NOTB  as  true if  A  and  B  respectively are not
@@ -936,7 +1052,93 @@
 *
 *           Form  C := alpha*A**T*B + beta*C
 *
-              DO 120 J = 1,N
+*           The selected precision contributes exactly one implementation to
+*           this build, so tuning another kind cannot perturb this hot loop.
+*
+#if QRLINALG_WP == 8
+*           Four output columns share each pair of rows from A.  Eight
+*           independent accumulators keep partial sums in registers while
+*           both input panels are traversed contiguously down their columns.
+*
+                J_FULL = N - MOD(N,4)
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(J_FULL.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,J_TAIL,A_FIRST,A_SECOND,B_FIRST,B_SECOND,
+!$OMP& B_THIRD,B_FOURTH,TEMP,TEMP11,TEMP12,TEMP13,TEMP14,
+!$OMP& TEMP21,TEMP22,TEMP23,TEMP24)
+                DO J = 1,J_FULL,4
+                  DO I = 1,M-1,2
+                      TEMP11 = ZERO
+                      TEMP12 = ZERO
+                      TEMP13 = ZERO
+                      TEMP14 = ZERO
+                      TEMP21 = ZERO
+                      TEMP22 = ZERO
+                      TEMP23 = ZERO
+                      TEMP24 = ZERO
+                      DO L = 1,K
+                          A_FIRST = A(L,I)
+                          A_SECOND = A(L,I+1)
+                          B_FIRST = B(L,J)
+                          B_SECOND = B(L,J+1)
+                          B_THIRD = B(L,J+2)
+                          B_FOURTH = B(L,J+3)
+                          TEMP11 = TEMP11 + A_FIRST*B_FIRST
+                          TEMP12 = TEMP12 + A_FIRST*B_SECOND
+                          TEMP13 = TEMP13 + A_FIRST*B_THIRD
+                          TEMP14 = TEMP14 + A_FIRST*B_FOURTH
+                          TEMP21 = TEMP21 + A_SECOND*B_FIRST
+                          TEMP22 = TEMP22 + A_SECOND*B_SECOND
+                          TEMP23 = TEMP23 + A_SECOND*B_THIRD
+                          TEMP24 = TEMP24 + A_SECOND*B_FOURTH
+                      END DO
+                      IF (BETA.EQ.ZERO) THEN
+                          C(I,J) = ALPHA*TEMP11
+                          C(I,J+1) = ALPHA*TEMP12
+                          C(I,J+2) = ALPHA*TEMP13
+                          C(I,J+3) = ALPHA*TEMP14
+                          C(I+1,J) = ALPHA*TEMP21
+                          C(I+1,J+1) = ALPHA*TEMP22
+                          C(I+1,J+2) = ALPHA*TEMP23
+                          C(I+1,J+3) = ALPHA*TEMP24
+                      ELSE IF (BETA.EQ.ONE) THEN
+                          C(I,J) = ALPHA*TEMP11 + C(I,J)
+                          C(I,J+1) = ALPHA*TEMP12 + C(I,J+1)
+                          C(I,J+2) = ALPHA*TEMP13 + C(I,J+2)
+                          C(I,J+3) = ALPHA*TEMP14 + C(I,J+3)
+                          C(I+1,J) = ALPHA*TEMP21 + C(I+1,J)
+                          C(I+1,J+1) = ALPHA*TEMP22 + C(I+1,J+1)
+                          C(I+1,J+2) = ALPHA*TEMP23 + C(I+1,J+2)
+                          C(I+1,J+3) = ALPHA*TEMP24 + C(I+1,J+3)
+                      ELSE
+                          C(I,J) = ALPHA*TEMP11 + BETA*C(I,J)
+                          C(I,J+1) = ALPHA*TEMP12 + BETA*C(I,J+1)
+                          C(I,J+2) = ALPHA*TEMP13 + BETA*C(I,J+2)
+                          C(I,J+3) = ALPHA*TEMP14 + BETA*C(I,J+3)
+                          C(I+1,J) = ALPHA*TEMP21 + BETA*C(I+1,J)
+                          C(I+1,J+1) = ALPHA*TEMP22 + BETA*C(I+1,J+1)
+                          C(I+1,J+2) = ALPHA*TEMP23 + BETA*C(I+1,J+2)
+                          C(I+1,J+3) = ALPHA*TEMP24 + BETA*C(I+1,J+3)
+                      END IF
+                  END DO
+                  IF (MOD(M,2).NE.0) THEN
+                      I = M
+                      DO J_TAIL = J,J+3
+                          TEMP = ZERO
+                          DO L = 1,K
+                              TEMP = TEMP + A(L,I)*B(L,J_TAIL)
+                          END DO
+                          IF (BETA.EQ.ZERO) THEN
+                              C(I,J_TAIL) = ALPHA*TEMP
+                          ELSE
+                              C(I,J_TAIL) = ALPHA*TEMP +
+     +                                      BETA*C(I,J_TAIL)
+                          END IF
+                      END DO
+                  END IF
+                END DO
+                DO 120 J = J_FULL + 1,N
                   DO 110 I = 1,M
                       TEMP = ZERO
                       DO 100 L = 1,K
@@ -949,31 +1151,196 @@
                       END IF
   110             CONTINUE
   120         CONTINUE
+#elif QRLINALG_WP == 10
+*           One row and four columns fit the accumulators and current operands
+*           in the extended-real x87 register stack.
+*
+                  J_FULL = N - MOD(N,4)
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(J_FULL.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,A_FIRST,TEMP,TEMP11,TEMP12,TEMP13,TEMP14)
+                  DO J = 1,J_FULL,4
+                      DO I = 1,M
+                          TEMP11 = ZERO
+                          TEMP12 = ZERO
+                          TEMP13 = ZERO
+                          TEMP14 = ZERO
+                          DO L = 1,K
+                              A_FIRST = A(L,I)
+                              TEMP11 = TEMP11 + A_FIRST*B(L,J)
+                              TEMP12 = TEMP12 + A_FIRST*B(L,J+1)
+                              TEMP13 = TEMP13 + A_FIRST*B(L,J+2)
+                              TEMP14 = TEMP14 + A_FIRST*B(L,J+3)
+                          END DO
+                          IF (BETA.EQ.ZERO) THEN
+                              C(I,J) = ALPHA*TEMP11
+                              C(I,J+1) = ALPHA*TEMP12
+                              C(I,J+2) = ALPHA*TEMP13
+                              C(I,J+3) = ALPHA*TEMP14
+                          ELSE IF (BETA.EQ.ONE) THEN
+                              C(I,J) = ALPHA*TEMP11 + C(I,J)
+                              C(I,J+1) = ALPHA*TEMP12 + C(I,J+1)
+                              C(I,J+2) = ALPHA*TEMP13 + C(I,J+2)
+                              C(I,J+3) = ALPHA*TEMP14 + C(I,J+3)
+                          ELSE
+                              C(I,J) = ALPHA*TEMP11 + BETA*C(I,J)
+                              C(I,J+1) = ALPHA*TEMP12 + BETA*C(I,J+1)
+                              C(I,J+2) = ALPHA*TEMP13 + BETA*C(I,J+2)
+                              C(I,J+3) = ALPHA*TEMP14 + BETA*C(I,J+3)
+                          END IF
+                      END DO
+                  END DO
+                  DO J = J_FULL + 1,N
+                      DO I = 1,M
+                          TEMP = ZERO
+                          DO L = 1,K
+                              TEMP = TEMP + A(L,I)*B(L,J)
+                          END DO
+                          IF (BETA.EQ.ZERO) THEN
+                              C(I,J) = ALPHA*TEMP
+                          ELSE
+                              C(I,J) = ALPHA*TEMP + BETA*C(I,J)
+                          END IF
+                      END DO
+                  END DO
+#else
+*           Quadruple precision retains the scalar reference ordering.
+*
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(N.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,TEMP)
+                  DO J = 1,N
+                      DO I = 1,M
+                          TEMP = ZERO
+                          DO L = 1,K
+                              TEMP = TEMP + A(L,I)*B(L,J)
+                          END DO
+                          IF (BETA.EQ.ZERO) THEN
+                              C(I,J) = ALPHA*TEMP
+                          ELSE
+                              C(I,J) = ALPHA*TEMP + BETA*C(I,J)
+                          END IF
+                      END DO
+                  END DO
+#endif
           END IF
       ELSE
           IF (NOTA) THEN
 *
 *           Form  C := alpha*A*B**T + beta*C
 *
-              DO 170 J = 1,N
-                  IF (BETA.EQ.ZERO) THEN
-                      DO 130 I = 1,M
+*           The selected precision contributes exactly one implementation to
+*           this build, so tuning another kind cannot perturb this hot loop.
+*
+#if QRLINALG_WP == 10
+*           Four adjacent rows of one output column remain in accumulators for
+*           the complete K reduction.
+*
+                  I_LIMIT = M - MOD(M,4)
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(N.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,B_FIRST,TEMP,TEMP11,TEMP12,TEMP13,TEMP14)
+                  DO J = 1,N
+                      DO I = 1,I_LIMIT,4
+                          IF (BETA.EQ.ZERO) THEN
+                              TEMP11 = ZERO
+                              TEMP12 = ZERO
+                              TEMP13 = ZERO
+                              TEMP14 = ZERO
+                          ELSE IF (BETA.EQ.ONE) THEN
+                              TEMP11 = C(I,J)
+                              TEMP12 = C(I+1,J)
+                              TEMP13 = C(I+2,J)
+                              TEMP14 = C(I+3,J)
+                          ELSE
+                              TEMP11 = BETA*C(I,J)
+                              TEMP12 = BETA*C(I+1,J)
+                              TEMP13 = BETA*C(I+2,J)
+                              TEMP14 = BETA*C(I+3,J)
+                          END IF
+                          DO L = 1,K
+                              B_FIRST = ALPHA*B(J,L)
+                              TEMP11 = TEMP11 + A(I,L)*B_FIRST
+                              TEMP12 = TEMP12 + A(I+1,L)*B_FIRST
+                              TEMP13 = TEMP13 + A(I+2,L)*B_FIRST
+                              TEMP14 = TEMP14 + A(I+3,L)*B_FIRST
+                          END DO
+                          C(I,J) = TEMP11
+                          C(I+1,J) = TEMP12
+                          C(I+2,J) = TEMP13
+                          C(I+3,J) = TEMP14
+                      END DO
+                      DO I = I_LIMIT + 1,M
+                          IF (BETA.EQ.ZERO) THEN
+                              TEMP = ZERO
+                          ELSE IF (BETA.EQ.ONE) THEN
+                              TEMP = C(I,J)
+                          ELSE
+                              TEMP = BETA*C(I,J)
+                          END IF
+                          DO L = 1,K
+                              B_FIRST = ALPHA*B(J,L)
+                              TEMP = TEMP + A(I,L)*B_FIRST
+                          END DO
+                          C(I,J) = TEMP
+                      END DO
+                  END DO
+#else
+*           Scale C once before four output columns reuse a contiguous vector
+*           from A.
+*
+              IF (BETA.EQ.ZERO) THEN
+                  DO 130 J = 1,N
+                      DO I = 1,M
                           C(I,J) = ZERO
-  130                 CONTINUE
-                  ELSE IF (BETA.NE.ONE) THEN
-                      DO 140 I = 1,M
+                      END DO
+  130             CONTINUE
+              ELSE IF (BETA.NE.ONE) THEN
+                  DO 140 J = 1,N
+                      DO I = 1,M
                           C(I,J) = BETA*C(I,J)
-  140                 CONTINUE
-                  END IF
-                  DO 160 L = 1,K
-                      IF (B(J,L).NE.ZERO) THEN
+                      END DO
+  140             CONTINUE
+              END IF
+                  J_FULL = N - MOD(N,4)
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(J_FULL.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,I_BLOCK,I_LIMIT,L,A_FIRST,B_FIRST,B_SECOND,
+!$OMP& B_THIRD,B_FOURTH)
+                  DO J = 1,J_FULL,4
+                      DO I_BLOCK = 1,M,ROW_BLOCK
+                          I_LIMIT = MIN(M,I_BLOCK+ROW_BLOCK-1)
+                          DO L = 1,K
+                              B_FIRST = ALPHA*B(J,L)
+                              B_SECOND = ALPHA*B(J+1,L)
+                              B_THIRD = ALPHA*B(J+2,L)
+                              B_FOURTH = ALPHA*B(J+3,L)
+                              DO I = I_BLOCK,I_LIMIT
+                                  A_FIRST = A(I,L)
+                                  C(I,J) = C(I,J) + A_FIRST*B_FIRST
+                                  C(I,J+1) = C(I,J+1) +
+     +                                       A_FIRST*B_SECOND
+                                  C(I,J+2) = C(I,J+2) +
+     +                                       A_FIRST*B_THIRD
+                                  C(I,J+3) = C(I,J+3) +
+     +                                       A_FIRST*B_FOURTH
+                              END DO
+                          END DO
+                      END DO
+                  END DO
+                  DO 170 J = J_FULL + 1,N
+                      DO 160 L = 1,K
                           TEMP = ALPHA*B(J,L)
                           DO 150 I = 1,M
                               C(I,J) = C(I,J) + TEMP*A(I,L)
   150                     CONTINUE
-                      END IF
-  160             CONTINUE
-  170         CONTINUE
+  160                 CONTINUE
+  170             CONTINUE
+#endif
           ELSE
 *
 *           Form  C := alpha*A**T*B**T + beta*C
@@ -6248,8 +6615,8 @@
       INTRINSIC CONJG,MAX
 *     ..
 *     .. Local Scalars ..
-      COMPLEX(wp) TEMP
-      INTEGER I,INFO,J,L,NCOLA,NROWA,NROWB
+      COMPLEX(wp) A_VALUE,TEMP,TEMP1,TEMP2,TEMP3,TEMP4
+      INTEGER I,INFO,J,J_FULL,J_TAIL,L,NCOLA,NROWA,NROWB
       LOGICAL CONJA,CONJB,NOTA,NOTB
 *     ..
 *     .. Parameters ..
@@ -6257,6 +6624,10 @@
       PARAMETER (ONE= (1.0_wp,0.0_wp))
       COMPLEX(wp) ZERO
       PARAMETER (ZERO= (0.0_wp,0.0_wp))
+*     The work threshold matches DGEMM so real and complex calls use the same
+*     coarse scheduling policy without runtime hardware detection.
+      INTEGER OMP_MIN_WORK
+      PARAMETER (OMP_MIN_WORK=2000000)
 *     ..
 *
 *     Set  NOTA  and  NOTB  as  true if  A  and  B  respectively are not
@@ -6363,6 +6734,66 @@
 *
 *           Form  C := alpha*A**H*B + beta*C.
 *
+#if QRLINALG_WP == 8
+*           Four output columns share one conjugated A value.  Independent
+*           accumulators remove the single dot-product dependency chain and
+*           keep C out of the reduction loop.
+*
+              J_FULL = N - MOD(N,4)
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(J_FULL.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,A_VALUE,TEMP1,TEMP2,TEMP3,TEMP4)
+              DO J = 1,J_FULL,4
+                  DO I = 1,M
+                      TEMP1 = ZERO
+                      TEMP2 = ZERO
+                      TEMP3 = ZERO
+                      TEMP4 = ZERO
+                      DO L = 1,K
+                          A_VALUE = CONJG(A(L,I))
+                          TEMP1 = TEMP1 + A_VALUE*B(L,J)
+                          TEMP2 = TEMP2 + A_VALUE*B(L,J+1)
+                          TEMP3 = TEMP3 + A_VALUE*B(L,J+2)
+                          TEMP4 = TEMP4 + A_VALUE*B(L,J+3)
+                      END DO
+                      IF (BETA.EQ.ZERO) THEN
+                          C(I,J) = ALPHA*TEMP1
+                          C(I,J+1) = ALPHA*TEMP2
+                          C(I,J+2) = ALPHA*TEMP3
+                          C(I,J+3) = ALPHA*TEMP4
+                      ELSE IF (BETA.EQ.ONE) THEN
+                          C(I,J) = ALPHA*TEMP1 + C(I,J)
+                          C(I,J+1) = ALPHA*TEMP2 + C(I,J+1)
+                          C(I,J+2) = ALPHA*TEMP3 + C(I,J+2)
+                          C(I,J+3) = ALPHA*TEMP4 + C(I,J+3)
+                      ELSE
+                          C(I,J) = ALPHA*TEMP1 + BETA*C(I,J)
+                          C(I,J+1) = ALPHA*TEMP2 + BETA*C(I,J+1)
+                          C(I,J+2) = ALPHA*TEMP3 + BETA*C(I,J+2)
+                          C(I,J+3) = ALPHA*TEMP4 + BETA*C(I,J+3)
+                      END IF
+                  END DO
+              END DO
+              DO J_TAIL = J_FULL + 1,N
+                  DO I = 1,M
+                      TEMP = ZERO
+                      DO L = 1,K
+                          TEMP = TEMP + CONJG(A(L,I))*B(L,J_TAIL)
+                      END DO
+                      IF (BETA.EQ.ZERO) THEN
+                          C(I,J_TAIL) = ALPHA*TEMP
+                      ELSE
+                          C(I,J_TAIL) = ALPHA*TEMP +
+     +                                  BETA*C(I,J_TAIL)
+                      END IF
+                  END DO
+              END DO
+#else
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(N.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,TEMP)
               DO 120 J = 1,N
                   DO 110 I = 1,M
                       TEMP = ZERO
@@ -6376,6 +6807,7 @@
                       END IF
   110             CONTINUE
   120         CONTINUE
+#endif
           ELSE
 *
 *           Form  C := alpha*A**T*B + beta*C
@@ -6399,6 +6831,10 @@
 *
 *           Form  C := alpha*A*B**H + beta*C.
 *
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(N.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,TEMP)
               DO 200 J = 1,N
                   IF (BETA.EQ.ZERO) THEN
                       DO 160 I = 1,M
@@ -10858,4 +11294,4 @@
 *     End of ZTRSV .
 *
       END
-*#################################################################### 
+*####################################################################
