@@ -1,5 +1,6 @@
+
 <p align="center">
-  <img src="doc/img/logo_and_name.svg" alt="ECG package logo" width="480">
+  <img src="doc/img/logo_and_name_1536x512.png" alt="ECG package logo" width="384">
 </p>
 
 # ECGPACK
