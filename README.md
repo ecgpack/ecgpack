@@ -29,10 +29,6 @@ Machine-readable citation metadata is provided in [`CITATION.cff`](CITATION.cff)
 
 For theoretical background and mathematical notations please see [Theoretical background](doc/theoretical_background.md) in the documetation folder, where relevant references are provided.
 
-## Developer notes
-
-Developer-facing architecture and maintenance guides live in [`doc/devnotes/`](doc/devnotes/). These documents complement the user manuals with implementation invariants, performance models, validation requirements, and porting procedures. The first guide describes the [Q generalized-eigenvalue method](doc/devnotes/Q_method_design.md).
-
 ## Directory structure
 
 The ECGPACK project repository has the following directory structure:
@@ -55,8 +51,8 @@ The ECGPACK project repository has the following directory structure:
 | `ecgpack/RG_2P-2D/` | The code for the calculation of the offdiagonal matrix elements between states that are expanded using RG_2P and RG_2D bases. Currently this includes the evaluation of the spin--orbit and noncontact spin-spin interactions. |
 | `ecgpack/RG_2P-2P/` | The code for the calculation of the offdiagonal matrix elements between states that are expanded using RG_2P and RG_2P bases. Currently this includes the evaluation of the spin--orbit and noncontact spin-spin interactions. |
 | `ecgpack/bin/` | Binary files for calculations (may be created by user) |
-| `ecgpack/doc/` | Directory containing manuals and documentation |
-| `ecgpack/doc/devnotes/` | Developer-facing architecture and maintenance notes for implemented numerical methods |
+| `ecgpack/doc/` | Directory containing user manuals and documentation |
+| `ecgpack/doc/devnotes/` | Developer-facing architecture and maintenance notes for implemented numerical methods. These documents complement the user manuals with implementation invariants, performance models, validation requirements, and porting procedures. |
 | `ecgpack/jobs/` | Work directory for calculations (may be created by user) |
 | `ecgpack/utilities/` | Various utilities and scripts |
 
