@@ -14,7 +14,7 @@ To clone the current main (development) branch:
 git clone git@github.com:ecgpack/ecgpack.git ecgpack
 ```
 
-To clone a release version (e.g. `v26.09.15`)
+To clone a release version (e.g. `v26.09.19`)
 
 ```bash
 git clone -b vYY.MM.DD --recursive git@github.com:ecgpack/ecgpack.git ecgpack-vYY.MM.DD
