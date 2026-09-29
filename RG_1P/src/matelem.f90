@@ -6,7 +6,7 @@ module matelem
 
 contains
 
-  subroutine MatrixElementsHS_RG_1P(m_k, m_l, vechLk, vechLl, P, &
+  subroutine MatrixElementsHS_RG_1P(m_k, m_l, Lk, Ll, Ak, Al, MAk, P, &
                               Hkl, Skl, Dk, Dl, grad_k, grad_l)
 !This subroutine computes symmetry adapted matrix element with
 !two real L=1 correlated Gaussians:
@@ -20,8 +20,9 @@ contains
 !Input:
 !   m_k, m_l :: integers that determine which z-component is in the
 !                premultiplier of the Gaussian
-!   vechLk, vechLl :: Arrays of length (n(n+1)/2) of
-!     exponential parameters.
+!   Lk, Ll :: Precomputed lower-triangular parameter matrices.
+!   Ak, Al :: Precomputed Ak=Lk*Lk' and Al=Ll*Ll'.
+!   MAk    :: Precomputed Glob_MassMatrix*Ak.
 !   P  :: The symmetry permutation matrix of size n x n
 !   grad_k, grad_l :: Gradient flags
 !   grad_k=.true.  means that dHkldvechLk, dSkldvechLk need to be computed.
@@ -38,7 +39,9 @@ contains
 !Arguments
     integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
     integer,intent(in)          :: m_k,m_l
-    real(wp),intent(in)      :: vechLk(Glob_np), vechLl(Glob_np)
+    real(wp),intent(in)      :: Lk(nn,nn), Ll(nn,nn)
+    real(wp),intent(in)      :: Ak(nn,nn), Al(nn,nn)
+    real(wp),intent(in)      :: MAk(nn,nn)
     real(wp),intent(in)      :: P(nn,nn)
     real(wp),intent(out)     :: Skl,Hkl
     real(wp),intent(out)     :: Dk(2*Glob_np),Dl(2*Glob_np)
@@ -50,8 +53,7 @@ contains
 !Local variables
     integer           n, np
     integer           tvl(nn)
-    real(wp)       Lk(nn,nn),Ll(nn,nn)
-    real(wp)       Ak(nn,nn),tAl(nn,nn),tAkl(nn,nn)
+    real(wp)       tAl(nn,nn),tAkl(nn,nn)
     real(wp)       inv_tAkl(nn,nn)
     real(wp)       inv_tAkltAl(nn,nn),inv_tAkltAlM(nn,nn)
     real(wp)       inv_tAklAk(nn,nn),inv_tAklAkM(nn,nn)
@@ -70,34 +72,7 @@ contains
 
     n=Glob_n
     np=Glob_np
-!First we build matrices Lk, Ll, Ak, Al from vechLk, vechLl.
-    indx=0
-    do i=1,nn
-      do j=i,nn
-        indx=indx+1
-        Lk(i,j)=ZERO
-        Lk(j,i)=vechLk(indx)
-        Ll(i,j)=ZERO
-        Ll(j,i)=vechLl(indx)
-      enddo
-    enddo
-
-    do i=1,nn
-      do j=i,nn
-        temp1=ZERO
-        do k=1,i
-          temp1=temp1+Lk(i,k)*Lk(j,k)
-        enddo
-        Ak(i,j)=temp1
-        Ak(j,i)=temp1
-        temp1=ZERO
-        do k=1,i
-          temp1=temp1+Ll(i,k)*Ll(j,k)
-        enddo
-        tAl(i,j)=temp1
-        tAl(j,i)=temp1
-      enddo
-    enddo
+!Lk, Ll, Ak, Al arrive precomputed once per basis-function sweep.
 
 !Then we permute elements of Al to account for
 !the action of the permutation matrix
@@ -107,7 +82,7 @@ contains
       do j=1,nn
         temp1=ZERO
         do k=1,nn
-          temp1=temp1+P(k,j)*tAl(k,i)
+          temp1=temp1+P(k,j)*Al(k,i)
         enddo
         W1(j,i)=temp1
       enddo
@@ -682,7 +657,49 @@ contains
 
   end subroutine MatrixElementsHS_RG_1P
 
-  subroutine MatrixElementsAll_RG_1P(m_k, m_l, vechLk, vechLl, Pbra, Pket, &
+  subroutine PrecomputeMatrixElements(np, Nmax, NonlinParam, mass, Lh, Ah, MAh)
+!Build cached per-function inputs for matrix-element evaluation.
+    integer,parameter     :: nn=Glob_AllowedNumOfPseudoParticles
+    integer, intent(in)   :: np, Nmax
+    real(wp),intent(in)   :: NonlinParam(np,Nmax), mass(nn,nn)
+    real(wp),intent(out)  :: Lh(nn,nn,Nmax), Ah(nn,nn,Nmax)
+    real(wp),intent(out),optional :: MAh(nn,nn,Nmax)
+    integer  :: f,i,j,k,indx
+    real(wp) :: temp1
+    do f=1,Nmax
+      indx=0
+      do i=1,nn
+        do j=i,nn
+          indx=indx+1
+          Lh(i,j,f)=ZERO
+          Lh(j,i,f)=NonlinParam(indx,f)
+        enddo
+      enddo
+      do i=1,nn
+        do j=i,nn
+          temp1=ZERO
+          do k=1,i
+            temp1=temp1+Lh(i,k,f)*Lh(j,k,f)
+          enddo
+          Ah(i,j,f)=temp1
+          Ah(j,i,f)=temp1
+        enddo
+      enddo
+      if (present(MAh)) then
+        do j=1,nn
+          do i=1,nn
+            temp1=ZERO
+            do k=1,nn
+              temp1=temp1+mass(i,k)*Ah(k,j,f)
+            enddo
+            MAh(i,j,f)=temp1
+          enddo
+        enddo
+      endif
+    enddo
+  end subroutine PrecomputeMatrixElements
+
+  subroutine MatrixElementsAll_RG_1P(m_k, m_l, Lk, Ll, Ak, Al, Pbra, Pket, &
                                          Hkl, Skl, Tkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
                                          MVkl, drach_MVkl1, drach_MVkl2, Darwinkl, drach_Darwinkl, OOkl, rmrmkl, prvalkl, &
                                          NumCFGridPoints, CFGrid, CFkl, NumDensGridPoints, DensGrid, Denskl, &
@@ -695,7 +712,8 @@ contains
 !Input:
 !   m_k, m_l :: integers that determine which z-component is in the
 !       premultiplier of the Gaussian
-!   vechLk, vechLl :: Arrays of length (n(n+1)/2) of exponential parameters.
+!   Lk, Ll :: Cholesky factors of the exponential matrices.
+!   Ak, Al :: Exponential matrices.
 !   Pbra :: The symmetry permutation matrix of size n x n that is applied to bra
 !   Pket :: The symmetry permutation matrix of size n x n that is applied to ket
 !Output (all matrix elements are computed with normalized functions):
@@ -733,9 +751,11 @@ contains
 !AreMomDensNeeded :: flag indicating whether matrix elements of momentum
 !                     densities need to be computed
 
+    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+
 !Arguments
     integer,intent(in)       :: m_k,m_l
-    real(wp),intent(in)   :: vechLk(Glob_np), vechLl(Glob_np)
+    real(wp),intent(in)   :: Lk(nn,nn),Ll(nn,nn),Ak(nn,nn),Al(nn,nn)
     real(wp),intent(in)   :: Pbra(Glob_n,Glob_n),Pket(Glob_n,Glob_n)
     real(wp),intent(out)  :: Hkl,Skl,Tkl,Vkl,MVkl,drach_MVkl1,drach_MVkl2,Darwinkl,drach_Darwinkl,OOkl
     real(wp),intent(out)  :: rm2kl(Glob_n,Glob_n),rmkl(Glob_n,Glob_n)
@@ -753,13 +773,11 @@ contains
 !Parameters (These are needed to declare static arrays. Using static
 !arrays makes the function call a little faster in comparison with
 !the case when arrays are dynamically allocated in stack)
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
     integer,parameter :: nnp=nn*(nn+1)/2
 
 !Local variables
     integer           n,np
     integer           tvk(nn),tvl(nn)
-    real(wp)       Lk(nn,nn),Ll(nn,nn)
     real(wp)       inv_tAk(nn,nn),inv_tAl(nn,nn),tAk(nn,nn),tAl(nn,nn),tAkl(nn,nn)
     real(wp)       inv_tAkl(nn,nn), inv_tAkltAl(nn,nn)
     real(wp)       inv_invtAkinvtAl(nn,nn),tvkinv_tAk(nn),inv_tAltvl(nn)
@@ -791,35 +809,6 @@ contains
 
     n=Glob_n
     np=Glob_np
-!First we build matrices Lk, Ll, Ak, Al from vechLk, vechLl.
-    indx=0
-    do i=1,nn
-      do j=i,nn
-        indx=indx+1
-        Lk(i,j)=ZERO
-        Lk(j,i)=vechLk(indx)
-        Ll(i,j)=ZERO
-        Ll(j,i)=vechLl(indx)
-      enddo
-    enddo
-
-    do i=1,nn
-      do j=i,nn
-        temp1=ZERO
-        do k=1,i
-          temp1=temp1+Lk(i,k)*Lk(j,k)
-        enddo
-        tAk(i,j)=temp1
-        tAk(j,i)=temp1
-        temp1=ZERO
-        do k=1,i
-          temp1=temp1+Ll(i,k)*Ll(j,k)
-        enddo
-        tAl(i,j)=temp1
-        tAl(j,i)=temp1
-      enddo
-    enddo
-
 !Then we permute elements of Ak and Al to account for
 !the action of the permutation matrix
 !  tAl=Pket'*Al*Pket
@@ -830,8 +819,8 @@ contains
         temp1=ZERO
         temp2=ZERO
         do k=1,nn
-          temp1=temp1+Pket(k,j)*tAl(k,i)
-          temp2=temp2+tAk(j,k)*Pbra(k,i)
+          temp1=temp1+Pket(k,j)*Al(k,i)
+          temp2=temp2+Ak(j,k)*Pbra(k,i)
         enddo
         W1(j,i)=temp1
         W2(j,i)=temp2
