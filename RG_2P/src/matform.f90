@@ -145,13 +145,13 @@ contains
 !Arguments :
     integer     Nmin,Nmax
 !Local variables :
+    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
     integer     k,l,i,kk,ll,ii,j,q
-    integer     kstart,lstart,kstop,lstop,n,np,np1,npt,nb
-    real(wp) Paramk(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1)/2)
-    real(wp) Paraml(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1)/2)
+    integer     kstart,lstart,kstop,lstop,n,np,np1,nb
     integer     mk,ml,mmk,mml
     real(wp) Skl,Hkl,Skl1,Hkl1,Skl2,Hkl2,Skl3,Hkl3,Skl4,Hkl4
     real(wp) Ssum,Hsum
+    real(wp),allocatable :: Lh(:,:,:),Ah(:,:,:),MAh(:,:,:)
 !These arrays are not actually used but needed for proper calling
 !of subroutine MatrixElementsHS_RG_0S. Thus, one can set some small size
 !for them
@@ -160,14 +160,15 @@ contains
     n=Glob_n
     np=Glob_np
     np1=np+1
-    npt=Glob_npt
     nb=Glob_HSBuffLen
+    allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
+    call PrecomputeMatrixElements(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
+                                  Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
     Glob_HklBuff1(1:nb)=ZERO
     Glob_SklBuff1(1:nb)=ZERO
     i=0
 
     do k=Nmin,Nmax
-      Paramk(1:npt)=Glob_NonlinParam(1:npt,k)
       mk=Glob_Index(k,1)
       mmk=Glob_Index(k,2)
       do l=k,1,-1
@@ -176,7 +177,6 @@ contains
           kstart=k
           lstart=l
         endif
-        Paraml(1:npt)=Glob_NonlinParam(1:npt,l)
         ml=Glob_Index(l,1)
         mml=Glob_Index(l,2)
         Hsum=ZERO; Ssum=ZERO
@@ -196,7 +196,8 @@ contains
 !                Skl=2*Skl1-2*Skl2!-Skl3+Skl4
 !                Dk=2*Dk1-2*Dk2!-Dk3+Dk4
 !                Dl=2*Dl1-2*Dl2!-Dl3+Dl4
-            call MatrixElementsHS_RG_2P(mk,ml,mmk,mml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
+            call MatrixElementsHS_RG_2P(mk,ml,mmk,mml,Lh(1,1,k),Lh(1,1,l), &
+                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1:n,1:n,j), &
                                   Hkl,Skl,Dk,Dl,.false.,.false.)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl
@@ -276,13 +277,13 @@ contains
 !Arguments :
     integer     Nmin,Nmax
 !Local variables :
+    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
     integer     k,l,i,kk,ll,ii,j,q
-    integer     kstart,lstart,kstop,lstop,n,np,npt,npt2,nb
-    real(wp) Paramk(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1)/2)
-    real(wp) Paraml(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1)/2)
+    integer     kstart,lstart,kstop,lstop,n,np,npt2,nb
     integer     mk,ml,mmk,mml
     real(wp) Skl,Hkl,Skl1,Hkl1,Skl2,Hkl2,Skl3,Hkl3,Skl4,Hkl4
     real(wp) Ssum,Hsum
+    real(wp),allocatable :: Lh(:,:,:),Ah(:,:,:),MAh(:,:,:)
     real(wp) Dk(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
     real(wp) Dl(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
     real(wp) Dk1(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
@@ -299,9 +300,12 @@ contains
 
     n=Glob_n
     np=Glob_np
-    npt=Glob_npt
     npt2=np*2
     nb=Glob_HSBuffLen
+
+    allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
+    call PrecomputeMatrixElements(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
+                                  Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
 
     Glob_HklBuff1(1:nb)=ZERO
     Glob_SklBuff1(1:nb)=ZERO
@@ -310,7 +314,6 @@ contains
     i=0
 
     do k=Nmin,Nmax
-      Paramk(1:npt)=Glob_NonlinParam(1:npt,k)
       mk=Glob_Index(k,1)
       mmk=Glob_Index(k,2)
       do l=k,1,-1
@@ -319,7 +322,6 @@ contains
           kstart=k
           lstart=l
         endif
-        Paraml(1:npt)=Glob_NonlinParam(1:npt,l)
         ml=Glob_Index(l,1)
         mml=Glob_Index(l,2)
         Hsum=ZERO; Ssum=ZERO
@@ -346,7 +348,8 @@ contains
 !                Skl=2*Skl1-2*Skl2!-Skl3+Skl4
 !                Dk=2*Dk1-2*Dk2!-Dk3+Dk4
 !                Dl=2*Dl1-2*Dl2!-Dl3+Dl4
-            call MatrixElementsHS_RG_2P(mk,ml,mmk,mml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
+            call MatrixElementsHS_RG_2P(mk,ml,mmk,mml,Lh(1,1,k),Lh(1,1,l), &
+                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1:n,1:n,j), &
                                   Hkl,Skl,Dk,Dl,.true.,grad_l)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl

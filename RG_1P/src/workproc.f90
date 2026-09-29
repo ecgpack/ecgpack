@@ -4367,14 +4367,12 @@ contains
     logical,intent(in)  :: AreDerivativesNeeded
     integer,intent(out) :: ErrorCode
 !Local variables:
+    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
     integer a,b,i,j,q,PairNumber,MatrixOrder,NumActive
     integer ActiveIndex,NumMatrixEntries,NumDerivativeEntries,npt2
     integer mActive,mOther
-    real(wp) ParamActive(Glob_AllowedNumOfPseudoParticles* &
-                         (Glob_AllowedNumOfPseudoParticles+1)/2)
-    real(wp) ParamOther(Glob_AllowedNumOfPseudoParticles* &
-                        (Glob_AllowedNumOfPseudoParticles+1)/2)
     real(wp) Hkl,Skl,Hsum,Ssum,ActiveNorm,OtherNorm,Normalization
+    real(wp),allocatable :: Lh(:,:,:),Ah(:,:,:),MAh(:,:,:)
     real(wp) DActive(2*Glob_npt_MaxAllowed),DOther(2*Glob_npt_MaxAllowed)
     real(wp) DActiveSum(2*Glob_npt_MaxAllowed),DOtherSum(2*Glob_npt_MaxAllowed)
     logical OtherDerivativeNeeded
@@ -4409,6 +4407,9 @@ contains
       if (size(Glob_D,3)<MatrixOrder) return
       Glob_D=ZERO
     endif
+    allocate(Lh(nn,nn,MatrixOrder),Ah(nn,nn,MatrixOrder),MAh(nn,nn,MatrixOrder))
+    call PrecomputeMatrixElements(Glob_npt,MatrixOrder, &
+      Glob_NonlinParam(1:Glob_npt,1:MatrixOrder),Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
 
     !Each physical pair that touches the active set is evaluated exactly once.
     !For an active-active pair, the value is copied into both conceptual trial
@@ -4420,14 +4421,12 @@ contains
     PairNumber=0
     do a=1,NumActive
       ActiveIndex=Q_Workspace%ActiveFunction(a)
-      ParamActive(1:Glob_npt)=Glob_NonlinParam(1:Glob_npt,ActiveIndex)
       mActive=Glob_ZIndex(ActiveIndex)
       do i=1,MatrixOrder
         b=Q_Workspace%ActivePosition(i)
         if ((b>0).and.(b<a)) cycle
 
         PairNumber=PairNumber+1
-        ParamOther(1:Glob_npt)=Glob_NonlinParam(1:Glob_npt,i)
         mOther=Glob_ZIndex(i)
         Hsum=ZERO
         Ssum=ZERO
@@ -4439,8 +4438,9 @@ contains
         q=(PairNumber-1)*Glob_NumYHYTerms-1
         do j=1,Glob_NumYHYTerms
           if (mod(q+j,Glob_NumOfProcs)==Glob_ProcID) then
-            call MatrixElementsHS_RG_1P(mActive,mOther,ParamActive,ParamOther, &
-              Glob_YHYMatr(1:Glob_n,1:Glob_n,j),Hkl,Skl, &
+            call MatrixElementsHS_RG_1P(mActive,mOther,Lh(1,1,ActiveIndex),Lh(1,1,i), &
+              Ah(1,1,ActiveIndex),Ah(1,1,i),MAh(1,1,ActiveIndex), &
+              Glob_YHYMatr(1:nn,1:nn,j),Hkl,Skl, &
               DActive,DOther,AreDerivativesNeeded,OtherDerivativeNeeded)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl
@@ -11950,7 +11950,9 @@ contains
 
 !Local variables:
     integer        i,j,k,kk,l,ll,counter,a,b,c,d,a1,b1
+    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
     integer        n,np,npt,cbs
+    real(wp),allocatable,dimension(:,:,:) :: Lh,Ah
     integer        OpenFileErr,ErrorCode
     logical        IsSwapFileOK
     integer        BlockSizeForDSYGVX
@@ -12030,6 +12032,9 @@ contains
     npt=Glob_npt
     Glob_HSBuffLen=max(min(Glob_CurrBasisSize*(Glob_CurrBasisSize+1)/2,1000),30*Glob_CurrBasisSize)
     cbs=Glob_CurrBasisSize
+    allocate(Lh(nn,nn,cbs),Ah(nn,nn,cbs))
+    call PrecomputeMatrixElements(npt,cbs,Glob_NonlinParam(1:npt,1:cbs), &
+                                  Glob_MassMatrix(1:nn,1:nn),Lh,Ah)
     if (GSEPsolMethod=='G') NumOfEigvecs=min(cbs,Glob_WhichEigenvalue+10)
     if (GSEPsolMethod=='I') NumOfEigvecs=1
     if (GSEPsolMethod=='Q') NumOfEigvecs=1
@@ -12534,7 +12539,7 @@ AreMomDensNeeded   = .false.
           if (SymmAdaptMethod==1) then
             do k=1,Glob_NumYHYTerms
               call MatrixElementsAll_RG_1P(Glob_ZIndex(i),Glob_ZIndex(j),            &
-                                               Glob_NonlinParam(1:npt,i),Glob_NonlinParam(1:npt,j),                     &
+                                               Lh(1,1,i),Lh(1,1,j),Ah(1,1,i),Ah(1,1,j),                                 &
                                                IdentityPerm,Glob_YHYMatr(1:n,1:n,k),Hkl,Skl,Tkl,Vkl,                    &
                                                rm2kl,rmkl,rkl,r2kl,deltarkl,drach_deltarkl,MVkl,drach_MVkl1, drach_MVkl2,     &
                                                Darwinkl,drach_Darwinkl,OOkl,rmrmkl,prvalkl,NumCFGridPoints,CFGrid,CFkl, &
@@ -12683,7 +12688,7 @@ AreMomDensNeeded   = .false.
             do k=1,Glob_NumYTerms
               do kk=1,Glob_NumYTerms
                 call MatrixElementsAll_RG_1P(Glob_ZIndex(i),Glob_ZIndex(j),            &
-                                                 Glob_NonlinParam(1:npt,i),Glob_NonlinParam(1:npt,j),                     &
+                                                 Lh(1,1,i),Lh(1,1,j),Ah(1,1,i),Ah(1,1,j),                                 &
                                                  Glob_YMatr(1:n,1:n,k),Glob_YMatr(1:n,1:n,kk),Hkl,Skl,Tkl,Vkl,            &
                                                  rm2kl,rmkl,rkl,r2kl,deltarkl,drach_deltarkl,MVkl,drach_MVkl1, drach_MVkl2,    &
                                                  Darwinkl,drach_Darwinkl,OOkl,rmrmkl,prvalkl,NumCFGridPoints,CFGrid,CFkl, &
