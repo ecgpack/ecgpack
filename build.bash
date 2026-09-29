@@ -72,6 +72,17 @@ usage_print() {
   exit 1
 }
 
+# Number of parallel jobs (make -j) used within each build. By default all available
+# cores are used. Set it to 1 for a serial build or to any other value, if necessary.
+make_jobs=$(nproc)
+
+# Keep the output of each compiled file together when make runs parallel jobs.
+# Option --output-sync requires GNU make 4.0 or newer, so use it only if it is supported.
+make_sync_flag=""
+if make --output-sync=target --version > /dev/null 2>&1; then
+  make_sync_flag="--output-sync=target"
+fi
+
 # Set default values of arguments
 machine="linux-generic"
 toolchain="systemdefault"
@@ -362,7 +373,7 @@ for toolchain_value in ${toolchain_list[@]}; do
             sed -i "s/MPI_DPREC=[^ ][^ ]*/MPI_DPREC=${MPI_REALX_name}/g" src/wp_def_${precision_value}.f90
             # Build the code
             make clean > /dev/null 2>&1
-            make ${config_value} COMPILER=${compiler} MACHINE=${machine} PREC=${precision_value} LINALG=${linalg_value} OPENMP=${openmp_value} EXEFILE=ecg
+            make -j${make_jobs} ${make_sync_flag} ${config_value} COMPILER=${compiler} MACHINE=${machine} PREC=${precision_value} LINALG=${linalg_value} OPENMP=${openmp_value} EXEFILE=ecg
             # Check if the build was successful
             if [ $? -eq 0 ]; then
               echo "═════════════════════ Build finished succesfully ══════════════════════"

@@ -20,7 +20,7 @@ contains
 !   Lk, Ll :: The lower-triangular Cholesky-style parameter matrices (the
 !             unpacked vechLk/vechLl). They depend only on one basis
 !             function, so the caller precomputes them once per function per
-!             sweep (PrecomputeMatrixElements below) instead of this routine
+!             sweep (PrecomputeMatrices_L_A_MA below) instead of this routine
 !             unpacking
 !             them for every (pair x term) call.
 !   Ak, Al :: Ak=Lk*Lk', Al=Ll*Ll' -- precomputed for the same reason.
@@ -51,7 +51,7 @@ contains
 !O(n^3). Details are explained in the comments in the body.
 
 !Arguments
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     real(wp),intent(in)      :: Lk(nn,nn), Ll(nn,nn)
     real(wp),intent(in)      :: Ak(nn,nn), Al(nn,nn)
     real(wp),intent(in)      :: MAk(nn,nn)
@@ -455,14 +455,23 @@ contains
 
   end subroutine MatrixElementsHS_RG_0S
 
-  subroutine PrecomputeMatrixElements(np, Nmax, NonlinParam, mass, Lh, Ah, MAh)
-!Build cached per-function inputs for matrix-element evaluation. New cached
-!matrices belong in this interface as the hot path evolves.
-    integer,parameter     :: nn=Glob_AllowedNumOfPseudoParticles
+  subroutine PrecomputeMatrices_L_A_MA(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
+!This subroutine precomputes the Lk, Ak, and MAk=M*Ak matrices for all basis functions, so that
+!the matrix elements can be computed faster without having to recompute these matrices each time.
+!Input:
+!  np: number of nonlinear parameters per basis function
+!  Nmax: number of basis functions
+!  NonlinParam: nonlinear parameters for all basis functions (np x Nmax)
+!  MassMatrix: mass matrix (nn x nn)
+!Output:
+!  Lk: Lk matrices for all basis functions (nn x nn x Nmax)
+!  Ak: Ak matrices for all basis functions (nn x nn x Nmax) 
+!  MAk: M*Ak matrices for all basis functions (nn x nn x Nmax)
+    integer,parameter     :: nn=Glob_n
     integer, intent(in)   :: np, Nmax
-    real(wp),intent(in)   :: NonlinParam(np,Nmax), mass(nn,nn)
-    real(wp),intent(out)  :: Lh(nn,nn,Nmax), Ah(nn,nn,Nmax)
-    real(wp),intent(out),optional :: MAh(nn,nn,Nmax)
+    real(wp),intent(in)   :: NonlinParam(np,Nmax), MassMatrix(nn,nn)
+    real(wp),intent(out)  :: Lk(nn,nn,Nmax), Ak(nn,nn,Nmax)
+    real(wp),intent(out),optional :: MAk(nn,nn,Nmax)
     integer  :: f,i,j,k,indx
     real(wp) :: temp1
     do f=1,Nmax
@@ -470,33 +479,33 @@ contains
       do i=1,nn
         do j=i,nn
           indx=indx+1
-          Lh(i,j,f)=ZERO
-          Lh(j,i,f)=NonlinParam(indx,f)
+          Lk(i,j,f)=ZERO
+          Lk(j,i,f)=NonlinParam(indx,f)
         enddo
       enddo
       do i=1,nn
         do j=i,nn
           temp1=ZERO
           do k=1,i
-            temp1=temp1+Lh(i,k,f)*Lh(j,k,f)
+            temp1=temp1+Lk(i,k,f)*Lk(j,k,f)
           enddo
-          Ah(i,j,f)=temp1
-          Ah(j,i,f)=temp1
+          Ak(i,j,f)=temp1
+          Ak(j,i,f)=temp1
         enddo
       enddo
-      if (present(MAh)) then
+      if (present(MAk)) then
         do j=1,nn
           do i=1,nn
             temp1=ZERO
             do k=1,nn
-              temp1=temp1+mass(i,k)*Ah(k,j,f)
+              temp1=temp1+MassMatrix(i,k)*Ak(k,j,f)
             enddo
-            MAh(i,j,f)=temp1
+            MAk(i,j,f)=temp1
           enddo
         enddo
       endif
     enddo
-  end subroutine PrecomputeMatrixElements
+  end subroutine PrecomputeMatrices_L_A_MA
 
   subroutine MatrixElementsAll_RG_0S(Lk, Ll, Ak, Al, Pbra, Pket, &
                                        Hkl, Skl, Tkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
@@ -550,7 +559,7 @@ contains
 !                     densities need to be computed
 
 !Arguments
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     real(wp),intent(in)   :: Lk(nn,nn),Ll(nn,nn),Ak(nn,nn),Al(nn,nn)
     real(wp),intent(in)   :: Pbra(Glob_n,Glob_n),Pket(Glob_n,Glob_n)
     real(wp),intent(out)  :: Hkl,Skl,Tkl,Vkl,MVkl,drach_MVkl1,drach_MVkl2,drach_MVkl3,Darwinkl,drach_Darwinkl,OOkl
@@ -1464,7 +1473,7 @@ contains
   function trace(k,M)
     real(wp) trace
     integer k
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     real(wp) M(nn,nn)
     integer i
     trace=ZERO
@@ -1486,11 +1495,10 @@ contains
 !        inv_tAkl :: n x n real matrix where the inverse of Ak+tAl is stored
 ! ME_1_over_rij :: the value of <phi_k| 1/r_{ij} |phi_l> matrix element
 !          TrAJ :: the value of Tr[inv_tAkl Jij]
-!Note that n=Glob_n and nn=Glob_AllowedNumOfPseudoParticles. Although
-!all arrays (both arguments and local ones) are static and have dimension
-!nn x nn, only n x n subarrays are referenced.
+!All arrays (both arguments and local ones) are static and have dimension
+!nn x nn, where nn=Glob_n.
     real(wp) ME_rXr_over_rij
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 
 !Arguments:
     real(wp)  X(nn,nn),inv_tAkl(nn,nn),ME_1_over_rij,TrAJ
@@ -1553,10 +1561,9 @@ contains
 !          TrAJ :: the values of Tr[inv_tAkl Jij]
 !Output:
 !            ME :: n x n real matrix where all computed matrix elements are returned
-!Note that n=Glob_n and nn=Glob_AllowedNumOfPseudoParticles. Although
-!all arrays (both arguments and local ones) are static and have dimension
-!nn x nn, only n x n subarrays are referenced.
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+!All arrays (both arguments and local ones) are static and have dimension
+!nn x nn, where nn=Glob_n.
+    integer,parameter :: nn=Glob_n
 
 !Arguments:
     real(wp)  X(nn,nn),inv_tAkl(nn,nn),rmkl(Glob_n,Glob_n),TrAJ(nn,nn),ME(nn,nn)
@@ -1626,11 +1633,10 @@ contains
 !        inv_tAkl :: n x n real matrix where the inverse of Ak+tAl is stored
 ! ME_1_over_rij :: the value of <phi_k| 1/r_{ij} |phi_l> matrix element
 !          TrAJ :: the value of Tr[inv_tAkl Jij]
-!Note that n=Glob_n and nn=Glob_AllowedNumOfPseudoParticles. Although
-!all arrays (both arguments and local ones) are static and have dimension
-!nn x nn, only n x n subarrays are referenced.
+!All arrays (both arguments and local ones) are static and have dimension
+!nn x nn, where nn=Glob_n.
     real(wp) ME_rXr_rYr_over_rij
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 
 !Arguments:
     real(wp)  X(nn,nn),Y(nn,nn),inv_tAkl(nn,nn),ME_1_over_rij,TrAJ
@@ -1741,7 +1747,7 @@ contains
   function myME_dXd_dYd(X,Y,inv_tAkl,tAk,tAl,det_tAkl)
 
     real(wp) myME_dXd_dYd, det_tAkl
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     real(wp) X(nn,nn),Y(nn,nn),inv_tAkl(nn,nn),tAk(nn,nn),tAl(nn,nn)
 
 !Local variables:
@@ -1884,7 +1890,7 @@ contains
   function myME_dXd(X,inv_tAkl,tAl,det_tAkl)
 
     real(wp) myME_dXd, det_tAkl
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     real(wp) X(nn,nn),inv_tAkl(nn,nn),tAl(nn,nn)
 
 !Local variables:
@@ -1957,13 +1963,12 @@ contains
 !      inv_tAkl :: n x n real matrix where the inverse of Ak+tAl is stored
 ! ME_1_over_rij :: the value of <phi_k| 1/r_{ij} |phi_l> matrix element
 !          TrAJ :: the value of Tr[inv_tAkl Jij]
-!Note that n=Glob_n and nn=Glob_AllowedNumOfPseudoParticles. Although
-!all arrays (both arguments and local ones) are static and have dimension
-!nn x nn, only n x n subarrays are referenced.
+!All arrays (both arguments and local ones) are static and have dimension
+!nn x nn, where nn=Glob_n.
 
 !Input parameters:
     real(wp) myME_over_rij_dXd, det_tAkl
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     real(wp) :: X(nn,nn),inv_tAkl(nn,nn),tAl(nn,nn)
     integer p,q
 
@@ -2073,12 +2078,11 @@ contains
 !      inv_tAkl :: n x n real matrix where the inverse of Ak+tAl is stored
 ! ME_1_over_rij :: the value of <phi_k| 1/r_{ij} |phi_l> matrix element
 !          TrAJ :: the value of Tr[inv_tAkl Jij]
-!Note that n=Glob_n and nn=Glob_AllowedNumOfPseudoParticles. Although
-!all arrays (both arguments and local ones) are static and have dimension
-!nn x nn, only n x n subarrays are referenced.
+!All arrays (both arguments and local ones) are static and have dimension
+!nn x nn, where nn=Glob_n.
 !Input parameters:
     real(wp) ME_1_over_rij_dXd
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     real(wp) X(nn,nn),inv_tAkl(nn,nn),tAl(nn,nn),ME_1_over_rij,TrAJ
 !Local variables:
     integer i,j,p,q,k,n
@@ -2128,11 +2132,10 @@ contains
 !          TrAJ :: the values of Tr[inv_tAkl Jij]
 !Output:
 !            ME :: n x n real matrix where all computed matrix elements are returned
-!Note that n=Glob_n and nn=Glob_AllowedNumOfPseudoParticles. Although
-!all arrays (both arguments and local ones) are static and have dimension
-!nn x nn, only n x n subarrays are referenced.
+!All arrays (both arguments and local ones) are static and have dimension
+!nn x nn, where nn=Glob_n.
 !Input parameters:
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     real(wp) X(nn,nn),inv_tAkl(nn,nn),tAl(nn,nn),rmkl(Glob_n,Glob_n),TrAJ(nn,nn)
     real(wp) ME(nn,nn)
 !Local variables:
@@ -2177,7 +2180,7 @@ contains
 !!Old, slow, and simple version
 !function ME_1_over_rij_dXd(X,i,j,inv_tAkl,tAl,ME_1_over_rij,TrCJ)
 !real(wp) ME_1_over_rij_dXd
-!integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+!integer,parameter :: nn=Glob_n
 !real(wp) X(nn,nn),inv_tAkl(nn,nn),tAl(nn,nn),ME_1_over_rij,TrCJ
 !integer i,j,n
 !real(wp) M(nn,nn),Z(nn,nn)
@@ -2194,7 +2197,7 @@ contains
                          positronPosition, numberOfSpinFunctions, spinFreeME, SiSjME)
     use spinStuff
     implicit none
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 
     character(len = maxLen), intent(in) :: spatialYoung
     integer, intent(in) :: n, nFactorial
@@ -2288,7 +2291,7 @@ contains
 !Parameters (These are needed to declare static arrays. Using static
 !arrays makes the function call a little faster in comparison with
 !the case when arrays are dynamically allocated in stack)
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer,parameter :: nnp=nn*(nn+1)/2
 
 !Local variables

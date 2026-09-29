@@ -27,10 +27,10 @@ Below is a list of individuals (in alphabetical order) who have made direct cont
 
 The following individuals have made conceptual contributions. Their ideas regarding numerical implementation have been adopted within the code.
 
-| Name | ORCID iD |
+| Name | Profile |
 | :--- | :--- |
 | Ludwik Adamowicz | [![ORCID](https://img.shields.io/badge/ORCID-0000--0001--9557--0484-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0000-0001-9557-0484) |
-| Donald Kinghorn | |
+| Donald Kinghorn | [![Scopus](https://img.shields.io/badge/Scopus-6602886152-E9711C?logo=scopus&logoColor=white)](https://www.scopus.com/authid/detail.uri?authorId=6602886152) |
 
 ## Collaborators
 

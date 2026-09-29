@@ -16,6 +16,9 @@ authors:
     given-names: Sergiy
     orcid: "https://orcid.org/0000-0002-2783-078X"
     affiliation: "Department of Physics, Nazarbayev University"
+  - family-names: Almukhanov
+    given-names: Amir
+    orcid: "https://orcid.org/0009-0001-6025-6177"    
   - family-names: Bralin
     given-names: Amir
     orcid: "https://orcid.org/0009-0008-0675-2824"
@@ -31,6 +34,9 @@ authors:
   - family-names: Shomenov
     given-names: Toreniyaz
     orcid: "https://orcid.org/0000-0003-1153-4238"
+  - family-names: Suleimenov
+    given-names: Dias
+    orcid: "https://orcid.org/0009-0004-7252-3289"  
   - family-names: Tumakov
     given-names: Dmitry
     orcid: "https://orcid.org/0000-0003-0708-2427"
@@ -44,6 +50,9 @@ keywords:
   - variational method
   - high accuracy quantum-mechanical calculations
   - atomic and molecular structure
+  - relativistic and QED corrections
+  - fine structure
+  - oscillator strengths
   - non-Born-Oppenheimer calculations
   - quantum chemistry
   - Fortran
@@ -51,9 +60,9 @@ keywords:
 
 repository-code: "https://github.com/ecgpack/ecgpack"
 
-# TODO once a tagged release exists, uncomment and fill in:
-# version: "1.0.0"
-# date-released: "YYYY-MM-DD"
+# Update version (the release tag) and date-released with every new release
+version: "v26.09.30"
+date-released: "2026-09-30"
 
 # TODO once the repository is archived on Zenodo, uncomment and fill in
 # the concept DOI (the one that always resolves to the latest version):

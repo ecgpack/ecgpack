@@ -37,7 +37,7 @@ contains
 !           Dl=(dHkldvechLl,dSkldvechLl)
 
 !Arguments
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer,intent(in)          :: m_k,m_l
     real(wp),intent(in)      :: Lk(nn,nn), Ll(nn,nn)
     real(wp),intent(in)      :: Ak(nn,nn), Al(nn,nn)
@@ -657,13 +657,23 @@ contains
 
   end subroutine MatrixElementsHS_RG_1P
 
-  subroutine PrecomputeMatrixElements(np, Nmax, NonlinParam, mass, Lh, Ah, MAh)
-!Build cached per-function inputs for matrix-element evaluation.
-    integer,parameter     :: nn=Glob_AllowedNumOfPseudoParticles
+  subroutine PrecomputeMatrices_L_A_MA(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
+!This subroutine precomputes the Lk, Ak, and MAk=M*Ak matrices for all basis functions, so that
+!the matrix elements can be computed faster without having to recompute these matrices each time.
+!Input:
+!  np: number of nonlinear parameters per basis function
+!  Nmax: number of basis functions
+!  NonlinParam: nonlinear parameters for all basis functions (np x Nmax)
+!  MassMatrix: mass matrix (nn x nn)
+!Output:
+!  Lk: Lk matrices for all basis functions (nn x nn x Nmax)
+!  Ak: Ak matrices for all basis functions (nn x nn x Nmax) 
+!  MAk: M*Ak matrices for all basis functions (nn x nn x Nmax)
+    integer,parameter     :: nn=Glob_n
     integer, intent(in)   :: np, Nmax
-    real(wp),intent(in)   :: NonlinParam(np,Nmax), mass(nn,nn)
-    real(wp),intent(out)  :: Lh(nn,nn,Nmax), Ah(nn,nn,Nmax)
-    real(wp),intent(out),optional :: MAh(nn,nn,Nmax)
+    real(wp),intent(in)   :: NonlinParam(np,Nmax), MassMatrix(nn,nn)
+    real(wp),intent(out)  :: Lk(nn,nn,Nmax), Ak(nn,nn,Nmax)
+    real(wp),intent(out),optional :: MAk(nn,nn,Nmax)
     integer  :: f,i,j,k,indx
     real(wp) :: temp1
     do f=1,Nmax
@@ -671,33 +681,33 @@ contains
       do i=1,nn
         do j=i,nn
           indx=indx+1
-          Lh(i,j,f)=ZERO
-          Lh(j,i,f)=NonlinParam(indx,f)
+          Lk(i,j,f)=ZERO
+          Lk(j,i,f)=NonlinParam(indx,f)
         enddo
       enddo
       do i=1,nn
         do j=i,nn
           temp1=ZERO
           do k=1,i
-            temp1=temp1+Lh(i,k,f)*Lh(j,k,f)
+            temp1=temp1+Lk(i,k,f)*Lk(j,k,f)
           enddo
-          Ah(i,j,f)=temp1
-          Ah(j,i,f)=temp1
+          Ak(i,j,f)=temp1
+          Ak(j,i,f)=temp1
         enddo
       enddo
-      if (present(MAh)) then
+      if (present(MAk)) then
         do j=1,nn
           do i=1,nn
             temp1=ZERO
             do k=1,nn
-              temp1=temp1+mass(i,k)*Ah(k,j,f)
+              temp1=temp1+MassMatrix(i,k)*Ak(k,j,f)
             enddo
-            MAh(i,j,f)=temp1
+            MAk(i,j,f)=temp1
           enddo
         enddo
       endif
     enddo
-  end subroutine PrecomputeMatrixElements
+  end subroutine PrecomputeMatrices_L_A_MA
 
   subroutine MatrixElementsAll_RG_1P(m_k, m_l, Lk, Ll, Ak, Al, Pbra, Pket, &
                                          Hkl, Skl, Tkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
@@ -751,7 +761,7 @@ contains
 !AreMomDensNeeded :: flag indicating whether matrix elements of momentum
 !                     densities need to be computed
 
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 
 !Arguments
     integer,intent(in)       :: m_k,m_l
@@ -2057,7 +2067,7 @@ contains
 !Input:
 !   W :: n x n real matrix
 
-    integer, parameter :: nn = Glob_AllowedNumOfPseudoParticles
+    integer, parameter :: nn = Glob_n
     real(wp)           W(nn, nn), t
     integer               i,j,n
 
@@ -2086,7 +2096,7 @@ contains
 !      inv_tau3 :: scalar, inv_tau3 = 1/tau3 = 1/tr[inv_tAkl*tvl*tvk']
 !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   ME_rXr
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 !Arguments:
     real(wp)   X(nn,nn),inv_tAkl(nn,nn),inv_tAkltvl(nn),tvkinv_tAkl(nn),inv_tau3,Skl
 !Local variables:
@@ -2130,7 +2140,7 @@ contains
 !      inv_tau3 :: scalar, inv_tau3 = 1/tau3 = 1/tr[inv_tAkl*tvl*tvk']
 !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   ME_rXr_rYr
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 !Arguments:
     real(wp)   X(nn,nn),Y(nn,nn),inv_tAkl(nn,nn),inv_tAkltvl(nn),tvkinv_tAkl(nn),inv_tau3,Skl
 !Local variables:
@@ -2218,7 +2228,7 @@ contains
 !      inv_tau3 :: scalar, inv_tau3 = 1/tau3 = 1/tr[inv_tAkl*tvl*tvk']
 !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   ME_dWd2
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 !Arguments:
     real(wp)   W(nn,nn),tAk(nn,nn),tAl(nn,nn),inv_tAkl(nn,nn)
     integer       tvk(nn),tvl(nn)
@@ -2357,7 +2367,7 @@ contains
 !      inv_tau3 :: scalar, inv_tau3 = 1/tau3 = 1/tr[inv_tAkl*tvl*tvk']
 !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   ME_dWd21
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 !Arguments:
     real(wp)   X(nn,nn),Glob_B(nn,nn),tAk(nn,nn),tAl(nn,nn),inv_tAkl(nn,nn)
     integer       tvk(nn),tvl(nn)
@@ -2483,7 +2493,7 @@ contains
 
   function ME_dXd(X,tvk,tvl,inv_tAkltvl,inv_tAkl,tAk,tAl,inv_tAkltAl,Skl,tau3)
     real(wp)   ME_dXd
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     real(wp)   X(nn,nn),tAk(nn,nn),tAl(nn,nn),inv_tAkl(nn,nn),inv_tAkltAl(nn,nn)
     integer       i,j,n,k,tvk(nn),tvl(nn)
     real(wp)   inv_tAkltAlX(nn,nn),inv_tAkltAlXtAk(nn,nn),tvkinv_tAkltAlX(nn),inv_tAkltvl(nn)
@@ -2536,7 +2546,7 @@ contains
 !           t_V :: scalar, t_V = tau3 = tr[inv_tAkl*tvl*tvk']
 !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   SG_ME_rXr_over_rij
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 !Arguments:
     real(wp)   X(nn,nn),inv_tAkl(nn,nn)
     integer       i,j
@@ -2611,7 +2621,7 @@ contains
 !           t_V :: scalar, t_V = tau3 = tr[inv_tAkl*tvl*tvk']
 !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   SG_ME_rXr_rYr_over_rij
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 !Arguments:
     real(wp)   X(nn,nn),Y(nn,nn),inv_tAkl(nn,nn)
     integer       i,j
@@ -2736,7 +2746,7 @@ contains
 !           t_V :: scalar, t_V = tau3 = tr[inv_tAkl*tvl*tvk']
 !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   ME_rXr_over_rij
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 !Arguments:
     real(wp)   X(nn,nn),inv_tAkl(nn,nn)
     integer       i,j,tvk(nn),tvl(nn)
@@ -2835,7 +2845,7 @@ contains
 !           t_V :: scalar, t_V = tau3 = tr[inv_tAkl*tvl*tvk']
 !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   ME_rXr_rYr_over_rij
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 !Arguments:
     real(wp)   X(nn,nn),Y(nn,nn),inv_tAkl(nn,nn)
     integer       i,j,tvk(nn),tvl(nn)
@@ -3051,7 +3061,7 @@ contains
 !       tr_AJAV :: scalar, tr_AJAV = eta2(i,j) = tr[inv_tAkl*Jij*inv_tAkl*tvl*tvk']
 !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   ME_d_X_over_rij_d
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 !Arguments:
     real(wp)   X(nn,nn),tAk(nn,nn),tAl(nn,nn),inv_tAkl(nn,nn)
     integer       i,j,tvk(nn),tvl(nn)
@@ -3258,7 +3268,7 @@ contains
                          positronPosition, numberOfSpinFunctions, spinFreeME, SiSjME, SSNCspinME)
     use spinStuff
     implicit none
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 
     character(len = maxLen), intent(in) :: spatialYoung
     integer, intent(in) :: n, nFactorial
@@ -3421,7 +3431,7 @@ contains
     !Parameters (These are needed to declare static arrays. Using static
     !arrays makes the function call a little faster in comparison with
     !the case when arrays are dynamically allocated in stack)
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer,parameter :: nnp=nn*(nn+1)/2
     real(wp),intent(in)   :: SSNCspinME(Glob_n, Glob_n, numberOfSpinFunctions), &
                                 SziME(Glob_n, numberOfSpinFunctions), &
@@ -3761,7 +3771,7 @@ contains
 !Parameters (These are needed to declare static arrays. Using static
 !arrays makes the function call a little faster in comparison with
 !the case when arrays are dynamically allocated in stack)
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer,parameter :: nnp=nn*(nn+1)/2
 
 !Local variables

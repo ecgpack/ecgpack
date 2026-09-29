@@ -156,30 +156,24 @@ contains
       read(1,*) ReadChar(1:9),ReadInt
       write(*,'(1x,a9,1x,i6)') ReadChar(1:9),ReadInt
       Line=Line+1
-      Glob_n=ReadInt-1 !Glob_n is the number of pseudoparticles
-      if ((Glob_n<1).or.(ReadChar(1:9)/='PARTICLES')) then
+!The number of pseudoparticles, Glob_n, is fixed at compile time. Here we only
+!check that the number of particles specified in the input file matches it
+      if ((ReadInt<2).or.(ReadChar(1:9)/='PARTICLES')) then
         write(*,*) 'Error EC0102 in data file, line ',Line
         ErrorInDataFile=.true.
       endif
-    endif
-    call MPI_BCAST(Glob_n,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(Glob_BasisTypeSupplied,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    if (Glob_n/=Glob_AllowedNumOfPseudoParticles) then
-      if (Glob_ProcID==0) then
+      if (ReadInt-1/=Glob_n) then
         write (*,*) 'The version of the code you are running was compiled for the case'
         write (*,*) 'when the number of particles in the system is equal to', &
           Glob_AllowedNumOfParticles
-        write (*,*) 'while the number of particles specified in the input file is',Glob_n+1
+        write (*,*) 'while the number of particles specified in the input file is',ReadInt
         write (*,*) 'Please make appropriate changes. Program will now stop.'
+        ErrorInDataFile=.true.
       endif
-      ErrorInDataFile=.true.
     endif
+    call MPI_BCAST(Glob_BasisTypeSupplied,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
     call MPI_BCAST(ErrorInDataFile,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
     if (ErrorInDataFile) call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
-    Glob_np=Glob_n*(Glob_n+1)/2
-    Glob_npt=Glob_np
-    Glob_2Raised3n2=TWO**((3*Glob_n)/TWO)
-    Glob_PiRaised3n2=Glob_Pi**((3*Glob_n)/TWO)
 
 !Read the optional VECTOR_COUPLING_SCHEME line that may appear right after the
 !PARTICLES line. As with the other optional descriptors, the record is read into
@@ -1134,7 +1128,7 @@ contains
     Glob_dmva21 = (m0**3 + ml**3)/(TWO*m0*ml*(m0+ml)**2)
     Glob_dmva22 = (m0**3 + mh**3)/(TWO*m0*mh*(m0+mh)**2)
 !Glob_dmva2 = (m0**2)/(TWO*mh*(m0+mh)**2)
-    Glob_dmvB(1:Glob_AllowedNumOfPseudoParticles,1:Glob_AllowedNumOfPseudoParticles)=ZERO
+    Glob_dmvB(1:Glob_n,1:Glob_n)=ZERO
 !if (.not. Glob_ArePseudoParticleMassesTheSame) then
 !  do i=1,n
 !    if (i == indexh) cycle
@@ -1149,7 +1143,7 @@ contains
 !    enddo
 !  enddo
 !endif
-    Glob_dmvM(1:Glob_AllowedNumOfPseudoParticles,1:Glob_AllowedNumOfPseudoParticles)=ZERO
+    Glob_dmvM(1:Glob_n,1:Glob_n)=ZERO
     Glob_dmvM(1:n,1:n)=Glob_MassMatrix(1:n,1:n)
 !Glob_dmvMB=Glob_dmvM+Glob_dmvB
 
@@ -3391,7 +3385,7 @@ contains
 !Arguments:
     integer  fb,fe
 !Local variables:
-    real(wp) temp(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
+    real(wp) temp(Glob_n*(Glob_n+1))
     integer i,j,f,t,fbm,fep
 
     f=(fe-fb+1)/2 !integer division!
@@ -4524,7 +4518,7 @@ contains
     logical,intent(in)  :: AreDerivativesNeeded
     integer,intent(out) :: ErrorCode
 !Local variables:
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer a,b,i,j,q,PairNumber,MatrixOrder,NumActive
     integer ActiveIndex,NumMatrixEntries,NumDerivativeEntries,npt2
     integer mActive,mmActive,mOther,mmOther
@@ -4565,7 +4559,7 @@ contains
       Glob_D=ZERO
     endif
     allocate(Lh(nn,nn,MatrixOrder),Ah(nn,nn,MatrixOrder),MAh(nn,nn,MatrixOrder))
-    call PrecomputeMatrixElements(Glob_npt,MatrixOrder, &
+    call PrecomputeMatrices_L_A_MA(Glob_npt,MatrixOrder, &
       Glob_NonlinParam(1:Glob_npt,1:MatrixOrder),Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
 
     !Each physical pair that touches the active set is evaluated exactly once.
@@ -12353,7 +12347,7 @@ contains
 
 !Local variables:
     integer        i,j,k,kk,l,ll,counter,a,b,c,d,a1,b1
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer        n,np,npt,cbs
     real(wp),allocatable,dimension(:,:,:) :: Lh,Ah
     integer        OpenFileErr,ErrorCode
@@ -12442,7 +12436,7 @@ contains
     Glob_HSBuffLen=max(min(Glob_CurrBasisSize*(Glob_CurrBasisSize+1)/2,1000),30*Glob_CurrBasisSize)
     cbs=Glob_CurrBasisSize
     allocate(Lh(nn,nn,cbs),Ah(nn,nn,cbs))
-    call PrecomputeMatrixElements(npt,cbs,Glob_NonlinParam(1:npt,1:cbs), &
+    call PrecomputeMatrices_L_A_MA(npt,cbs,Glob_NonlinParam(1:npt,1:cbs), &
                                   Glob_MassMatrix(1:nn,1:nn),Lh,Ah)
     if (GSEPsolMethod=='G') NumOfEigvecs=min(cbs,Glob_WhichEigenvalue+10)
     if (GSEPsolMethod=='I') NumOfEigvecs=1

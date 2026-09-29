@@ -36,7 +36,7 @@ contains
 !           Dl=(dHkldvechLl,dSkldvechLl)
 
 !Arguments
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer,intent(in)          :: m_k,m_l,mm_k,mm_l
     real(wp),intent(in)      :: Lk(nn,nn), Ll(nn,nn)
     real(wp),intent(in)      :: Ak(nn,nn), Al(nn,nn)
@@ -770,13 +770,23 @@ contains
 
   end subroutine MatrixElementsHS_RG_2P
 
-  subroutine PrecomputeMatrixElements(np, Nmax, NonlinParam, mass, Lh, Ah, MAh)
-!Build cached per-function inputs for matrix-element evaluation.
-    integer,parameter     :: nn=Glob_AllowedNumOfPseudoParticles
+  subroutine PrecomputeMatrices_L_A_MA(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
+!This subroutine precomputes the Lk, Ak, and MAk=M*Ak matrices for all basis functions, so that
+!the matrix elements can be computed faster without having to recompute these matrices each time.
+!Input:
+!  np: number of nonlinear parameters per basis function
+!  Nmax: number of basis functions
+!  NonlinParam: nonlinear parameters for all basis functions (np x Nmax)
+!  MassMatrix: mass matrix (nn x nn)
+!Output:
+!  Lk: Lk matrices for all basis functions (nn x nn x Nmax)
+!  Ak: Ak matrices for all basis functions (nn x nn x Nmax) 
+!  MAk: M*Ak matrices for all basis functions (nn x nn x Nmax)
+    integer,parameter     :: nn=Glob_n
     integer, intent(in)   :: np, Nmax
-    real(wp),intent(in)   :: NonlinParam(np,Nmax), mass(nn,nn)
-    real(wp),intent(out)  :: Lh(nn,nn,Nmax), Ah(nn,nn,Nmax)
-    real(wp),intent(out),optional :: MAh(nn,nn,Nmax)
+    real(wp),intent(in)   :: NonlinParam(np,Nmax), MassMatrix(nn,nn)
+    real(wp),intent(out)  :: Lk(nn,nn,Nmax), Ak(nn,nn,Nmax)
+    real(wp),intent(out),optional :: MAk(nn,nn,Nmax)
     integer  :: f,i,j,k,indx
     real(wp) :: temp1
     do f=1,Nmax
@@ -784,33 +794,33 @@ contains
       do i=1,nn
         do j=i,nn
           indx=indx+1
-          Lh(i,j,f)=ZERO
-          Lh(j,i,f)=NonlinParam(indx,f)
+          Lk(i,j,f)=ZERO
+          Lk(j,i,f)=NonlinParam(indx,f)
         enddo
       enddo
       do i=1,nn
         do j=i,nn
           temp1=ZERO
           do k=1,i
-            temp1=temp1+Lh(i,k,f)*Lh(j,k,f)
+            temp1=temp1+Lk(i,k,f)*Lk(j,k,f)
           enddo
-          Ah(i,j,f)=temp1
-          Ah(j,i,f)=temp1
+          Ak(i,j,f)=temp1
+          Ak(j,i,f)=temp1
         enddo
       enddo
-      if (present(MAh)) then
+      if (present(MAk)) then
         do j=1,nn
           do i=1,nn
             temp1=ZERO
             do k=1,nn
-              temp1=temp1+mass(i,k)*Ah(k,j,f)
+              temp1=temp1+MassMatrix(i,k)*Ak(k,j,f)
             enddo
-            MAh(i,j,f)=temp1
+            MAk(i,j,f)=temp1
           enddo
         enddo
       endif
     enddo
-  end subroutine PrecomputeMatrixElements
+  end subroutine PrecomputeMatrices_L_A_MA
 
   subroutine MatrixElementsAll_RG_2P(m_k, m_l, mm_k, mm_l, Lk, Ll, Ak, Al, Pbra, Pket, &
                                           Hkl, Skl, Tkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
@@ -819,7 +829,7 @@ contains
                                           CFkl, NumDensGridPoints, DensGrid, Denskl, &
                                           AreCorrFuncNeeded, ArePartDensNeeded, AreMCorrFuncNeeded, AreMomDensNeeded)
 
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 
 !Arguments
     integer,intent(in)       :: m_k,m_l,mm_k,mm_l
@@ -1852,7 +1862,7 @@ contains
   function ME_KDFG(rindexI,rindexJ,KK,DD,FF,GG,tAk,tAl,inv_tAkl,det_tAkl,tvk,tvl,twk,twl)
 
     real(wp)   ME_KDFG
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     !Arguments:
     real(wp)   KK(nn,nn), DD(nn,nn), FF(nn,nn), GG(nn,nn), &
       tAl(nn,nn), tAk(nn,nn), inv_tAkl(nn,nn), det_tAkl
@@ -2293,7 +2303,7 @@ contains
   function ME_over_rij_dXd(p,q,X,tAl,inv_tAkl,det_tAkl,tvk,tvl,twk,twl)
 
     real(wp)   ME_over_rij_dXd
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     !Arguments:
     real(wp)   X(nn,nn),tAl(nn,nn),inv_tAkl(nn,nn),det_tAkl
     integer       p,q
@@ -2377,7 +2387,7 @@ contains
   function ME_over_rij_WkWl_real(p,q,inv_tAkl,det_tAkl,twk,twl)
     real(wp)  ME_over_rij_WkWl_real
 
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     !Arguments:
     integer       p,q
     real(wp)   inv_tAkl(nn,nn),det_tAkl
@@ -2435,7 +2445,7 @@ contains
   function ME_rXr_over_rij_WkWl_real(p,q,X,inv_tAkl,det_tAkl,twk,twl)
     real(wp)  ME_rXr_over_rij_WkWl_real
 
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     !Arguments:
     integer       p,q
     real(wp)   X(nn,nn),inv_tAkl(nn,nn),det_tAkl
@@ -2552,7 +2562,7 @@ contains
   function ME_over_rij_real(p,q,inv_tAkl,det_tAkl,tvk,tvl,twk,twl)
 
     real(wp)   ME_over_rij_real
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     !Arguments:
     integer       p, q
     real(wp)   tAl(nn,nn),tAk(nn,nn),inv_tAkl(nn,nn),det_tAkl
@@ -2635,7 +2645,7 @@ contains
   function ME_rXr_rYr_over_rij_real(p,q,X,Y,inv_tAkl,det_tAkl,tvk,tvl,twk,twl)
 
     real(wp)   ME_rXr_rYr_over_rij_real
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     !Arguments:
     real(wp)   X(nn,nn),Y(nn,nn),inv_tAkl(nn,nn),det_tAkl
     real(wp)   tvk(nn),tvl(nn),twk(nn),twl(nn)
@@ -3218,7 +3228,7 @@ contains
     !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   ME_rXr_over_rij_real
 
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     !Arguments:
     integer       p,q
     real(wp)   Xs(nn,nn),inv_tAkl(nn,nn),det_tAkl
@@ -3437,7 +3447,7 @@ contains
 !Fast variant of ME_over_rij_real. cf = ONEHALF*Glob_PiRaised3n2/
 !(Glob_SqrtPi*det_tAkl*sqrt(det_tAkl)).
     real(wp)   ME_ovr_f
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer       p,q
     real(wp)   gamma,cf
     real(wp)   vk(nn),Avk(nn),vl(nn),Avl(nn),wk(nn),Awk(nn),wl(nn),Awl(nn)
@@ -3481,7 +3491,7 @@ contains
 !Fast variant of ME_over_rij_WkWl_real. cf = Glob_PiRaised3n2/
 !(Glob_SqrtPi*det_tAkl*sqrt(det_tAkl)).
     real(wp)   ME_ovrWW_f
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer       p,q
     real(wp)   gamma,cf
     real(wp)   wk(nn),Awk(nn),wl(nn),Awl(nn)
@@ -3510,7 +3520,7 @@ contains
 !Fast variant of ME_rXr_over_rij_WkWl_real with X = sig*(u*v'+v*u')/2.
 !cf = Glob_PiRaised3n2/(Glob_SqrtPi*det_tAkl*sqrt(det_tAkl)).
     real(wp)   ME_rXrWW_f
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer       p,q
     real(wp)   gamma,cf,sig
     real(wp)   xu(nn),Axu(nn),xv(nn),Axv(nn),wk(nn),Awk(nn),wl(nn),Awl(nn)
@@ -3565,7 +3575,7 @@ contains
 !Fast variant of ME_rXr_over_rij_real with Xs = sig*(u*v'+v*u')/2.
 !cf = ONEHALF*Glob_PiRaised3n2/(sqrt(Glob_Pi)*det_tAkl*sqrt(det_tAkl)).
     real(wp)   ME_rXr_f
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer       p,q
     real(wp)   gamma,cf,sig
     real(wp)   xu(nn),Axu(nn),xv(nn),Axv(nn)
@@ -3684,7 +3694,7 @@ contains
 !and Y = sy*(uy*vy'+vy*uy')/2.
 !cf = Glob_PiRaised3n2/(TWO*Glob_SqrtPi*det_tAkl*sqrt(det_tAkl)).
     real(wp)   ME_rXrYr_f
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer       p,q
     real(wp)   gamma,cf,sx,sy
     real(wp)   xu(nn),Axu(nn),xv(nn),Axv(nn),yu(nn),Ayu(nn),yv(nn),Ayv(nn)
@@ -4043,7 +4053,7 @@ contains
 !sig/2*(tAl(:,a)*tvl(b)+tAl(:,b)*tvl(a)), tr[X*tAl] = sig*tAl(b,a),
 !and inv_tAkl*tAl(:,x) = UtAl(:,x) with UtAl = inv_tAkl*tAl.
     real(wp)   ME_ovr_dXd_f
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer       p,q,a,b
     real(wp)   gamma,cfx,cfo,sig
     real(wp)   tAl(nn,nn),UtAl(nn,nn)
@@ -4079,7 +4089,7 @@ contains
 !pulled out of the integral calls (the integrals are multilinear in the
 !four vector slots and linear in the X, Y matrices).
     real(wp)   ME_KDFG_f
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer       p,q,y1,y2,zc,ka,kb,d1,d2
     real(wp)   gamma,cfo,cfw,cfx,cft
     real(wp)   tAk(nn,nn),tAl(nn,nn),UtAl(nn,nn),inv_tAkl(nn,nn)
@@ -4275,7 +4285,7 @@ contains
 !Input:
 !   W :: n x n real matrix
 
-    integer, parameter :: nn = Glob_AllowedNumOfPseudoParticles
+    integer, parameter :: nn = Glob_n
     real(wp)           W(nn, nn), t
     integer               i,j,n
 
@@ -4303,7 +4313,7 @@ contains
 !           t_V :: scalar, t_V = tau3 = tr[inv_tAkl*tvl*tvk']
 !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   SG_ME_rXr_rYr_over_rij
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 !Arguments:
     real(wp)   X(nn,nn),Y(nn,nn),inv_tAkl(nn,nn)
     integer       i,j
@@ -4426,7 +4436,7 @@ contains
 !           t_V :: scalar, t_V = tau3 = tr[inv_tAkl*tvl*tvk']
 !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   SG_ME_rXr_rYr_rZr_over_rij
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 !Arguments:
     real(wp)   X(nn,nn),Y(nn,nn),Z(nn,nn),inv_tAkl(nn,nn)
     integer       i,j
@@ -4643,7 +4653,7 @@ contains
     !           t_V :: scalar, t_V = tau3 = tr[inv_tAkl*tvl*tvk']
     !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   ME_rXr_over_rij
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     !Arguments:
     real(wp)   X(nn,nn),inv_tAkl(nn,nn),det_tAkl
     integer       i,j,tvk(nn),tvl(nn),tbk(nn),tbl(nn)
@@ -4829,7 +4839,7 @@ contains
 !           t_V :: scalar, t_V = tau3 = tr[inv_tAkl*tvl*tvk']
 !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   ME_over_rij
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 !Arguments:
     real(wp)   inv_tAkl(nn,nn),det_tAkl
     integer       i,j,tvk(nn),tvl(nn),tbk(nn),tbl(nn)
@@ -4941,7 +4951,7 @@ contains
                              tvkinv_tAkl, twkinv_tAkl, inv_tAkltvl, inv_tAkltwl)
 
     real(wp)   ME_d_X_over_rij_d
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     !Arguments:
     real(wp)   X(nn,nn),tAl(nn,nn),tAk(nn,nn),inv_tAkl(nn,nn),det_tAkl, &
       tvkinv_tAkl(nn), twkinv_tAkl(nn), inv_tAkltvl(nn), inv_tAkltwl(nn)
@@ -5356,7 +5366,7 @@ contains
 !           t_V :: scalar, t_V = tau3 = tr[inv_tAkl*tvl*tvk']
 !           Skl :: scalar, overlap Skl=<\tilde phi_k|\tilde phi_l>
     real(wp)   ME_rXr_rYr_over_rij
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 !Arguments:
     real(wp)   X(nn,nn),Y(nn,nn),inv_tAkl(nn,nn),det_tAkl
     integer       i,j,tvk(nn),tvl(nn),tbk(nn),tbl(nn)
@@ -5744,7 +5754,7 @@ XJYJ=(t_XJV1+t_JXV1)*(t_YJV2+t_JYV2)+(t_XJV2+t_JXV2)*(t_YJV1+t_JYV1)-(t_XJV5+t_J
   function rPr_rQr(P,Q,tvk,tbk,inv_tAkl,det_tAkl,tau3,tau33,tau333,tau334,tvkinv_tAkl,tbkinv_tAkl,inv_tAkltvl,inv_tAkltbl)
     real(wp)   rPr_rQr
 !arguments
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer       tvk(nn),tbk(nn)
     real(wp)   P(nn,nn),Q(nn,nn),inv_tAkl(nn,nn),tau3,tau33,tau333,tau334,det_tAkl
     real(wp)   inv_tAkltvl(nn),inv_tAkltbl(nn),tvkinv_tAkl(nn),tbkinv_tAkl(nn)
@@ -5887,7 +5897,7 @@ XJYJ=(t_XJV1+t_JXV1)*(t_YJV2+t_JYV2)+(t_XJV2+t_JXV2)*(t_YJV1+t_JYV1)-(t_XJV5+t_J
   function dXddYd(X,Y,tvk,tbk,tvl,tbl,tAl,tAk,inv_tAkl,det_tAkl,tau3,tau33,tau333,tau334,inv_tAkltAl,inv_tAkltAk)
     real(wp)   dXddYd
 !arguments
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer       tvk(nn),tbk(nn),tvl(nn),tbl(nn)
     real(wp)   X(nn,nn),Y(nn,nn),inv_tAkl(nn,nn),tau3,tau33,tau333,tau334,det_tAkl
     real(wp)   tAk(nn,nn),tAl(nn,nn)
@@ -6185,7 +6195,7 @@ XJYJ=(t_XJV1+t_JXV1)*(t_YJV2+t_JYV2)+(t_XJV2+t_JXV2)*(t_YJV1+t_JYV1)-(t_XJV5+t_J
 
   function ME_dXd(RR,vk,vl,wk,wl,det_tAkl,Al,Aklinv)
     !Arguments
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     real(wp)   ME_dXd
     real(wp)   det_tAkl, RR(nn,nn),Al(nn,nn),Aklinv(nn,nn)
     integer       vk(nn), vl(nn), wk(nn), wl(nn)
@@ -6392,7 +6402,7 @@ XJYJ=(t_XJV1+t_JXV1)*(t_YJV2+t_JYV2)+(t_XJV2+t_JXV2)*(t_YJV1+t_JYV1)-(t_XJV5+t_J
                          positronPosition, numberOfSpinFunctions, spinFreeME, SiSjME, SSNCspinME)
     use spinStuff
     implicit none
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
 
     character(len = maxLen), intent(in) :: spatialYoung
     integer, intent(in) :: n, nFactorial
@@ -6555,7 +6565,7 @@ XJYJ=(t_XJV1+t_JXV1)*(t_YJV2+t_JYV2)+(t_XJV2+t_JXV2)*(t_YJV1+t_JYV1)-(t_XJV5+t_J
 !Parameters (These are needed to declare static arrays. Using static
 !arrays makes the function call a little faster in comparison with
 !the case when arrays are dynamically allocated in stack)
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer,parameter :: nnp=nn*(nn+1)/2
     real(wp),intent(in)   :: SSNCspinME(Glob_n, Glob_n, numberOfSpinFunctions), &
                                 SziME(Glob_n, numberOfSpinFunctions), &
@@ -6981,7 +6991,7 @@ XJYJ=(t_XJV1+t_JXV1)*(t_YJV2+t_JYV2)+(t_XJV2+t_JXV2)*(t_YJV1+t_JYV1)-(t_XJV5+t_J
     !Parameters (These are needed to declare static arrays. Using static
     !arrays makes the function call a little faster in comparison with
     !the case when arrays are dynamically allocated in stack)
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer,parameter :: nnp=nn*(nn+1)/2
 
     !Local variables

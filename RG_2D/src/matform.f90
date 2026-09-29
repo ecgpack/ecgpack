@@ -145,7 +145,7 @@ contains
 !Arguments :
     integer     Nmin,Nmax
 !Local variables :
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer     k,l,i,kk,ll,ii,j,q
     integer     kstart,lstart,kstop,lstop,n,np,np1,nb
     integer     mk,ml,mmk,mml
@@ -158,7 +158,7 @@ contains
 !These arrays are not actually used but needed for proper calling
 !of subroutine MatrixElementsHS_RG_0S. Thus, one can set some small size
 !for them
-    real(wp)  Dk(2),Dl(2),Dk1(2),Dl1(2),Dk2(2),Dl2(2),Dk3(2),Dl3(2),Dk4(2),Dl4(2)
+    real(wp)  Dk(2*Glob_np),Dl(2*Glob_np),Dk1(2),Dl1(2),Dk2(2),Dl2(2),Dk3(2),Dl3(2),Dk4(2),Dl4(2)
     real(wp)  Dk5(2),Dl5(2),Dk6(2),Dl6(2),Dk7(2),Dl7(2),Dk8(2),Dl8(2)
 
     n=Glob_n
@@ -166,7 +166,7 @@ contains
     np1=np+1
     nb=Glob_HSBuffLen
     allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
-    call PrecomputeMatrixElements(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
+    call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
                                   Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
     Glob_HklBuff1(1:nb)=ZERO
     Glob_SklBuff1(1:nb)=ZERO
@@ -278,7 +278,7 @@ contains
 !Arguments :
     integer     Nmin,Nmax
 !Local variables :
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer     k,l,i,kk,ll,ii,j,q
     integer     kstart,lstart,kstop,lstop,n,np,npt2,nb
     integer     mk,ml,mmk,mml
@@ -288,26 +288,26 @@ contains
     real(wp) Vkl5,Tkl5,Vkl6,Tkl6,Vkl7,Tkl7,Vkl8,Tkl8
     real(wp) Ssum,Hsum
     real(wp),allocatable :: Lh(:,:,:),Ah(:,:,:),MAh(:,:,:)
-    real(wp) Dk(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dl(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dksum(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dlsum(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dk1(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dl1(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dk2(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dl2(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dk3(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dl3(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dk4(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dl4(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dk5(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dl5(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dk6(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dl6(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-!real(wp) Dk7(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-!real(wp) Dl7(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-!real(wp) Dk8(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-!real(wp) Dl8(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
+    real(wp) Dk(Glob_n*(Glob_n+1))
+    real(wp) Dl(Glob_n*(Glob_n+1))
+    real(wp) Dksum(Glob_n*(Glob_n+1))
+    real(wp) Dlsum(Glob_n*(Glob_n+1))
+    real(wp) Dk1(Glob_n*(Glob_n+1))
+    real(wp) Dl1(Glob_n*(Glob_n+1))
+    real(wp) Dk2(Glob_n*(Glob_n+1))
+    real(wp) Dl2(Glob_n*(Glob_n+1))
+    real(wp) Dk3(Glob_n*(Glob_n+1))
+    real(wp) Dl3(Glob_n*(Glob_n+1))
+    real(wp) Dk4(Glob_n*(Glob_n+1))
+    real(wp) Dl4(Glob_n*(Glob_n+1))
+    real(wp) Dk5(Glob_n*(Glob_n+1))
+    real(wp) Dl5(Glob_n*(Glob_n+1))
+    real(wp) Dk6(Glob_n*(Glob_n+1))
+    real(wp) Dl6(Glob_n*(Glob_n+1))
+!real(wp) Dk7(Glob_n*(Glob_n+1))
+!real(wp) Dl7(Glob_n*(Glob_n+1))
+!real(wp) Dk8(Glob_n*(Glob_n+1))
+!real(wp) Dl8(Glob_n*(Glob_n+1))
     logical     grad_l
 
     n=Glob_n
@@ -316,7 +316,7 @@ contains
     nb=Glob_HSBuffLen
 
     allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
-    call PrecomputeMatrixElements(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
+    call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
                                   Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
 
     Glob_HklBuff1(1:nb)=ZERO

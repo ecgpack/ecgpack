@@ -45,24 +45,24 @@ module globvars
   character(5),parameter  :: Glob_BasisType='RG_2P'  !Short name for the type of basis used
   logical  ::  Glob_BasisTypeSupplied=.false.
 
-  integer       Glob_n          !Number of pseudoparticles
+  integer,parameter :: Glob_n=Glob_AllowedNumOfPseudoParticles  !Number of pseudoparticles
 
 !np=n(n+1)/2 - number of independent parameters in a
 !symmetric matrix of size (n x n)
-  integer       Glob_np
+  integer,parameter :: Glob_np=Glob_n*(Glob_n+1)/2
 
 !Total number of nonlinear parameters per basis function
 !In case of real L=1 Gaussians Glob_npt=Glob_np
-  integer       Glob_npt
+  integer,parameter :: Glob_npt=Glob_np
 
 !Glob_np_MaxAllowed and Glob_npt_MaxAllowed determine the
 !maximal allowed values for Glob_np and Glob_npt
   integer,parameter :: Glob_np_MaxAllowed= &
-                       Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1)/2
+                       Glob_n*(Glob_n+1)/2
   integer,parameter :: Glob_npt_MaxAllowed=Glob_np_MaxAllowed
 
-  real(wp)   Glob_2Raised3n2  !2^(3n/2)
-  real(wp)   Glob_PiRaised3n2 !pi^(3n/2)
+  real(wp),parameter :: Glob_2Raised3n2=TWO**((3*Glob_n)/TWO)       !2^(3n/2)
+  real(wp),parameter :: Glob_PiRaised3n2=Glob_Pi**((3*Glob_n)/TWO) !pi^(3n/2)
 
 !Glob_CurrBasisSize is a variable whose value equals the current
 !size of the basis
@@ -108,9 +108,9 @@ module globvars
 !Glob_dmvB, Glob_dmvM, and Glob_dmvMB are constant diagonal matrices used in
 !the evaluation of drachmanized mass-velocity correction. their elements depend
 !of the masses of particles
-  real(wp)   Glob_dmvM(Glob_AllowedNumOfPseudoParticles,Glob_AllowedNumOfPseudoParticles)
-  real(wp)   Glob_dmvB(Glob_AllowedNumOfPseudoParticles,Glob_AllowedNumOfPseudoParticles)
-  real(wp)   Glob_dmvMB(Glob_AllowedNumOfPseudoParticles,Glob_AllowedNumOfPseudoParticles)
+  real(wp)   Glob_dmvM(Glob_n,Glob_n)
+  real(wp)   Glob_dmvB(Glob_n,Glob_n)
+  real(wp)   Glob_dmvMB(Glob_n,Glob_n)
 
 !Glob_PseudoChargeMatrix is the matrix consisting of pseudocharge products
 !Glob_ScaledPseudoChargeMatrix is the scaled version of Glob_PseudoChargeMatrix

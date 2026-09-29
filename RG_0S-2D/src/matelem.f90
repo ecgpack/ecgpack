@@ -29,7 +29,7 @@ contains
 !Parameters (These are needed to declare static arrays. Using static
 !arrays makes the function call a little faster in comparison with
 !the case when arrays are dynamically allocated in stack)
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer,parameter :: nnp=nn*(nn+1)/2
 
 !Local variables
@@ -154,7 +154,7 @@ contains
     !Parameters (These are needed to declare static arrays. Using static
     !arrays makes the function call a little faster in comparison with
     !the case when arrays are dynamically allocated in stack)
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer,parameter :: nnp=nn*(nn+1)/2
 
     !Local variables
@@ -418,7 +418,7 @@ contains
     !Parameters (These are needed to declare static arrays. Using static
     !arrays makes the function call a little faster in comparison with
     !the case when arrays are dynamically allocated in stack)
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer,parameter :: nnp=nn*(nn+1)/2
 
     !Local variables

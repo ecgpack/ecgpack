@@ -307,10 +307,10 @@ $(BUILD_DIR)/dmng.o: $(SRC_DIR)/dmng.f $(BUILD_DIR)/X1MACH.o
 $(BUILD_DIR)/globvars.o: $(SRC_DIR)/globvars.f90 $(BUILD_DIR)/wp_def_$(PREC).o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/globvars.f90 -o $(BUILD_DIR)/globvars.o
 
-$(BUILD_DIR)/linalg.o: $(SRC_DIR)/linalg.f90 $(BUILD_DIR)/globvars.o $(OBJ_LPKBLS)
+$(BUILD_DIR)/linalg.o: $(SRC_DIR)/linalg.f90 $(BUILD_DIR)/globvars.o $(OBJS_LPKBLS)
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/linalg.f90 -o $(BUILD_DIR)/linalg.o
 
-$(BUILD_DIR)/spin.o: $(SRC_DIR)/spin.f90 $(BUILD_DIR)/wp_def_$(PREC).o
+$(BUILD_DIR)/spin.o: $(SRC_DIR)/spin.f90 $(BUILD_DIR)/globvars.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/spin.f90 -o $(BUILD_DIR)/spin.o
 
 $(BUILD_DIR)/misc.o: $(SRC_DIR)/misc.f90 $(BUILD_DIR)/globvars.o

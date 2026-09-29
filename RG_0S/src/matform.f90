@@ -146,7 +146,7 @@ contains
     integer         Nmin,Nmax
 !Local variables :
     integer     k,l,i,kk,ll,ii,j,q
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer     kstart,lstart,kstop,lstop,n,np,np1,nb
     real(wp) Skl,Hkl
     real(wp) Ssum,Hsum
@@ -156,7 +156,7 @@ contains
 !These arrays are not actually used but needed for proper calling
 !of subroutine MatrixElementsHS_RG_0S. Thus, one can set some small size
 !for them
-    real(wp)  Dk(2),Dl(2)
+    real(wp)  Dk(2*Glob_np),Dl(2*Glob_np)
 
     n=Glob_n
     np=Glob_np
@@ -164,7 +164,7 @@ contains
     nb=Glob_HSBuffLen
 
     allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
-    call PrecomputeMatrixElements(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
+    call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
                                   Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
 
     Glob_HklBuff1(1:nb)=ZERO
@@ -264,16 +264,16 @@ contains
     integer         Nmin,Nmax
 !Local variables :
     integer     k,l,i,kk,ll,ii,j,q
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter :: nn=Glob_n
     integer     kstart,lstart,kstop,lstop,n,np,npt2,nb
     real(wp) Skl,Hkl
     real(wp) Ssum,Hsum
 !Hoisted per-function inputs of MatrixElementsHS_RG_0S (see ComputeMatElem).
     real(wp),allocatable :: Lh(:,:,:),Ah(:,:,:),MAh(:,:,:)
-    real(wp) Dk(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dl(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dksum(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
-    real(wp) Dlsum(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
+    real(wp) Dk(Glob_n*(Glob_n+1))
+    real(wp) Dl(Glob_n*(Glob_n+1))
+    real(wp) Dksum(Glob_n*(Glob_n+1))
+    real(wp) Dlsum(Glob_n*(Glob_n+1))
     logical     grad_l
 
     n=Glob_n
@@ -282,7 +282,7 @@ contains
     nb=Glob_HSBuffLen
 
     allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
-    call PrecomputeMatrixElements(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
+    call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
                                   Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
 
     Glob_HklBuff1(1:nb)=ZERO
