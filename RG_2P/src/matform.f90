@@ -183,21 +183,22 @@ contains
         q=(i-1)*Glob_NumYHYTerms-1
         do j=1,Glob_NumYHYTerms
           if (mod(q+j,Glob_NumOfProcs)==Glob_ProcID) then
-!        call MatrixElementsHS_RG_1P(mk,ml,mmk,mml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
+!        call MatrixElementsHS_RG_1P(mk,ml,mmk,mml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
 !               Hkl1,Skl1,Dk1,Dl1,.false.,.false.)
-!        call MatrixElementsHS_RG_1P(mk,mml,mmk,ml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
+!        call MatrixElementsHS_RG_1P(mk,mml,mmk,ml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
 !               Hkl2,Skl2,Dk2,Dl2,.false.,.false.)
 
-!        call MatrixElementsHS_RG_1P(mmk,ml,mk,mml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
+!        call MatrixElementsHS_RG_1P(mmk,ml,mk,mml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
 !               Hkl3,Skl3,Dk3,Dl3,.false.,.false.)
-!        call MatrixElementsHS_RG_1P(mmk,mml,mk,ml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
+!        call MatrixElementsHS_RG_1P(mmk,mml,mk,ml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
 !               Hkl4,Skl4,Dk4,Dl4,.false.,.false.)
 !                Hkl=2*Hkl1-2*Hkl2!-Hkl3+Hkl4
 !                Skl=2*Skl1-2*Skl2!-Skl3+Skl4
 !                Dk=2*Dk1-2*Dk2!-Dk3+Dk4
 !                Dl=2*Dl1-2*Dl2!-Dl3+Dl4
-            call MatrixElementsHS_RG_2P(mk,ml,mmk,mml,Lh(1,1,k),Lh(1,1,l), &
-                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1:n,1:n,j), &
+            call MatrixElementsHS_RG_2P(n,np,mk,ml,mmk,mml,Lh(1,1,k),Lh(1,1,l), &
+                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1,1,j),Glob_MassMatrix,Glob_ScaledPseudoChargeMatrix, &
+              Glob_SqrtPi,Glob_PiRaised3n2, &
                                   Hkl,Skl,Dk,Dl,.false.,.false.)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl
@@ -335,21 +336,22 @@ contains
         q=(i-1)*Glob_NumYHYTerms-1
         do j=1,Glob_NumYHYTerms
           if (mod(q+j,Glob_NumOfProcs)==Glob_ProcID) then
-!        call MatrixElementsHS_RG_1P(mk,ml,mmk,mml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
+!        call MatrixElementsHS_RG_1P(mk,ml,mmk,mml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
 !               Hkl1,Skl1,Dk1,Dl1,.true.,grad_l)
-!        call MatrixElementsHS_RG_1P(mk,mml,mmk,ml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
+!        call MatrixElementsHS_RG_1P(mk,mml,mmk,ml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
 !               Hkl2,Skl2,Dk2,Dl2,.true.,grad_l)
 
-!        call MatrixElementsHS_RG_1P(mmk,ml,mk,mml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
+!        call MatrixElementsHS_RG_1P(mmk,ml,mk,mml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
 !               Hkl3,Skl3,Dk3,Dl3,.false.,.false.)
-!        call MatrixElementsHS_RG_1P(mmk,mml,mk,ml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
+!        call MatrixElementsHS_RG_1P(mmk,mml,mk,ml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
 !               Hkl4,Skl4,Dk4,Dl4,.false.,.false.)
 !                Hkl=2*Hkl1-2*Hkl2!-Hkl3+Hkl4
 !                Skl=2*Skl1-2*Skl2!-Skl3+Skl4
 !                Dk=2*Dk1-2*Dk2!-Dk3+Dk4
 !                Dl=2*Dl1-2*Dl2!-Dl3+Dl4
-            call MatrixElementsHS_RG_2P(mk,ml,mmk,mml,Lh(1,1,k),Lh(1,1,l), &
-                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1:n,1:n,j), &
+            call MatrixElementsHS_RG_2P(n,np,mk,ml,mmk,mml,Lh(1,1,k),Lh(1,1,l), &
+                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1,1,j),Glob_MassMatrix,Glob_ScaledPseudoChargeMatrix, &
+              Glob_SqrtPi,Glob_PiRaised3n2, &
                                   Hkl,Skl,Dk,Dl,.true.,grad_l)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl

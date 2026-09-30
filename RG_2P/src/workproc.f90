@@ -4530,9 +4530,10 @@ contains
         q=(PairNumber-1)*Glob_NumYHYTerms-1
         do j=1,Glob_NumYHYTerms
           if (mod(q+j,Glob_NumOfProcs)==Glob_ProcID) then
-            call MatrixElementsHS_RG_2P(mActive,mOther,mmActive,mmOther, &
+            call MatrixElementsHS_RG_2P(Glob_n,Glob_np,mActive,mOther,mmActive,mmOther, &
               Lh(1,1,ActiveIndex),Lh(1,1,i),Ah(1,1,ActiveIndex),Ah(1,1,i), &
-              MAh(1,1,ActiveIndex),Glob_YHYMatr(1:nn,1:nn,j),Hkl,Skl, &
+              MAh(1,1,ActiveIndex),Glob_YHYMatr(1,1,j),Glob_MassMatrix,Glob_ScaledPseudoChargeMatrix, &
+              Glob_SqrtPi,Glob_PiRaised3n2,Hkl,Skl, &
               DActive,DOther,AreDerivativesNeeded,OtherDerivativeNeeded)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl

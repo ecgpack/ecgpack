@@ -6,7 +6,7 @@ module matelem
 
 contains
 
-  subroutine MatrixElementsHS_RG_0S(Lk, Ll, Ak, Al, MAk, P, &
+  subroutine MatrixElementsHS_RG_0S(n, np, Lk, Ll, Ak, Al, MAk, P, mass, chargeM, sqrtpi, pir3n2, &
                             Hkl, Skl, Dk, Dl, grad_k, grad_l)
 !This subroutine computes symmetry adapted matrix element with
 !two real L=0 correlated Gaussians:
@@ -24,7 +24,7 @@ contains
 !             unpacking
 !             them for every (pair x term) call.
 !   Ak, Al :: Ak=Lk*Lk', Al=Ll*Ll' -- precomputed for the same reason.
-!   MAk    :: Glob_MassMatrix*Ak -- precomputed for the kinetic-energy path.
+!   MAk    :: mass*Ak -- precomputed for the kinetic-energy path.
 !   P   :: The symmetry permutation matrix of size n x n
 !   grad_k, grad_l :: Gradient flags
 !   grad_k=.true.  means that dHkldvechLk, dSkldvechLk need to be computed.
@@ -52,16 +52,18 @@ contains
 
 !Arguments
     integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,intent(in) :: n, np
     real(wp),intent(in)      :: Lk(nn,nn), Ll(nn,nn)
     real(wp),intent(in)      :: Ak(nn,nn), Al(nn,nn)
     real(wp),intent(in)      :: MAk(nn,nn)
     real(wp),intent(in)      :: P(nn,nn)
+    real(wp),intent(in)      :: mass(nn,nn), chargeM(0:nn,0:nn)
+    real(wp),intent(in)      :: sqrtpi, pir3n2
     real(wp),intent(out)     :: Skl,Hkl
-    real(wp),intent(out)     :: Dk(2*Glob_np),Dl(2*Glob_np)
+    real(wp),intent(out)     :: Dk(2*np),Dl(2*np)
     logical,intent(in)          :: grad_k, grad_l
 
 !Local variables
-    integer           n, np
     real(wp)       PT(nn,nn)
     real(wp)       tAl(nn,nn), tAkl(nn,nn)
     real(wp)       inv_tAkl(nn,nn), inv_ttAkl(nn,nn)
@@ -75,8 +77,6 @@ contains
     real(wp)       Tkl, Vkl, cV, HklOverSkl
     integer           i, j, k, indx
 
-    n=Glob_n
-    np=Glob_np
 !Lk, Ll, Ak, Al arrive precomputed (hoisted to once per function per sweep).
 
 !Then we permute elements of Al to account for
@@ -162,7 +162,7 @@ contains
 
 !temp1=abs(det_Ll*det_Lk)/det_tAkl
 !Skl=Glob_2Raised3n2*temp1*sqrt(temp1)
-    Skl=Glob_PiRaised3n2/(det_tAkl*sqrt(det_tAkl))  !new line
+    Skl=pir3n2/(det_tAkl*sqrt(det_tAkl))  !new line
 
 !Doing multiplication W2=inv_tAkl*tAl
     do i=1,nn
@@ -180,7 +180,7 @@ contains
       do j=1,nn
         temp1=ZERO
         do k=1,nn
-          temp1=temp1+W2(j,k)*Glob_MassMatrix(k,i)
+          temp1=temp1+W2(j,k)*mass(k,i)
         enddo
         inv_tAkltAlM(j,i)=temp1
       enddo
@@ -202,7 +202,7 @@ contains
 !will contain the corresponding quantities. The latter are needed
 !only for the gradients, so in the gradientless case a leaner loop
 !(one division per particle pair less) is used.
-    temp1=(TWO/Glob_SqrtPi)*Skl
+    temp1=(TWO/sqrtpi)*Skl
     Vkl=ZERO
     if (grad_k.or.grad_l) then
       do i=1,nn
@@ -210,7 +210,7 @@ contains
         temp4=sqrt(temp3)
         tr_inv_tAklJij32(i,i)=1/(temp4*temp3)
         temp5=temp1/temp4
-        Vkl=Vkl+Glob_ScaledPseudoChargeMatrix(i,0)*temp5
+        Vkl=Vkl+chargeM(i,0)*temp5
       enddo
       do i=1,nn
         do j=i+1,nn
@@ -218,19 +218,19 @@ contains
           temp4=sqrt(temp3)
           tr_inv_tAklJij32(j,i)=1/(temp4*temp3)
           temp5=temp1/temp4
-          Vkl=Vkl+Glob_ScaledPseudoChargeMatrix(i,j)*temp5
+          Vkl=Vkl+chargeM(i,j)*temp5
         enddo
       enddo
     else
       do i=1,nn
         temp5=temp1/sqrt(inv_tAkl(i,i))
-        Vkl=Vkl+Glob_ScaledPseudoChargeMatrix(i,0)*temp5
+        Vkl=Vkl+chargeM(i,0)*temp5
       enddo
       do i=1,nn
         do j=i+1,nn
           temp3=inv_tAkl(i,i)+inv_tAkl(j,j)-inv_tAkl(j,i)-inv_tAkl(j,i)
           temp5=temp1/sqrt(temp3)
-          Vkl=Vkl+Glob_ScaledPseudoChargeMatrix(i,j)*temp5
+          Vkl=Vkl+chargeM(i,j)*temp5
         enddo
       enddo
     endif
@@ -274,7 +274,7 @@ contains
 !  dHkl/dvechLk = (Hkl/Skl)*dSkl/dvechLk + vech[Z*Lk]
 !  dHkl/dvechLl = (Hkl/Skl)*dSkl/dvechLl + vech[(P*Z*P')*Ll]
 
-    cV=(TWO/Glob_SqrtPi)*Skl
+    cV=(TWO/sqrtpi)*Skl
     HklOverSkl=Hkl/Skl
 
     if (grad_k) then
@@ -361,11 +361,11 @@ contains
       enddo
     enddo
     do i=1,nn
-      Cmat(i,i)=Glob_ScaledPseudoChargeMatrix(0,i)*tr_inv_tAklJij32(i,i)
+      Cmat(i,i)=chargeM(0,i)*tr_inv_tAklJij32(i,i)
     enddo
     do i=1,nn
       do j=i+1,nn
-        temp1=Glob_ScaledPseudoChargeMatrix(i,j)*tr_inv_tAklJij32(j,i)
+        temp1=chargeM(i,j)*tr_inv_tAklJij32(j,i)
         Cmat(i,i)=Cmat(i,i)+temp1
         Cmat(j,j)=Cmat(j,j)+temp1
         Cmat(j,i)=Cmat(j,i)-temp1
@@ -417,7 +417,7 @@ contains
       temp2=12*Skl
       do j=1,nn
         do i=1,nn
-          Z(i,j)=temp2*(Glob_MassMatrix(i,j)-inv_tAkltAlM(i,j) &
+          Z(i,j)=temp2*(mass(i,j)-inv_tAkltAlM(i,j) &
                         -inv_tAkltAlM(j,i)+F(i,j))+cV*Bmat(i,j)
         enddo
       enddo

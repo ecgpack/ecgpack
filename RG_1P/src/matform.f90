@@ -181,8 +181,9 @@ contains
         q=(i-1)*Glob_NumYHYTerms-1
         do j=1,Glob_NumYHYTerms
           if (mod(q+j,Glob_NumOfProcs)==Glob_ProcID) then
-            call MatrixElementsHS_RG_1P(mk,ml,Lh(1,1,k),Lh(1,1,l), &
-                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1:n,1:n,j), &
+            call MatrixElementsHS_RG_1P(n,np,mk,ml,Lh(1,1,k),Lh(1,1,l), &
+                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1,1,j),Glob_MassMatrix,Glob_ScaledPseudoChargeMatrix, &
+              Glob_SqrtPi,Glob_PiRaised3n2, &
                                   Hkl,Skl,Dk,Dl,.false.,.false.)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl
@@ -311,8 +312,9 @@ contains
         q=(i-1)*Glob_NumYHYTerms-1
         do j=1,Glob_NumYHYTerms
           if (mod(q+j,Glob_NumOfProcs)==Glob_ProcID) then
-            call MatrixElementsHS_RG_1P(mk,ml,Lh(1,1,k),Lh(1,1,l), &
-                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1:n,1:n,j), &
+            call MatrixElementsHS_RG_1P(n,np,mk,ml,Lh(1,1,k),Lh(1,1,l), &
+                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1,1,j),Glob_MassMatrix,Glob_ScaledPseudoChargeMatrix, &
+              Glob_SqrtPi,Glob_PiRaised3n2, &
                                   Hkl,Skl,Dk,Dl,.true.,grad_l)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl
