@@ -8,8 +8,9 @@ PROGRAM main
   ! file. Besides the PG_0S frame it provides ECG_RND_SEED seeding, the
   ! ECG_EIG_IDX_TARGETING override, recovery of the last physical energy
   ! before the inverse-iteration shift, the SAVE_HS_R and OVERLAP_D steps
-  ! and the FULL_OPT1 history budget test. DENSITIES and MOMT_DENS are
-  ! not available and stay commented out.
+  ! and the FULL_OPT1 history budget test. DENSITIES computes only the
+  ! nucleus-nucleus correlation function (no particle densities);
+  ! MOMT_DENS is not available and stays commented out.
   !==================================================================
 
   USE workproc
@@ -466,20 +467,29 @@ PROGRAM main
       ENDIF
 
     !----------------------------------------------------------------
-    ! DENSITIES and MOMT_DENS - not available in this frame: the density
-    ! outputs were removed from ExpectationValues and ReadIOFile rejects
-    ! the two actions. The PG_0S dispatch is kept below for reference.
+    ! DENSITIES  Method  BasisSize  CFGridFile  CFFile  DensGridFile  DensFile
     !----------------------------------------------------------------
-    ! CASE('DENSITIES')
-    !  IF (Glob_BBOP(i)%A==Glob_CurrBasisSize) THEN
-    !    CALL ExpectationValues(Glob_BBOP(i)%Action,1,Glob_BBOP(i)%FileName1,Glob_BBOP(i)%FileName2, &
-    !                           Glob_BBOP(i)%FileName3,Glob_BBOP(i)%FileName4,Glob_BBOP(i)%GSEPSolutionMethod)
-    !  ELSE
-    !    IF (Glob_ProcID==0) THEN
-    !      WRITE(*,'(1x,a,1x,i0)') 'Error EC0009 in main: incorrect BBOP step',i
-    !      WRITE(*,*) 'Second parameter in DENSITIES is incorrect'
-    !    ENDIF
-    !  ENDIF
+    ! The same line as in the reference codes. Only the nucleus-nucleus
+    ! correlation function (pair 0-1, r_1) is available in this frame;
+    ! the particle densities are not, so ExpectationValues ignores a
+    ! density grid other than 'none' with a warning.
+    !----------------------------------------------------------------
+    CASE ('DENSITIES')
+      IF (Glob_BBOP(i)%A == Glob_CurrBasisSize) THEN
+        CALL ExpectationValues(Glob_BBOP(i)%Action, 1, Glob_BBOP(i)%FileName1, Glob_BBOP(i)%FileName2, &
+                               Glob_BBOP(i)%FileName3, Glob_BBOP(i)%FileName4, Glob_BBOP(i)%GSEPSolutionMethod)
+      ELSE
+        IF (Glob_ProcID == 0) THEN
+          WRITE(*, '(1x,a,1x,i0)') 'Error EC0009 in main: incorrect BBOP step', i
+          WRITE(*, *) 'Second parameter in DENSITIES is incorrect'
+        ENDIF
+      ENDIF
+
+    !----------------------------------------------------------------
+    ! MOMT_DENS - not available in this frame (there are no momentum-
+    ! space matrix elements) and ReadIOFile does not accept the action.
+    ! The reference dispatch is kept below for reference.
+    !----------------------------------------------------------------
     ! CASE('MOMT_DENS')
     !  IF (Glob_BBOP(i)%A==Glob_CurrBasisSize) THEN
     !    CALL ExpectationValues(Glob_BBOP(i)%Action,1,Glob_BBOP(i)%FileName1,Glob_BBOP(i)%FileName2, &

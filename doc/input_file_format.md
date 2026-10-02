@@ -117,7 +117,7 @@ The description of all header keywords, in the order they appear in input file, 
 
 | Keyword | Requirement | Description |
 | :--- | :---: | :--- |
-| `BASIS_TYPE` | optional | Specifies the type of basis. Possible values are `CG_0S`, `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`. While this line is optional, it is highly recommended to include it in the input file to avoid confusion when running multiple calculations that use different basis types. <br> *Example* : `BASIS_TYPE RG_2D` |
+| `BASIS_TYPE` | optional | Specifies the type of basis. Possible values are `CG_0S`, `PG_0S`, `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`. While this line is optional, it is highly recommended to include it in the input file to avoid confusion when running multiple calculations that use different basis types. <br> *Example* : `BASIS_TYPE RG_2D` |
 | `PARTICLES` | required | Specifies the number of particles in the system. For example, for Li atom it is 4 (a nucleus + three electrons). <br> *Example* : `PARTICLES 5` |
 | `VECTOR_COUPLING_SCHEME` | optional | This optional line can only be used in the case of the `RG_2D` basis type. The keyword is followed by an integer that selects which vector coupling scheme is enforced when basis functions are generated and when their two integer indices are optimized. The allowed values are: `0` - no restriction, both of the schemes below are allowed (this is the default when the line is absent); `1` - two pseudoparticles in $p$-states coupled to a $D$-state, which means that the two indices of every basis function must be different; `2` - a single pseudoparticle in a $d$-state, which means that the two indices of every basis function must be equal. Value `1` requires at least two pseudoparticles (i.e. at least three particles). This keyword cannot be used together with both `FIXED_INDEX_1` and `FIXED_INDEX_2` at the same time (at least one of the two indices must remain free so that the coupling scheme can be enforced). <br> *Example* : `VECTOR_COUPLING_SCHEME 1` |
 | `FIXED_INDEX` | optional | This optional line can only be used in the case of `RG_1P` basis type. The keyword is followed by the fixed value of the z-index that should be used in calculations. <br> *Example* : `FIXED_INDEX 2` |
@@ -164,7 +164,7 @@ Most commands begin with a one-character **eigenvalue solver type**. The real-EC
 - `I` selects the iterative solver based on the inverse iteration method. When `I` is used, the solver relies on the header values `CURRENT_ENERGY`, `EIGVAL_TOLERANCE`, and `INVITPARAMETER` (it targets the eigenvalue close to `CURRENT_ENERGY` $\times$ `INVITPARAMETER`), and `WHICH_EIGENVALUE` is not referenced. The `I` option is much faster than `G`. When it comes to updating the eigenvector/eigenvalue routinely (as is done in `BASIS_ENL`, `OPT_CYCLE`, and `FULL_OPT1`) it may be several orders of magnitude faster. The reason for this is that updating the solution in the inverse iteration approach scales as $\mathcal{O}(K^2)$ , where $K$ is the basis size. Using the `G` option that calls standard LAPACK eigensolver results in $\mathcal{O}(K^3)$ scaling.
 - `Q` uses inverse iteration together with a QR factorization of the shifted matrix $H-\sigma S$, where the shift is selected from `CURRENT_ENERGY` and `INVITPARAMETER` in the same way as for `I`. During basis enlargement and optimization, accepted changes are applied to the QR factors without permuting the physical Hamiltonian and overlap matrices. A solve and a single-function factor update both scale as $\mathcal{O}(K^2)$. The implementation monitors the inverse-iteration residual and the accumulated factor-update residual; it automatically performs a fresh factorization if an update history becomes numerically unreliable. `Q` is implemented for the four real-ECG energy codes listed above. It is not currently available in `CG_0S` or the off-diagonal matrix-element codes.
 
-`BASIS_ENL`, `OPT_CYCLE`, `FULL_OPT1`, `EXPC_VALS`, `DENSITIES`, `MOMT_DENS`, and `SAVE_HSWF` accept `Q` wherever that command is available for the selected real basis type. The elimination and separation commands accept `G` or `Q`, but not `I`. `SAVE_FILE` does not invoke a solver and therefore has no solver argument.
+`BASIS_ENL`, `OPT_CYCLE`, `FULL_OPT1`, `EXPC_VALS`, `DENSITIES`, `MOMT_DENS`, and `SAVE_HSWF` accept `Q` wherever that command is available for the selected real basis type. The elimination and separation commands accept `G` or `Q`, but not `I`. `SAVE_FILE` does not invoke a solver and therefore has no solver argument. The two commands available only in `PG_0S` differ: `SAVE_HS_R` accepts `G`, `I`, or `Q`, while `OVERLAP_D` accepts only `G`.
 
 This eigenvalue solver type argument is not repeated in detail for each command below.
 
@@ -188,6 +188,13 @@ Grows the basis by stochastic selection of new basis functions followed by optim
 | `200` | integer | Maximum number of energy evaluations in the optimization of the nonlinear parameters of the best new candidate(s) that follows the stochastic selection. It should not be too small (e.g. 3-5), as little or no progress will be made by the minimizer, nor too large (typically a few hundred is enough), so that time is not wasted when the minimization gets stuck. The proper value depends on how many functions are added at once and on the number of particles in the system. |
 | `0.95` | real | Pair overlap threshold. A new basis function is not added if its overlap (absolute value of $S_{ij}$ ) with any other basis function exceeds the threshold. This prevents building nearly linearly dependent basis sets. Setting this to zero or a negative value disables the check. |
 | `3.0` | real | Linear coefficient threshold (for coefficients in front of normalized basis functions). A new basis function is not added if the resulting linear coefficient of any function exceeds the threshold by magnitude (because ECG basis functions form a non-orthogonal basis, the linear coefficients can be greater than `1.0`). This prevents near linear dependencies that manifest as several functions having huge coefficients of opposite sign. Setting this to zero or a negative value disables the check. |
+
+A new function rejected by the overlap test (warning WC0110 for `G` and `Q`, WC0115 for `I`) or by the linear-coefficient test (WC0111 for `G` and `Q`, WC0116 for `I`) is generated again, up to 10 attempts. If all 10 attempts are rejected, the `G` and `I` solvers keep the last attempt anyway, so that the enlargement continues. The `Q` solver stops instead, with error EC0130. The input/output file then holds the basis up to the last accepted function, so the calculation can be continued after the thresholds or the basis have been adjusted.
+
+In the `PG_0S` code, where the basis functions have the form $\phi_k=r_1^{2 m_k} \exp [ \mathbf{r}' (A_k \otimes \mathbf{I}) \mathbf{r}]$, `BASIS_ENL` works in the same way, with two additions:
+
+- **The exponent $m_k$ of $r_1^{2 m_k}$ is a variational parameter too.** Every new function has an integer $m_k$ between 1 and 125, inherited from the function it was generated from or drawn anew. After the stochastic selection, each value of $m_k$ from 1 to 125 is tried for the new function and the one with the lowest energy is kept; then its nonlinear parameters are optimized.
+- **Functions that the symmetry projector nearly annihilates are redrawn.** For every new function the program computes $C=\sum_k |c_k S_k| \,/\, |\sum_k c_k S_k|$, where $c_k S_k$ are the terms of its projected self-overlap. If $C$ exceeds $10^4$ (more than four decimal digits lost to cancellation), the function is rejected and generated again, because its contribution to the energy would be dominated by round-off. These redraws are not counted among the 10 attempts described above. Warning code: WC0114 (`G`), WC0119 (`I`), WC0116 (`Q`).
 
 #### 2. `OPT_CYCLE`
 
@@ -253,7 +260,7 @@ Computes expectation values for the current basis.
 
 #### 5. `DENSITIES`
 
-Computes coordinate-space densities of particles in the center-of-mass frame as well as coordinate-space pair correlation functions. Currently this is implemented for the `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, and `CG_0S` basis types. This command is an extension of `EXPC_VALS`: it does everything `EXPC_VALS` does and, in addition, evaluates densities and correlation functions on user-supplied grids. The grid files contain one grid point per line with no blank lines; for $L=0$ each point is a single radius $r\ge 0$, while for $L>0$ each point is two cylindrical coordinates (distance to the $z$-axis $\rho\ge 0$ and the $z$-coordinate). The output files begin with a `#` header line and reproduce the grid columns followed by the computed quantities; only inequivalent functions are written, e.g. for an $S$-state of beryllium that has four identical electrons, $g_1$ and $g_{12}$ for correlation functions, $\rho_1$ and $\rho_2$ for densities are computed.
+Computes coordinate-space densities of particles in the center-of-mass frame as well as coordinate-space pair correlation functions. Currently this is implemented for the `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, and `CG_0S` basis types, and partially for `PG_0S` (see the note below the table). This command is an extension of `EXPC_VALS`: it does everything `EXPC_VALS` does and, in addition, evaluates densities and correlation functions on user-supplied grids. The grid files contain one grid point per line with no blank lines; for $L=0$ each point is a single radius $r\ge 0$, while for $L>0$ each point is two cylindrical coordinates (distance to the $z$-axis $\rho\ge 0$ and the $z$-coordinate). The output files begin with a `#` header line and reproduce the grid columns followed by the computed quantities; only inequivalent functions are written, e.g. for an $S$-state of beryllium that has four identical electrons, $g_1$ and $g_{12}$ for correlation functions, $\rho_1$ and $\rho_2$ for densities are computed.
 
 *Example* :
 
@@ -270,9 +277,11 @@ Computes coordinate-space densities of particles in the center-of-mass frame as 
 | `dens_grid.dat` | string | Input file with the grid of points at which the particle densities are evaluated (same format as `cf_grid.dat`; the same file may be used for both). |
 | `dens.dat` | string | Output file with the computed densities $\rho_i$ in the center-of-mass frame. |
 
+In the `PG_0S` code, the particle densities are not available at all, and the only correlation function available is the nucleus-nucleus one, $g_1$ (particles 0 and 1, whose distance $r_1$ carries the factor $r_1^{2 m_k}$ of the basis functions). The command line is the same as above, e.g. `DENSITIES  I    5  cf_grid.dat  cf.dat  none  none`. The correlation-function grid file (one radius $r\ge 0$ per line) and the output file are used as described above, and the output file has the two columns `#r` and `g1`. A density grid file other than `none` is ignored with warning WC0195, and no density file is written. `EXPC_VALS` does not compute any correlation function.
+
 #### 6. `MOMT_DENS`
 
-Computes momentum densities $\varrho$ of particles in the center-of-mass frame as well as momentum pair correlation functions $f$. Currently this is implemented for the `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P` basis types. Like `DENSITIES`, it is an extension of `EXPC_VALS`. The grid file format and output file conventions are the same as for `DENSITIES`, but the computed quantities are evaluated in momentum space. These values are obtained from analytic momentum-space matrix elements between ECG basis functions; the program does not numerically Fourier-transform a coordinate-space output table. For $L=0$ the grid coordinate is the momentum magnitude $\eta$, while for $L>0$ the two columns are $(\eta_\rho,\eta_z)$.
+Computes momentum densities $\varrho$ of particles in the center-of-mass frame as well as momentum pair correlation functions $f$. Currently this is implemented for the `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P` basis types; it is not available in `PG_0S`. Like `DENSITIES`, it is an extension of `EXPC_VALS`. The grid file format and output file conventions are the same as for `DENSITIES`, but the computed quantities are evaluated in momentum space. These values are obtained from analytic momentum-space matrix elements between ECG basis functions; the program does not numerically Fourier-transform a coordinate-space output table. For $L=0$ the grid coordinate is the momentum magnitude $\eta$, while for $L>0$ the two columns are $(\eta_\rho,\eta_z)$.
 
 *Example* :
 
@@ -396,6 +405,39 @@ Randomly perturbs the nonlinear parameters of basis functions whose linear coeff
 | `3.0` | real | Linear coefficient threshold. Functions whose linear coefficient (in front of the normalized function) exceeds this value by magnitude are separated. |
 | `0.1` | real | Separation parameter $s$ controlling the random shift of the nonlinear parameters of the affected functions. |
 | `inout_separated.txt` | string | Name of the file where the resulting basis is stored. |
+
+#### 13. `OVERLAP_D`
+
+Available only in the `PG_0S` code. Diagonalizes the overlap matrix of the normalized basis functions on its own (the Hamiltonian is not involved) and reports its spectrum. The smallest and the largest eigenvalue, their sum (which must equal the basis size), the condition number (largest divided by smallest eigenvalue), and up to ten lowest and ten highest eigenvalues are printed on the screen; the complete spectrum is written to a file. A smallest eigenvalue close to zero means that some combination of basis functions is nearly the zero function, i.e. the basis is nearly linearly dependent; the condition number shows how many decimal digits are lost because of it, and thus when extended precision may become necessary. The basis is not changed and the program continues with the next command. Only the `G` eigenvalue solver (LAPACK `DSYEVX`) is available; with `I` or `Q` the command is skipped with a message.
+
+*Example* :
+
+`OVERLAP_D  G    5  overlap.txt`
+
+*Arguments and their description* :
+
+| Argument | Type | Description |
+| :--- | :---: | :--- |
+| `G` | character | Eigenvalue solver type. Only `G` is available for this command. |
+| `5` | integer | Current basis size (must match the actual basis size). |
+| `overlap.txt` | string | Optional. Name of the file where the complete spectrum of the overlap matrix is stored. If it is omitted, `overlap.txt` is used. |
+
+#### 14. `SAVE_HS_R`
+
+Available only in the `PG_0S` code. Saves the Hamiltonian and overlap matrices of the unnormalized basis functions. (`SAVE_HSWF` saves the matrices of the normalized functions, which are the ones used in the eigenvalue problem.) The unnormalized elements are reconstructed from the stored normalized elements and the norms of the functions using multiplications only, so they keep the full working precision; no eigenvalue problem is solved. The matrix files have the same layout as in `SAVE_HSWF` (each element on a separate line preceded by its two integer indices), and either file name may be set to `none` (also `None`, `NONE`) to skip that file. In addition, a basis health table, which shows how much cancellation takes place in the projected self-overlap of each basis function, is printed on the screen and written to the file `basis_health.txt`. The program then continues with the next command.
+
+*Example* :
+
+`SAVE_HS_R  G    5  H_raw.txt  S_raw.txt`
+
+*Arguments and their description* :
+
+| Argument | Type | Description |
+| :--- | :---: | :--- |
+| `G` | character | Eigenvalue solver type, `G`, `I`, or `Q` (see the note above). |
+| `5` | integer | Current basis size (must match the actual basis size). |
+| `H_raw.txt` | string | Name of the file where the unnormalized Hamiltonian matrix is stored, or `none` to skip it. |
+| `S_raw.txt` | string | Name of the file where the unnormalized overlap matrix is stored, or `none` to skip it. |
 
 ### History
 

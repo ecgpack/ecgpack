@@ -1,17 +1,18 @@
-MODULE misc
-  ! Module misc: the random-number generator drnor and its initializer drnor_start.
-  USE globvars
-  IMPLICIT NONE
+module misc
+!Module misc contains some auxiliary mathematical routines
+!taken from different sources.
+  use globvars
+  implicit none
 
-  ! Random-number generator state shared between drnor() and drnor_start().
-  ! These were previously local variables carrying the SAVE attribute and
-  ! coupled through an obsolescent ENTRY statement (which crashed the Intel
-  ! ifx compiler with an internal error). They are promoted to module scope
-  ! so that the generator and its initializer can be two independent
-  ! procedures.
-  ! The default U values are the result of calling DUNI 100000 times with
-  ! seed 305; they are loaded in case the user forgets to call drnor_start.
-  REAL(8), PRIVATE, SAVE :: U(17) = (/ &
+  !Random-number generator state shared between drnor() and drnor_start().
+  !These were previously local variables carrying the SAVE attribute and
+  !coupled through an obsolescent ENTRY statement (which crashed the Intel
+  !ifx compiler with an internal error). They are promoted to module scope
+  !so that the generator and its initializer can be two independent
+  !procedures.
+  !The default U values are the result of calling DUNI 100000 times with
+  !seed 305; they are loaded in case the user forgets to call drnor_start.
+  real(8), private, save :: U(17) = (/ &
     0.471960981577884755837789724978D+00, &
     0.930323453205669578433639632431D+00, &
     0.110161790933730836587127944899D+00, &
@@ -29,33 +30,59 @@ MODULE misc
     0.377190200199058085469526470541D+00, &
     0.400780392114818314671676525916D+00, &
     0.374224214182207466262750307281D+00 /)
-  INTEGER, PRIVATE, SAVE :: II = 17
-  INTEGER, PRIVATE, SAVE :: JJ = 5
+  integer, private, save :: II = 17
+  integer, private, save :: JJ = 5
 
-CONTAINS
+contains
 
-  FUNCTION drnor()
-    ! DRNOR: David Kahaner's normal random number generator N(0,1),
-    ! rewritten in Fortran 90 by Sergiy Bubin (original F77 code in NetLib).
-    !
-    ! Use:  Z = DRNOR_START(ISEED)   once, with a NONZERO integer seed
-    !       Z = DRNOR()              afterwards, one N(0,1) number per call
-    REAL(8) :: DRNOR
-    REAL(8) :: AA, B, C, C1, C2, PC, X, Y, XN
-    REAL(8) :: V(65), S, UN, VNI
-    INTEGER :: J, L
+  function drnor()
+!This is David Kahaner's routine DRNOR rewritten by Sergiy
+!Bubin in Fortran 90. The original Fortran 77 code can be
+!found in NetLib.
+!
+!DRNOR() GENERATES NORMAL RANDOM NUMBERS, WITH MEAN ZERO AND
+!UNIT STANDARD DEVIATION, OFTEN DENOTED N(0,1).
+!
+!USE
+!    FIRST TIME....
+!        Z = DRNOR_START(ISEED)
+!
+!    HERE ISEED IS ANY  N O N - Z E R O  INTEGER.
+!    THIS CAUSES INITIALIZATION OF THE PROGRAM.
+!    DRNOR_START RETURNS A DOUBLE PRECISION ECHO OF ISEED.
+!
+!    SUBSEQUENT TIMES...
+!        Z = DRNOR()
+!    CAUSES THE NEXT DOUBLE PRECISION RANDOM NUMBER
+!    TO BE RETURNED AS Z.
+!
+!TYPICAL USAGE
+!
+!    DOUBLE PRECISION DSTART,DRNOR,Z
+!    INTEGER ISEED,I
+!    ISEED = 305
+!    Z = DSTART(ISEED)
+!    DO 1 I = 1,10
+!       Z = DRNOR()
+!       WRITE(*,'(1X,D20.15)') Z
+! 1  CONTINUE
+!    END
+    real(8)  DRNOR
+    real(8)  AA,B,C,C1,C2,PC,X,Y,XN
+    real(8)  V(65),S,UN,VNI
+    integer  J,L
 
-    DATA AA, B, C &
+    data AA,B,C &
       /0.123758602991705622657860318807D+02, &
-      0.487899177760378968003825536710D+00, &
+      0.487899177760378968003825536710D+00,  &
       0.126770580788654778410032042685D+02/
 
-    DATA C1, C2, PC, XN &
-      /0.9689279D0, 1.301198D0, &
+    data C1,C2,PC,XN &
+      /0.9689279D0,1.301198D0,              &
       0.195830333955546914251231662871D-01, &
       0.277699426966287548981739308903D+01/
 
-    DATA (V(L), L=1, 18) &
+    data (V(L), L=1,18) &
       /0.340945028703977890881422029377D+00, &
       0.457314591866933536170242641762D+00, &
       0.539779281611666939596931167481D+00, &
@@ -74,7 +101,7 @@ CONTAINS
       0.107492538202855351339149779813D+01, &
       0.110439170226812581109973656162D+01, &
       0.113327377624394079212251428682D+01/
-    DATA (V(L), L=19, 37) &
+    data (V(L), L=19,37) &
       /0.116165303013393172842858957666D+01, &
       0.118960104083873798956793871425D+01, &
       0.121718147070087121538258873613D+01, &
@@ -94,7 +121,7 @@ CONTAINS
       0.159064544701425352365935513885D+01, &
       0.161796804367444698360816323707D+01, &
       0.164558021836908161542865488149D+01/
-    DATA (V(L), L=38, 55) &
+    data (V(L), L=38,55) &
       /0.167352550956703867146009214486D+01, &
       0.170185032506274055254533570699D+01, &
       0.173060454131778319060975251429D+01, &
@@ -113,7 +140,7 @@ CONTAINS
       0.217937134039813565892460111431D+01, &
       0.222451750721601784110056845259D+01, &
       0.227251855485014779874266158018D+01/
-    DATA (V(L), L=56, 65) &
+    data (V(L), L=56,65) &
       /0.232393382009430256940425938218D+01, &
       0.237950077408282829688673722776D+01, &
       0.244022179797994340264326423618D+01, &
@@ -124,125 +151,453 @@ CONTAINS
       0.277699426966286466722522163764D+01, &
       0.277699426966286466722522163764D+01, &
       0.277699426966286466722522163764D+01/
-    !***FIRST EXECUTABLE STATEMENT  DRNOR
+!***FIRST EXECUTABLE STATEMENT  DRNOR
 
-    ! FAST PART...
+! FAST PART...
 
-    ! BASIC GENERATOR IS FIBONACCI
+!BASIC GENERATOR IS FIBONACCI
     UN = U(II)-U(JJ)
-    IF (UN .LT. 0.0D0) UN = UN+1.
+    if (UN.LT.0.0D0) UN = UN+1.
     U(II) = UN
-    ! U(II) AND UN ARE UNIFORM ON [0,1)
-    ! VNI IS UNIFORM ON [-1,1)
+!U(II) AND UN ARE UNIFORM ON [0,1)
+!VNI IS UNIFORM ON [-1,1)
     VNI = UN + UN -1.
     II = II-1
-    IF (II .EQ. 0)II = 17
+    if (II.EQ.0)II = 17
     JJ = JJ-1
-    IF (JJ .EQ. 0)JJ = 17
-    ! INT(UN(II)*128) IN RANGE [0,127],  J IS IN RANGE [1,64]
-    J = MOD(INT(U(II)*128), 64)+1
-    ! PICK SIGN AS VNI IS POSITIVE OR NEGATIVE
+    if (JJ.EQ.0)JJ = 17
+!INT(UN(II)*128) IN RANGE [0,127],  J IS IN RANGE [1,64]
+    J = mod(int(U(II)*128),64)+1
+!PICK SIGN AS VNI IS POSITIVE OR NEGATIVE
     DRNOR = VNI*V(J+1)
-    IF (ABS(DRNOR) .LE. V(J)) RETURN
+    if (abs(DRNOR).LE.V(J)) return
 
-    ! SLOW PART; AA IS A*F(0)
+! SLOW PART; AA IS A*F(0)
 
-    X = (ABS(DRNOR)-V(J))/(V(J+1)-V(J))
-    ! Y IS UNIFORM ON [0,1)
+    X = (abs(DRNOR)-V(J))/(V(J+1)-V(J))
+!Y IS UNIFORM ON [0,1)
     Y = U(II)-U(JJ)
-    IF (Y .LT. 0.0D0) Y = Y+1.
+    if (Y.LT.0.0D0) Y = Y+1.
     U(II) = Y
     II = II-1
-    IF (II .EQ. 0) II = 17
+    if (II.EQ.0) II = 17
     JJ = JJ-1
-    IF (JJ .EQ. 0) JJ = 17
+    if (JJ.EQ.0) JJ = 17
 
     S = X+Y
-    IF (S .GT. C2) THEN
-      DRNOR = SIGN(B-B*X, DRNOR)
-      RETURN
-    ENDIF
-    IF (S .LE. C1) RETURN
-    IF (Y .GT. C-AA*EXP(-.5D0*(B-B*X)**2)) THEN
-      DRNOR = SIGN(B-B*X, DRNOR)
-      RETURN
-    ENDIF
-    IF (EXP(-.5D0*V(J+1)**2)+Y*PC/V(J+1) .LE. EXP(-.5D0*DRNOR**2)) RETURN
+    if (S.GT.C2) then
+      DRNOR = sign(B-B*X,DRNOR)
+      return
+    endif
+    if (S.LE.C1) return
+    if (Y.GT.C-AA*exp(-.5D0*(B-B*X)**2)) then
+      DRNOR = sign(B-B*X,DRNOR)
+      return
+    endif
+    if (exp(-.5D0*V(J+1)**2)+Y*PC/V(J+1).LE.exp(-.5D0*DRNOR**2)) return
 
-    ! TAIL PART; .36010157... IS 1.0D0/XN
-    ! Y IS UNIFORM ON [0,1)
+!TAIL PART; .36010157... IS 1.0D0/XN
+!Y IS UNIFORM ON [0,1)
 2222 Y = U(II)-U(JJ)
-    IF (Y .LE. 0.0D0) Y = Y+1.
+    if (Y.LE.0.0D0) Y = Y+1.
     U(II) = Y
     II = II-1
-    IF (II .EQ. 0)II = 17
+    if (II.EQ.0)II = 17
     JJ = JJ-1
-    IF (JJ .EQ. 0)JJ = 17
+    if (JJ.EQ.0)JJ = 17
 
-    X = 0.360101571301190680192994239651D+00*LOG(Y)
-    ! Y IS UNIFORM ON [0,1)
+    X = 0.360101571301190680192994239651D+00*log(Y)
+!Y IS UNIFORM ON [0,1)
     Y = U(II)-U(JJ)
-    IF (Y .LE. 0.0D0) Y = Y+1.
+    if (Y.LE.0.0D0) Y = Y+1.
     U(II) = Y
     II = II-1
-    IF (II .EQ. 0)II = 17
+    if (II.EQ.0)II = 17
     JJ = JJ-1
-    IF (JJ .EQ. 0)JJ = 17
-    IF (-2.0D0*LOG(Y) .LE. X**2) GOTO 2222
-    DRNOR = SIGN(XN-X, DRNOR)
-    RETURN
+    if (JJ.EQ.0)JJ = 17
+    if ( -2.0D0*log(Y).LE.X**2 ) goto 2222
+    DRNOR = sign(XN-X,DRNOR)
+    return
 
-  END FUNCTION drnor
+  end function drnor
 
-  FUNCTION drnor_start(ISEED)
-    ! Initializes the state of the drnor() random number generator.
-    ! ISEED is any N O N - Z E R O integer. drnor_start returns a double
-    ! precision echo of ISEED.
-    !
-    ! This was previously the DRNOR_START alternate ENTRY point of drnor.
-    ! It was split into a separate procedure (sharing the module-level state
-    ! U, II, JJ) because the ENTRY statement caused an internal compiler error
-    ! in the Intel ifx compiler.
-    REAL(8) :: drnor_start
-    INTEGER :: ISEED
-    REAL(8) :: S, T
-    INTEGER :: IA, IB, IC, ID, III, JJJ
+  function drnor_start(ISEED)
+!Initializes the state of the drnor() random number generator.
+!ISEED is any N O N - Z E R O integer. drnor_start returns a double
+!precision echo of ISEED.
+!
+!This was previously the DRNOR_START alternate ENTRY point of drnor.
+!It was split into a separate procedure (sharing the module-level state
+!U, II, JJ) because the ENTRY statement caused an internal compiler error
+!in the Intel ifx compiler.
+    real(8)  drnor_start
+    integer  ISEED
+    real(8)  S,T
+    integer  IA,IB,IC,ID,III,JJJ
 
-    ! FILL
-    IF (ISEED .NE. 0) THEN
+!FILL
+    if (ISEED.NE.0) then
 
-      ! SET UP ...
-      ! GENERATE RANDOM BIT PATTERN IN ARRAY BASED ON GIVEN SEED
+      !SET UP ...
+      !GENERATE RANDOM BIT PATTERN IN ARRAY BASED ON GIVEN SEED
 
       II = 17
       JJ = 5
-      IA = MOD(ABS(ISEED), 32707)
+      IA = mod(abs(ISEED),32707)
       IB = 1111
       IC = 1947
-      DO III = 1, 17
+      do III = 1,17
         S = 0.0D0
         T = 0.5D0
-        ! DO FOR EACH OF THE BITS OF MANTISSA OF WORD
-        ! LOOP  OVER 95 BITS, ENOUGH FOR MOST MACHINES
-        ! IN DOUBLE PRECISION.
-        DO JJJ = 1, 95
+        !DO FOR EACH OF THE BITS OF MANTISSA OF WORD
+        !LOOP  OVER 95 BITS, ENOUGH FOR MOST MACHINES
+        !IN DOUBLE PRECISION.
+        do JJJ = 1,95
           ID = IC-IA
-          IF (ID .LT. 0) THEN
+          if (ID.LT.0) then
             ID = ID+32707
             S = S+T
-          ENDIF
+          endif
           IA = IB
           IB = IC
           IC = ID
           T = 0.5D0*T
-        ENDDO
+        enddo
         U(III) = S
-      ENDDO
-    ENDIF
-    ! RETURN FLOATING ECHO OF ISEED
-    drnor_start = dfloat(ISEED)
-    RETURN
+      enddo
+    endif
+!RETURN FLOATING ECHO OF ISEED
+    drnor_start=dfloat(ISEED)
+    return
 
-  END FUNCTION drnor_start
+  end function drnor_start
 
-END MODULE misc
+  subroutine DA17LSM(F,XGUESS,STEP,EPS,MAXFNEVAL,ACTFNEVAL,XMIN,FMIN)
+!This is modified subroutine A17LS by J.S.Nash. I slightly
+!simplified it, added some formal parameters and excluded
+!others, changed single precision to double and translated
+!the code from F77 to F90 free (Sergiy Bubin)
+!
+!Algorithm 17 success-failure linear search with parabolic
+!inverse interpolation, J.C.Nash, February 1980.
+
+!F         - User supplied function.
+!            Calling sequence is Fval=F(x). x must not be
+!            changed by F.
+!XGUESS    - Initial guess to minimum of the function.
+!STEP      - Initial step size. First two function
+!            evaluations are carried out at points
+!            XGUESS and XGUESS+STEP.
+!EPS       - Required accuracy of minimum point of F. If
+!            EPS is smaller than maximal accuracy that can
+!            be achieved, procedure finds the minimum with
+!            this maximal accuracy.
+!MAXFNEVAL - Maximal number of function evaluations allowed.
+!            If this number is exceeded then the subroutine
+!            does not generate an error. The best found
+!            value is returned as minimum point of F.
+!ACTFNEVAL - Actual number of function evaluations.
+!XMIN      - The point of minimum found.
+!FMIN      - Function value at the minimum point.
+
+!Arguments:
+    real(wp)    F,XGUESS,STEP,EPS,XMIN,FMIN
+    integer    MAXFNEVAL,ACTFNEVAL
+!Local variables:
+    real(wp)    A1,A2,P,S1,S0,X0,X2,XPRED,BIG,X1
+
+    XMIN=XGUESS
+    BIG=huge(S0)
+    ACTFNEVAL=0
+!  STEP CHANGE FACTORS
+    A1=ONE+ONEHALF
+    A2=-ONEFOURTH
+!  STEP 1
+    IF(ACTFNEVAL>=MAXFNEVAL)GOTO 220
+    ACTFNEVAL=ACTFNEVAL+1
+    P=F(XMIN)
+!  STEP 2
+20  S1=P
+    S0=-BIG
+    X1=ZERO
+    XPRED=XMIN
+!  STEP 3
+30  X2=X1+STEP
+    XMIN=XPRED+X2
+!  STEP 4
+    !Cycle until achieving either EPS precision or maximal
+    !possible precision if EPS is too small
+    IF ((abs(XMIN-XPRED)<=EPS).OR.(XMIN==XPRED+X1)) GOTO 220
+!  STEP 5
+    IF(ACTFNEVAL>=MAXFNEVAL)GOTO 220
+    ACTFNEVAL=ACTFNEVAL+1
+    P=F(XMIN)
+!  STEP 6
+    IF(P<S1)GOTO 100
+!  STEP 7
+    IF(S0>=S1)GOTO 110
+!  STEP 8
+    S0=P
+    X0=X2
+!  STEP 9
+    STEP=A2*STEP
+    GOTO 30
+!  STEP 10
+100 X0=X1
+    S0=S1
+    X1=X2
+    S1=P
+    STEP=A1*STEP
+    GOTO 30
+!  STEP 11
+110 X0=X0-X1
+    S0=(S0-S1)*STEP
+    P=(P-S1)*X0
+!  STEP 12
+    IF(P==S0)GOTO 180
+!  STEP 13
+    STEP=ONEHALF*(P*X0-S0*STEP)/(P-S0)
+!  STEP 14
+    X2=X1+STEP
+    XMIN=XPRED+X2
+!  STEP 15
+    IF(XMIN==XPRED+X1)GOTO 200
+!  STEP 16
+    IF(ACTFNEVAL>=MAXFNEVAL)GOTO 220
+    ACTFNEVAL=ACTFNEVAL+1
+    P=F(XMIN)
+!  STEP 17
+    IF(P<S1)GOTO 190
+!  STEP 18
+180 XMIN=XPRED+X1
+    P=S1
+    GOTO 200
+!  STEP 19
+190 X1=X2
+!  STEP 20
+200 STEP=A2*STEP
+    GOTO 20
+220 XMIN=XPRED
+    FMIN=S1
+
+  end subroutine DA17LSM
+
+  subroutine DFMINM(F,A,B,T,X,FMIN)
+!This is slightly changed function DFMIN taken from PORT.
+!I made it a subroutine (not a function), translated the
+!code from F77 to F90, and replaced D1MACH(1) and
+!D1MACH(4) calls with TINY(X) and EPSILON(X) respectively.
+!  Input and output parameters:
+!F         - User supplied function.
+!            Calling sequence is Fval=F(x). x must not be
+!            changed by F.
+!A,B       - The interval at which F attains its minimum.
+!T         - Determines a tolerance of TOL=EPSILON(X)*DABS(X)+T
+!            and F is never evaluated at two points closer
+!            together than TOL. Actually I found out that the
+!            DFMIN does not reach this tolerance. One needs to
+!            set TOL twice as small as desired tolerance to be
+!            sure about accuracy.
+!X         - Minimum point.
+!FMIN      - Function value at the minimum point.
+!
+!  DFMIN FINDS AN APPROXIMATION X TO THE POINT IN
+!  THE INTERVAL (A,B) AT WHICH F ATTAINS ITS MINIMUM,
+!  AND RETURNS IN DFMIN THE VALUE OF F AT X.
+!
+!  T DETERMINES A TOLERANCE OF
+!
+!              TOL  =  EPSILON(X) * DABS(X) + T
+!
+!  AND F IS NEVER EVALUATED AT TWO POINTS CLOSER
+!  TOGETHER THAN TOL.
+!
+!  IF T IS INPUT .LE. ZERO, IT IS SET TO 10.*TINY(X)
+!
+!  THE METHOD USED IS A COMBINATION OF GOLDEN SEARCH
+!  AND SUCCESSIVE PARABOLIC INTERPOLATION.
+!  CONVERGENCE IS NEVER MUCH SLOWER THAN FOR A
+!  FIBONACCI SEARCH.
+!  IF F HAS A CONTINUOUS SECOND DERIVATIVE WHICH IS POSITIVE
+!  AT THE MINIMUM ( NOT AT A OR B) THEN, IGNORING
+!  ROUNDING ERRORS, CONVERGENCE IS SUPERLINEAR,
+!  AND USUALLY THE ORDER IS AT LEAST 1.3247....
+!
+!  THIS IS BRENT'S ALGORITHM - SEE PAGE 188 OF HIS BOOK.
+!
+!  A, STORED IN SA, AND B, STORED IN SB ARE
+!  AT ANY STEP THE CURRENT BOUNDARIES FOR
+!  THE INTERVAL CONTAINING THE MINIMUM.
+!
+!  X IS THE POINT AT WHICH F HAS THE LEAST VALUE
+!  SO FAR, (OR THE POINT OF MOST RECENT EVALUATION
+!  IF THERE IS A TIE).
+!
+!  W IS THE POINT WITH THE NEXT LOWEST VALUE OF F
+!
+!  V IS THE PREVIOUS VALUE OF W
+!
+! U IS THE LAST POINT AT WHICH F HAS BEEN EVALUATED
+!  (U IS UNDEFINED THE FIRST TIME.)
+
+!Arguments:
+    real(wp) F,A,B,T,X,FMIN
+!Local variables:
+    real(wp) SA,SB,D,E,M,P,Q,R
+    real(wp) TOL,T2,TT,U,V,W,FU,FV,FW,FX,CONS
+
+    TT = T
+    IF (T .LE. ZERO ) TT = TEN*tiny(X)
+    IF (A .LT. B) GO TO 5
+    SA = B
+    SB = A
+    GO TO 8
+5   SA = A
+    SB = B
+8   CONS = ONEHALF*(THREE-sqrt(FIVE))
+!
+! ARBITRARILY FOR THE FIRST STEP CHOOSE
+!
+!    X = A + .5(3-DSQRT(5))* (B-A)
+!
+    X = SA + CONS*(SB - SA)
+    W = X
+    V = W
+    E = ZERO
+    FX = F(X)
+    FW = FX
+    FV = FW
+!
+! THE MAIN LOOP STARTS HERE.
+!
+10  M = ONEHALF*(SA + SB)
+    TOL = epsilon(X) * abs(X) + TT
+    T2 = TWO * TOL
+!
+! CHECK THE STOPPING CRITERION:
+!       (M = MIDPOINT)
+! IF DABS(X-M) .LE. (2*TOL - .5(B-A)),
+! I.E. IF MAX(X-A, B-X) .LE. 2*TOL, THEN
+! THE PROCEDURE TERMINATES WITH X AS THE
+! APPROXIMATE POSITION OF THE MINIMUM.
+!C
+    IF (abs(X-M) .LE. T2-ONEHALF*(SB-SA)) GO TO 190
+    R = ZERO
+    Q = R
+    P = Q
+    IF (abs(E) .LE. TOL) GO TO 40
+!
+!    FIT THE PARABOLA
+!
+!    Q = 2((X-V)(FX-FW) - (X-W)(FX-FV))
+!    P = ((X-V)**2)(FX-FW) - ((X-W))**2)(FX-FV)
+!
+    R = (X-W)*(FX-FV)
+    Q = (X-V)*(FX-FW)
+    P = (X-V)*Q - (X-W) * R
+    Q = TWO*(Q-R)
+    IF (Q .LE. ZERO) GO TO 20
+    P = -P
+    GO TO 30
+!
+20  Q = -Q
+30  R = E
+    E = D
+!
+!  HERE E IS THE VALUE OF P/Q AT THE SECOND LAST
+!  CYCLE; IF DABS(E) .LE. TOL, OR IF Q = 0.0.
+!  OR IF X+P/Q LIES OUTSIDE OF (A,B), OR
+!  DABS(P/Q) .GE. .5E, THEN A "GOLDEN
+!  SECTION" STEP IS PERFORMED (AT 60 BELOW).
+!
+!  OTHERWISE A PARABOLIC INTERPOLATION
+!  STEP IS TAKEN
+!
+40  IF (abs(P).GE.abs(ONEHALF*Q*R)) GO TO 60
+    IF ((P.LE.Q*(SA-X)).OR.(P.GE.Q*(SB-X))) GO TO 60
+    D = P/Q
+    U = X + D
+!
+!  EXCEPT F MUST NOT BE EVALUATED TOO CLOSE TO A OR B.
+!
+!  IF THE NEW POINT IS TOO CLOSE JUST PUT
+!       D = +TOL   IF X.LT.M
+!       D = -TOL   IF X.GE.M
+!
+    IF((U-SA.GE.T2).AND.(SB-U.GE.T2)) GO TO 90
+    IF (X.GE.M) GO TO 50
+    D = TOL
+    GO TO 90
+50  D = -TOL
+    GO TO 90
+!
+!  THIS IS THE "GOLDEN SECTION" STEP:
+!
+!       U = .5(SQRT(5)-1)X + .5(3-SQRT(5)A   IF X.GE.M
+!       U = .5(SQRT(5)-1)X + .5(3-SQRT(5)B   IF X.LT.M
+!
+60  IF (X.GE.M) GO TO 70
+    E = SB - X
+    GO TO 80
+70  E = SA - X
+80  D = CONS*E
+!
+!     U = X+(IF DABS(D).GE.TOL THEN D,
+!          ELSE IF D.GT.0 THEN TOL     ELSE  -TOL)
+!
+90  IF (abs(D).LT.TOL) GO TO 100
+    U = X + D
+    GO TO 120
+100 IF (D.LE.ZERO) GO TO 110
+    U = X + TOL
+    GO TO 120
+110 U = X - TOL
+!
+!  UPDATE EVERYTHING
+!  IF FU.LE.FX THEN
+!     BEGIN IF U.LT.X THEN B = X ELSE A = X
+!     V = W;FV = FW;W = X;FW = FX;X = U;FX = FU
+!     END
+!  ELSE
+!     BEGIN IF U.LT.X THEN A = U ELSE B = U
+!     IF FU.LE.FW OR W = X THEN
+!          BEGIN V = W;FV = FW;W = X;FW = FU END
+!     ELSE IF FU.LE.FV OR V = X OR V = W THEN
+!            BEGIN V = U; FV = FU
+!            END
+!     END
+!
+120 FU = F(U)
+    IF (FU.GT.FX) GO TO 150
+    IF (U.GE.X) GO TO 130
+    SB = X
+    GO TO 140
+130 SA = X
+140 V = W
+    FV = FW
+    W = X
+    FW = FX
+    X = U
+    FX = FU
+    GO TO 10
+!
+150 IF (U.GE.X) GO TO 160
+    SA = U
+    GO TO 170
+160 SB = U
+170 IF ((FU.GT.FW) .AND.(W.NE.X)) GO TO 180
+    V = W
+    FV = FW
+    W = U
+    FW = FU
+    GO TO 10
+!
+180 IF ((FU.GT.FV).AND.(V.NE.X).AND.(V.NE.W)) GO TO 10
+    V = U
+    FV = FU
+    GO TO 10
+!
+190 FMIN = FX
+  end subroutine DFMINM
+
+end module misc

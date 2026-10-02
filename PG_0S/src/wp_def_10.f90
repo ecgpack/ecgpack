@@ -13,10 +13,6 @@ MODULE wp_def
   ! Define kind parameter for real type
   INTEGER, PARAMETER :: wp = 10
 
-  ! dprec is the name matelem.f90 and data_gamma.f90  use for the
-  ! same kind; kept as an alias of wp.
-  INTEGER, PARAMETER :: dprec = wp
-
   ! This is data type identifier for MPI corresponding to real type of kind wp
   INTEGER, PARAMETER :: MPI_WP = MPI_REAL16
 
@@ -24,7 +20,7 @@ MODULE wp_def
   ! For reasons related to performance, it is made a fixed (compile time) parameter.
   ! ReadIOFile requires the data file to specify EXACTLY this many particles
   ! (PARTICLES record), so it is an exact count, not an upper bound. BH (bh/ECG5): 8;
-  INTEGER, PARAMETER :: Glob_AllowedNumOfParticles = 8
+  INTEGER, PARAMETER :: Glob_AllowedNumOfParticles=8
 
 CONTAINS
 

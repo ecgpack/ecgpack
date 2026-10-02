@@ -165,7 +165,7 @@ module qrlinalg
     end subroutine ztrsv
   end interface
 
-  type, public :: qr_real_state
+  type :: qr_real_state
 #ifndef QRLINALG_TESTING
     private
 #endif
@@ -214,7 +214,7 @@ module qrlinalg
     procedure :: get_updates_since_fresh => real_get_updates_since_fresh
   end type qr_real_state
 
-  type, public :: qr_complex_state
+  type :: qr_complex_state
 #ifndef QRLINALG_TESTING
     private
 #endif

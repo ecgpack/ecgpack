@@ -5,7 +5,6 @@ MODULE matelem
   ! matrix elements.
 
   USE globvars
-  USE data_gamma
   USE wp_def
   USE mpi
 
@@ -48,54 +47,54 @@ CONTAINS
 
     INTEGER, INTENT(IN) :: mk, ml, gradflag
 
-    REAL(dprec), INTENT(IN) :: PreLk(Glob_n, Glob_n), PreAk(Glob_n, Glob_n), PreMAk(Glob_n, Glob_n)
-    REAL(dprec), INTENT(IN) :: vechLl(Glob_npt)
-    REAL(dprec), INTENT(IN) :: SymMatrixBuf(Glob_NumYHYTerms, Glob_n, Glob_n)
+    REAL(wp), INTENT(IN) :: PreLk(Glob_n, Glob_n), PreAk(Glob_n, Glob_n), PreMAk(Glob_n, Glob_n)
+    REAL(wp), INTENT(IN) :: vechLl(Glob_npt)
+    REAL(wp), INTENT(IN) :: SymMatrixBuf(Glob_NumYHYTerms, Glob_n, Glob_n)
 
-    REAL(dprec), INTENT(OUT) :: SklBuf(Glob_NumYHYTerms), HklBuf(Glob_NumYHYTerms)
-    REAL(dprec), INTENT(OUT) :: dSkBuf(Glob_NumYHYTerms, Glob_npt), &
+    REAL(wp), INTENT(OUT) :: SklBuf(Glob_NumYHYTerms), HklBuf(Glob_NumYHYTerms)
+    REAL(wp), INTENT(OUT) :: dSkBuf(Glob_NumYHYTerms, Glob_npt), &
                                 dSlBuf(Glob_NumYHYTerms, Glob_npt), &
                                 dHkBuf(Glob_NumYHYTerms, Glob_npt), &
                                 dHlBuf(Glob_NumYHYTerms, Glob_npt)
 
     ! Local variables
 
-    REAL(dprec) :: SymMatrix(Glob_n, Glob_n)
-    REAL(dprec) :: Skl, Hkl
-    REAL(dprec) :: dSk(Glob_npt), dSl(Glob_npt), dHk(Glob_npt), dHl(Glob_npt)
+    REAL(wp) :: SymMatrix(Glob_n, Glob_n)
+    REAL(wp) :: Skl, Hkl
+    REAL(wp) :: dSk(Glob_npt), dSl(Glob_npt), dHk(Glob_npt), dHl(Glob_npt)
 
     INTEGER :: m                                            ! matrix index
     INTEGER :: i, j, k, indx, info, jj, ii, kk, mko2, mlo2
     INTEGER :: p, q, t
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms) :: detLk, detLl, detAkl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms) :: SUM0, SUM1, SUM2, SUM3
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms) :: trT, tl, tk
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms) :: Ttmp
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms) :: a
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms) :: Tkl, Vkl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms) :: g1, g2, g3
+    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: detLk, detLl, detAkl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: SUM0, SUM1, SUM2, SUM3
+    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: trT, tl, tk
+    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: Ttmp
+    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: a
+    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: Tkl, Vkl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: g1, g2, g3
 
-    REAL(dprec) :: mkml, mkpml
-    REAL(dprec) :: coabij
-    REAL(dprec) :: Vtmp(Glob_n, Glob_n)
+    REAL(wp) :: mkml, mkpml
+    REAL(wp) :: coabij
+    REAL(wp) :: Vtmp(Glob_n, Glob_n)
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Lk, Ll, Ak, Al, invAkl, PLl, invL
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Temp
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: R, b, c, coab
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ddSk, ddSl, ddTk, ddTl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ddSk_over_Skl, ddSl_over_Skl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: dRk, dRl, ddVk, ddVl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: invLk, invLl, invAk, invAl, chAl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ALk, ALl, AAk, AAl, AlLl, MAk, MAl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Jkk, Jll, Jklk, Jkll
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Tllk, Tkkl, Tklk, Tlkl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: TlMkJk, TkMlJl, TlMlJk, TkMkJl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: JkMlk, JlMkl, JlMlk, JkMkl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: da, db, dc
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: RLk, RLl, JRLk, JRLl, RJLk, RJLl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_npt)       :: dTk, dTl, dVk, dVl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Lk, Ll, Ak, Al, invAkl, PLl, invL
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Temp
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: R, b, c, coab
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ddSk, ddSl, ddTk, ddTl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ddSk_over_Skl, ddSl_over_Skl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: dRk, dRl, ddVk, ddVl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: invLk, invLl, invAk, invAl, chAl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ALk, ALl, AAk, AAl, AlLl, MAk, MAl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Jkk, Jll, Jklk, Jkll
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Tllk, Tkkl, Tklk, Tlkl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: TlMkJk, TkMlJl, TlMlJk, TkMkJl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: JkMlk, JlMkl, JlMlk, JkMkl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: da, db, dc
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: RLk, RLl, JRLk, JRLl, RJLk, RJLl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_npt)       :: dTk, dTl, dVk, dVl
 
     !***********************************************************
     ! Build intermediate results for Overlap matrix element
@@ -972,12 +971,12 @@ CONTAINS
     INTEGER, PARAMETER :: nn = Glob_n
 
     INTEGER, INTENT(IN) :: np, Nmax
-    REAL(dprec), INTENT(IN) :: NonlinParam(np, Nmax), MassMatrix(nn, nn)
-    REAL(dprec), INTENT(OUT) :: Lk(nn, nn, Nmax), Ak(nn, nn, Nmax)
-    REAL(dprec), INTENT(OUT), OPTIONAL :: MAk(nn, nn, Nmax)
+    REAL(wp), INTENT(IN) :: NonlinParam(np, Nmax), MassMatrix(nn, nn)
+    REAL(wp), INTENT(OUT) :: Lk(nn, nn, Nmax), Ak(nn, nn, Nmax)
+    REAL(wp), INTENT(OUT), OPTIONAL :: MAk(nn, nn, Nmax)
 
     INTEGER :: f, i, j, k, indx
-    REAL(dprec) :: temp1
+    REAL(wp) :: temp1
 
     DO f = 1, Nmax
 
@@ -1028,10 +1027,10 @@ CONTAINS
 
     INTEGER, INTENT(IN) :: p
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms), INTENT(IN)  :: coab
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms), INTENT(OUT) :: g3
+    REAL(wp), DIMENSION(Glob_NumYHYTerms), INTENT(IN)  :: coab
+    REAL(wp), DIMENSION(Glob_NumYHYTerms), INTENT(OUT) :: g3
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms) :: g1, g2
+    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: g1, g2
 
     INTEGER :: m, i
 
@@ -1189,9 +1188,9 @@ CONTAINS
     IMPLICIT NONE
 
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Lk, Ak, Al, invAkl, PLl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: invAl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ALk, ALl, AAk, AAl, AlLl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Lk, Ak, Al, invAkl, PLl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: invAl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ALk, ALl, AAk, AAl, AlLl
 
     INTEGER :: m, i, j, k
 
@@ -1227,8 +1226,8 @@ CONTAINS
     IMPLICIT NONE
 
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Al
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: MAl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Al
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: MAl
 
     INTEGER :: m, i, j, k
 
@@ -1255,8 +1254,8 @@ CONTAINS
     IMPLICIT NONE
 
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAk, AAl, MAk, MAl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAk, AAl, MAk, MAl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
 
     INTEGER :: m, i, j, k
 
@@ -1289,9 +1288,9 @@ CONTAINS
     IMPLICIT NONE
 
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ALk, ALl
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Tllk, Tkkl, Tklk, Tlkl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ALk, ALl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Tllk, Tkkl, Tklk, Tlkl
 
     INTEGER :: m, i, j, k
 
@@ -1324,9 +1323,9 @@ CONTAINS
     IMPLICIT NONE
 
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Jklk, Jkll
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: TlMkJk, TkMlJl, TlMlJk, TkMkJl
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Jklk, Jkll
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: TlMkJk, TkMlJl, TlMlJk, TkMkJl
 
     INTEGER :: m, i, j, k
 
@@ -1358,31 +1357,31 @@ CONTAINS
     IMPLICIT NONE
 
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms) :: SklBuf  ! input
+    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: SklBuf  ! input
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms)                 :: SUM0    ! local
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: invAkl  ! input
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms)                 :: a       ! input
+    REAL(wp), DIMENSION(Glob_NumYHYTerms)                 :: SUM0    ! local
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: invAkl  ! input
+    REAL(wp), DIMENSION(Glob_NumYHYTerms)                 :: a       ! input
 
-    REAL(dprec)                                              :: coabij      ! local
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: R, b, coab  ! input
+    REAL(wp)                                              :: coabij      ! local
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: R, b, coab  ! input
 
     INTEGER :: p  ! input
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_npt)       :: dVk            ! output
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ddSk_over_Skl  ! input
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_npt)       :: dVk            ! output
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ddSk_over_Skl  ! input
 
-    REAL(dprec)                                              :: dRk   ! local
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ddVk  ! local
+    REAL(wp)                                              :: dRk   ! local
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ddVk  ! local
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ALk   ! input
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Jklk  ! input
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ALk   ! input
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Jklk  ! input
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: da, db, dc       ! local
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: RLk, JRLk, RJLk  ! local
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: da, db, dc       ! local
+    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: RLk, JRLk, RJLk  ! local
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms) :: g1, g2            ! local
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms) :: factor1, factor2
+    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: g1, g2            ! local
+    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: factor1, factor2
 
     INTEGER :: m, i, j, ii, jj, indx
 
@@ -1553,10 +1552,10 @@ CONTAINS
     IMPLICIT NONE
 
     INTEGER, INTENT(IN)                                   :: p
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms), INTENT(IN)  :: coab
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms), INTENT(OUT) :: sum
+    REAL(wp), DIMENSION(Glob_NumYHYTerms), INTENT(IN)  :: coab
+    REAL(wp), DIMENSION(Glob_NumYHYTerms), INTENT(OUT) :: sum
 
-    REAL(dprec), DIMENSION(Glob_NumYHYTerms) :: g1, g2
+    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: g1, g2
 
     INTEGER :: m, i
 
@@ -1624,7 +1623,8 @@ CONTAINS
 
   SUBROUTINE ExpValuesMatElem(mk, PreLk, PreAk, PreMAk, ml, vechLl, SymMatrix, &
             Skl, Tkl, Vkl, rkl_m1, rkl, rkl_2, deltarkl, &
-            MassVelocity_kl, Darwin_kl, Darwin1_kl, OrbitOrbit_kl, CorrFunc_kl)
+            MassVelocity_kl, Darwin_kl, Darwin1_kl, OrbitOrbit_kl, &
+            NumCFGridPoints, CFGrid, CFkl, AreCorrFuncNeeded)
 
     IMPLICIT NONE
 
@@ -1637,49 +1637,59 @@ CONTAINS
     !   vechLl         :: n(n+1)/2 exponent parameters of the ket (Ll lower triangular)
     !   mk, ml         :: premultiplier powers
     !   SymMatrix      :: the symmetry permutation matrix
+    !   NumCFGridPoints   :: number of grid points for the correlation function
+    !   CFGrid            :: grid points where the correlation function is computed
+    !   AreCorrFuncNeeded :: whether CFkl is computed (CFGrid and CFkl are
+    !                        not referenced otherwise)
     ! Output (normalized):
     !   Skl, Tkl, Vkl  :: overlap, kinetic and potential energy terms,
     !                     followed by the remaining operator terms
+    !   CFkl           :: matrix elements of the nucleus-nucleus correlation
+    !                     function (pair 0-1, i.e. r_1), the only one available
+    !                     in PG_0S - the g_1 of the reference codes
 
     ! Parameters
     INTEGER :: n
 
     INTEGER, INTENT(IN)      :: mk, ml
-    REAL(dprec), INTENT(IN)  :: PreLk(Glob_n, Glob_n), PreAk(Glob_n, Glob_n), PreMAk(Glob_n, Glob_n)
-    REAL(dprec), INTENT(IN)  :: vechLl(Glob_npt)
-    REAL(dprec), INTENT(IN)  :: SymMatrix(Glob_n, Glob_n)
-    REAL(dprec), INTENT(OUT) :: Skl, Tkl, Vkl, rkl_m1(Glob_n, Glob_n)
-    REAL(dprec), INTENT(OUT) :: rkl(Glob_n, Glob_n), rkl_2(Glob_n, Glob_n), deltarkl(Glob_n, Glob_n)
-    REAL(dprec), INTENT(OUT) :: MassVelocity_kl, Darwin_kl, Darwin1_kl, OrbitOrbit_kl
-    REAL(dprec), INTENT(OUT) :: CorrFunc_kl(Glob_CorrFuncNPoints)
+    REAL(wp), INTENT(IN)  :: PreLk(Glob_n, Glob_n), PreAk(Glob_n, Glob_n), PreMAk(Glob_n, Glob_n)
+    REAL(wp), INTENT(IN)  :: vechLl(Glob_npt)
+    REAL(wp), INTENT(IN)  :: SymMatrix(Glob_n, Glob_n)
+    REAL(wp), INTENT(OUT) :: Skl, Tkl, Vkl, rkl_m1(Glob_n, Glob_n)
+    REAL(wp), INTENT(OUT) :: rkl(Glob_n, Glob_n), rkl_2(Glob_n, Glob_n), deltarkl(Glob_n, Glob_n)
+    REAL(wp), INTENT(OUT) :: MassVelocity_kl, Darwin_kl, Darwin1_kl, OrbitOrbit_kl
+    INTEGER, INTENT(IN)   :: NumCFGridPoints
+    REAL(wp), INTENT(IN)  :: CFGrid(NumCFGridPoints)
+    REAL(wp), INTENT(OUT) :: CFkl(NumCFGridPoints)
+    LOGICAL, INTENT(IN)   :: AreCorrFuncNeeded
 
     ! Local variables
     INTEGER     :: i, j, k, indx, info, jj, ii, kk, mko2, mlo2
-    REAL(dprec) :: detLk, detLl, detAkl
-    REAL(dprec) :: SUM0, SUM1, SUM2, SUM3
-    REAL(dprec) :: Lk(Glob_n, Glob_n), Ll(Glob_n, Glob_n), Ak(Glob_n, Glob_n), Al(Glob_n, Glob_n)
-    REAL(dprec) :: invAkl(Glob_n, Glob_n), PLl(Glob_n, Glob_n), invL(Glob_n, Glob_n)
-    REAL(dprec) :: Temp(Glob_n, Glob_n)
-    REAL(dprec) :: trT, tl, tk, mkml, mkpml, Ttmp
-    REAL(dprec) :: a, coabij
-    REAL(dprec) :: R(Glob_n, Glob_n), b(Glob_n, Glob_n), c(Glob_n, Glob_n), coab(Glob_n, Glob_n), Vtmp(Glob_n, Glob_n)
+    REAL(wp) :: detLk, detLl, detAkl
+    REAL(wp) :: SUM0, SUM1, SUM2, SUM3
+    REAL(wp) :: Lk(Glob_n, Glob_n), Ll(Glob_n, Glob_n), Ak(Glob_n, Glob_n), Al(Glob_n, Glob_n)
+    REAL(wp) :: invAkl(Glob_n, Glob_n), PLl(Glob_n, Glob_n), invL(Glob_n, Glob_n)
+    REAL(wp) :: Temp(Glob_n, Glob_n)
+    REAL(wp) :: trT, tl, tk, mkml, mkpml, Ttmp
+    REAL(wp) :: a, coabij
+    REAL(wp) :: R(Glob_n, Glob_n), b(Glob_n, Glob_n), c(Glob_n, Glob_n), coab(Glob_n, Glob_n), Vtmp(Glob_n, Glob_n)
     INTEGER     :: p, q, t
-    REAL(dprec) :: invLk(Glob_n, Glob_n), invLl(Glob_n, Glob_n), invAk(Glob_n, Glob_n), invAl(Glob_n, Glob_n), chAl(Glob_n, Glob_n)
-    REAL(dprec) :: r1kl, r1kl_2
-    REAL(dprec) :: ALk(Glob_n, Glob_n), ALl(Glob_n, Glob_n), AAk(Glob_n, Glob_n), AAl(Glob_n, Glob_n), AlLl(Glob_n, Glob_n)
-    REAL(dprec) :: MAk(Glob_n, Glob_n), MAl(Glob_n, Glob_n)
-    REAL(dprec) :: Jkk(Glob_n, Glob_n), Jll(Glob_n, Glob_n), Jklk(Glob_n, Glob_n), Jkll(Glob_n, Glob_n)
-    REAL(dprec) :: AAlMAl(Glob_n, Glob_n), AAkMAk(Glob_n, Glob_n), AAkMAl(Glob_n, Glob_n), AAlMAk(Glob_n, Glob_n)
-    REAL(dprec) :: Tllk(Glob_n, Glob_n), Tkkl(Glob_n, Glob_n), Tklk(Glob_n, Glob_n), Tlkl(Glob_n, Glob_n)
-    REAL(dprec) :: TlMkJk(Glob_n, Glob_n), TkMlJl(Glob_n, Glob_n), TlMlJk(Glob_n, Glob_n), TkMkJl(Glob_n, Glob_n)
-    REAL(dprec) :: JkMlk(Glob_n, Glob_n), JlMkl(Glob_n, Glob_n), JlMlk(Glob_n, Glob_n), JkMkl(Glob_n, Glob_n)
-    REAL(dprec) :: da(Glob_n, Glob_n), db(Glob_n, Glob_n), dc(Glob_n, Glob_n)
-    REAL(dprec) :: RLk(Glob_n, Glob_n), RLl(Glob_n, Glob_n)
-    REAL(dprec) :: JRLk(Glob_n, Glob_n), JRLl(Glob_n, Glob_n), RJLk(Glob_n, Glob_n), RJLl(Glob_n, Glob_n)
-    REAL(dprec) :: g1, g2, g3
+    REAL(wp) :: invLk(Glob_n, Glob_n), invLl(Glob_n, Glob_n), invAk(Glob_n, Glob_n), invAl(Glob_n, Glob_n), chAl(Glob_n, Glob_n)
+    REAL(wp) :: r1kl, r1kl_2
+    REAL(wp) :: ALk(Glob_n, Glob_n), ALl(Glob_n, Glob_n), AAk(Glob_n, Glob_n), AAl(Glob_n, Glob_n), AlLl(Glob_n, Glob_n)
+    REAL(wp) :: MAk(Glob_n, Glob_n), MAl(Glob_n, Glob_n)
+    REAL(wp) :: Jkk(Glob_n, Glob_n), Jll(Glob_n, Glob_n), Jklk(Glob_n, Glob_n), Jkll(Glob_n, Glob_n)
+    REAL(wp) :: AAlMAl(Glob_n, Glob_n), AAkMAk(Glob_n, Glob_n), AAkMAl(Glob_n, Glob_n), AAlMAk(Glob_n, Glob_n)
+    REAL(wp) :: Tllk(Glob_n, Glob_n), Tkkl(Glob_n, Glob_n), Tklk(Glob_n, Glob_n), Tlkl(Glob_n, Glob_n)
+    REAL(wp) :: TlMkJk(Glob_n, Glob_n), TkMlJl(Glob_n, Glob_n), TlMlJk(Glob_n, Glob_n), TkMkJl(Glob_n, Glob_n)
+    REAL(wp) :: JkMlk(Glob_n, Glob_n), JlMkl(Glob_n, Glob_n), JlMlk(Glob_n, Glob_n), JkMkl(Glob_n, Glob_n)
+    REAL(wp) :: da(Glob_n, Glob_n), db(Glob_n, Glob_n), dc(Glob_n, Glob_n)
+    REAL(wp) :: RLk(Glob_n, Glob_n), RLl(Glob_n, Glob_n)
+    REAL(wp) :: JRLk(Glob_n, Glob_n), JRLl(Glob_n, Glob_n), RJLk(Glob_n, Glob_n), RJLl(Glob_n, Glob_n)
+    REAL(wp) :: g1, g2, g3
 
     ! DK
-    REAL(dprec) :: cvel  ! speed of light
+    REAL(wp) :: cvel  ! speed of light
 
     ! DK
 
@@ -2057,19 +2067,19 @@ CONTAINS
     ENDDO
     ! rkl_2(1,1)=Skl*(p+THREE/TWO)*invAkl(1,1)
 
-    ! Computing nucleus-nucleus correlation FUNCTION IF needed
-    IF (Glob_IsCorrFuncNeeded) THEN
+    ! Evaluation of the nucleus-nucleus correlation function (pair 0-1)
+    IF (AreCorrFuncNeeded) THEN
       g1 = 1/invAkl(1, 1)
-      DO i = 1, Glob_CorrFuncNPoints
-        g2 = g1*Glob_CorrFuncGrid(i)*Glob_CorrFuncGrid(i)
+      DO i = 1, NumCFGridPoints
+        g2 = g1*CFGrid(i)*CFGrid(i)
         IF (g2 == ZERO) THEN
           IF (p == 0) THEN
-            CorrFunc_kl(i) = Skl*g1*SQRT(g1)*ONEHALF/Glob_Pi
+            CFkl(i) = Skl*g1*SQRT(g1)*ONEHALF/Glob_Pi
           ELSE
-            CorrFunc_kl(i) = ZERO
+            CFkl(i) = ZERO
           ENDIF
         ELSE
-          CorrFunc_kl(i) = EXP(-g2+p*LOG(g2)-Glob_lngamma(p))*Skl*g1*SQRT(g1)*ONEHALF/Glob_Pi
+          CFkl(i) = EXP(-g2+p*LOG(g2)-Glob_lngamma(p))*Skl*g1*SQRT(g1)*ONEHALF/Glob_Pi
         ENDIF
       ENDDO
     ENDIF
@@ -2094,7 +2104,7 @@ CONTAINS
 
 
     !!!
-    ! cvel = 137.0359895_dprec
+    ! cvel = 137.0359895_wp
     cvel = ONE
     CALL Darwin(n, i, j, mk, ml, cvel, Skl, Ak, Al, invAkl, Darwin_kl)
 
@@ -2112,27 +2122,27 @@ CONTAINS
 
 
     !!!
-    ! cvel=137.0359895_dprec
+    ! cvel=137.0359895_wp
     cvel = ONE
 
     MassVelocity_kl = ZERO
 
-    MassVelocity_kl = -0.125_dprec/(cvel*cvel*Glob_Mass(1)**3)*&
+    MassVelocity_kl = -0.125_wp/(cvel*cvel*Glob_Mass(1)**3)*&
             nJnnJn_kl(n, mk, ml, Skl, Ak, Al, invAkl)
 
     DO i = 1, Glob_n
       MassVelocity_kl = MassVelocity_kl-&
            nJiinnJiin_kl(n, i, mk, ml, Skl, Ak, Al, invAkl)/&
-           (8.0_dprec*Glob_Mass(i+1)**3*cvel*cvel)
+           (8.0_wp*Glob_Mass(i+1)**3*cvel*cvel)
 
     ENDDO
   !
-  !    MassVelocity_kl= -ONE/(2.0_dprec*Glob_Mass(1)*cvel*cvel)*mass_kl (n,mk,ml,Skl,Ak,Al,invAkl,Vkl)-&
-  !         ONE/(2.0_dprec*cvel*cvel*Glob_Mass(2))*mass_kl (n,mk,ml,Skl,Ak,Al,invAkl,Vkl)
+  !    MassVelocity_kl= -ONE/(2.0_wp*Glob_Mass(1)*cvel*cvel)*mass_kl (n,mk,ml,Skl,Ak,Al,invAkl,Vkl)-&
+  !         ONE/(2.0_wp*cvel*cvel*Glob_Mass(2))*mass_kl (n,mk,ml,Skl,Ak,Al,invAkl,Vkl)
 
 
   !    MassVelocity_kl = &
-  !         -nJnnJn_kl(n,mk,ml,Skl,Ak,Al,invAkl)/(8.0_dprec*cvel*cvel)*&
+  !         -nJnnJn_kl(n,mk,ml,Skl,Ak,Al,invAkl)/(8.0_wp*cvel*cvel)*&
   !         ( ONE/Glob_Mass(1)**3 +ONE/Glob_Mass(1+1)**3 )
 
 
@@ -2141,16 +2151,16 @@ CONTAINS
 
     !!!
 
-    REAL(dprec) FUNCTION At_Orb_Orb1(Ak, Al, Skl, invAkl, rkl_m1)
+    REAL(wp) FUNCTION At_Orb_Orb1(Ak, Al, Skl, invAkl, rkl_m1)
       IMPLICIT NONE
-      REAL(dprec), DIMENSION(Glob_n, Glob_n), INTENT(IN) :: Ak, Al, invAkl, rkl_m1
-      REAL(dprec), INTENT(IN)                            :: Skl
+      REAL(wp), DIMENSION(Glob_n, Glob_n), INTENT(IN) :: Ak, Al, invAkl, rkl_m1
+      REAL(wp), INTENT(IN)                            :: Skl
 
-      REAL(dprec), DIMENSION(Glob_n)         :: O_O1
-      REAL(dprec), DIMENSION(Glob_n, Glob_n) :: O_O2, O_O3
+      REAL(wp), DIMENSION(Glob_n)         :: O_O1
+      REAL(wp), DIMENSION(Glob_n, Glob_n) :: O_O2, O_O3
 
       CALL At_Orb_Orb_pomoc(Ak, Al, Skl, invAkl, rkl_m1, O_O1, O_O2, O_O3)
-      At_Orb_Orb1 = (-SUM(O_O1)-SUM(O_O2)+SUM(O_O3))/(2.0_dprec)
+      At_Orb_Orb1 = (-SUM(O_O1)-SUM(O_O2)+SUM(O_O3))/(2.0_wp)
     END FUNCTION At_Orb_Orb1
 
 
@@ -2160,12 +2170,12 @@ CONTAINS
     ! act on them as in the PG_0S reference (scaled charge products).
     SUBROUTINE At_Orb_Orb_pomoc(Ak, Al, Skl, invAkl, rkl_m1, O_O1, O_O2, O_O3)
       IMPLICIT NONE
-      REAL(dprec), DIMENSION(Glob_n, Glob_n), INTENT(IN)  :: Ak, Al, invAkl, rkl_m1
-      REAL(dprec), INTENT(IN)                             :: Skl
-      REAL(dprec), DIMENSION(Glob_n), INTENT(OUT)         :: O_O1
-      REAL(dprec), DIMENSION(Glob_n, Glob_n), INTENT(OUT) :: O_O2, O_O3
+      REAL(wp), DIMENSION(Glob_n, Glob_n), INTENT(IN)  :: Ak, Al, invAkl, rkl_m1
+      REAL(wp), INTENT(IN)                             :: Skl
+      REAL(wp), DIMENSION(Glob_n), INTENT(OUT)         :: O_O1
+      REAL(wp), DIMENSION(Glob_n, Glob_n), INTENT(OUT) :: O_O2, O_O3
 
-      REAL(dprec), DIMENSION(Glob_n, Glob_n) :: Bmac, Cmac, Kmac
+      REAL(wp), DIMENSION(Glob_n, Glob_n) :: Bmac, Cmac, Kmac
       INTEGER                                :: i, j, ii, jj
 
 
@@ -2175,17 +2185,17 @@ CONTAINS
       DO ii = 1, Glob_n
         ! suma I
         ! I-1
-        O_O1(ii) = -12.0_dprec*Al(ii, ii)*rkl_m1(ii, ii)
+        O_O1(ii) = -12.0_wp*Al(ii, ii)*rkl_m1(ii, ii)
         ! I-2
         DO i = 1, Glob_n
           DO j = 1, Glob_n
             Bmac(i, j) = 8*Al(i, ii)*Al(ii, j)  ! MONIKA (i,ii)*(ii,j)
           ENDDO
         ENDDO
-        ! O_O1(ii)=O_O1(ii)+8.0_dprec*At_rijm1rBr(Glob_n,Skl,invAkl,Bmac,ii,0)
+        ! O_O1(ii)=O_O1(ii)+8.0_wp*At_rijm1rBr(Glob_n,Skl,invAkl,Bmac,ii,0)
         ! I-3
         ! Bmac=ZERO;
-        Bmac(ii, 1:Glob_n) = Bmac(ii, 1:Glob_n)+4*Al(ii, ii)*(Ak(ii, 1:Glob_n)+5.0_dprec*Al(ii, 1:Glob_n))
+        Bmac(ii, 1:Glob_n) = Bmac(ii, 1:Glob_n)+4*Al(ii, ii)*(Ak(ii, 1:Glob_n)+5.0_wp*Al(ii, 1:Glob_n))
         ! O_O1(ii)=O_O1(ii)+At_rijm1rBr(Glob_n,Skl,invAkl,Bmac,ii,0)
         O_O1(ii) = O_O1(ii)+ME_rXr_over_rij(Bmac, ii, ii, invAkl, rkl_m1(ii, ii))
         ! I-4
@@ -2195,25 +2205,25 @@ CONTAINS
             Cmac(i, j) = (Ak(i, ii)+Al(i, ii))*Al(ii, j)
           ENDDO
         ENDDO
-        ! O_O1(ii)=O_O1(ii)-8.0_dprec*At_rijm1rBrrCr(Glob_n,Skl,invAkl,Bmac,Cmac,ii,0)
-        O_O1(ii) = O_O1(ii)-8.0_dprec*ME_rXr_rYr_over_rij(Bmac, Cmac, ii, ii, invAkl, rkl_m1(ii, ii))
+        ! O_O1(ii)=O_O1(ii)-8.0_wp*At_rijm1rBrrCr(Glob_n,Skl,invAkl,Bmac,Cmac,ii,0)
+        O_O1(ii) = O_O1(ii)-8.0_wp*ME_rXr_rYr_over_rij(Bmac, Cmac, ii, ii, invAkl, rkl_m1(ii, ii))
         O_O1(ii) = O_O1(ii)*Glob_ChargeMatrix(ii, ii)/Glob_Mass(1)/Glob_Mass(ii+1)
 
         DO jj = 1, Glob_n
           ! startuje suma II
           IF (jj .NE. ii) THEN
             ! II-1
-            O_O2(ii, jj) = -12.0_dprec*Al(ii, jj)*rkl_m1(ii, ii)
+            O_O2(ii, jj) = -12.0_wp*Al(ii, jj)*rkl_m1(ii, ii)
             ! II-2
             DO i = 1, Glob_n
               DO j = 1, Glob_n
                 Bmac(i, j) = 8*Al(i, ii)*Al(jj, j)  ! MONIKA (i,ii)*(ii,j)
               ENDDO
             ENDDO
-            ! O_O2(ii,jj)=O_O2(ii,jj)+8.0_dprec*At_rijm1rBr(Glob_n,Skl,invAkl,Bmac,ii,0)
+            ! O_O2(ii,jj)=O_O2(ii,jj)+8.0_wp*At_rijm1rBr(Glob_n,Skl,invAkl,Bmac,ii,0)
             ! II-3
             ! Bmac=ZERO;
-            Bmac(ii, 1:Glob_n) = Bmac(ii, 1:Glob_n)+4*Al(ii, jj)*(Ak(ii, 1:Glob_n)+2.0_dprec*Al(ii, 1:Glob_n))
+            Bmac(ii, 1:Glob_n) = Bmac(ii, 1:Glob_n)+4*Al(ii, jj)*(Ak(ii, 1:Glob_n)+2.0_wp*Al(ii, 1:Glob_n))
             ! O_O2(ii,jj)=O_O2(ii,jj)+At_rijm1rBr(Glob_n,Skl,invAkl,Bmac,ii,0)
             ! II-4
             ! Bmac=ZERO;
@@ -2228,25 +2238,25 @@ CONTAINS
                 Cmac(i, j) = (Ak(i, ii)+Al(i, ii))*Al(ii, j)
               ENDDO
             ENDDO
-            ! O_O2(ii,jj)=O_O2(ii,jj)-8.0_dprec*At_rijm1rBrrCr(Glob_n,Skl,invAkl,Bmac,Cmac,ii,0)
-            O_O2(ii, jj) = O_O2(ii, jj)-8.0_dprec*ME_rXr_rYr_over_rij(Bmac, Cmac, ii, ii, invAkl, rkl_m1(ii, ii))
+            ! O_O2(ii,jj)=O_O2(ii,jj)-8.0_wp*At_rijm1rBrrCr(Glob_n,Skl,invAkl,Bmac,Cmac,ii,0)
+            O_O2(ii, jj) = O_O2(ii, jj)-8.0_wp*ME_rXr_rYr_over_rij(Bmac, Cmac, ii, ii, invAkl, rkl_m1(ii, ii))
             O_O2(ii, jj) = O_O2(ii, jj)*Glob_ChargeMatrix(ii, ii)/Glob_Mass(1)/Glob_Mass(ii+1)
           ENDIF
           ! startuje III suma
           IF (jj .GT. ii) THEN
             ! III-1
-            O_O3(ii, jj) = -12.0_dprec*Al(jj, ii)*rkl_m1(ii, jj)
+            O_O3(ii, jj) = -12.0_wp*Al(jj, ii)*rkl_m1(ii, jj)
             ! III-2
             DO i = 1, Glob_n
               DO j = 1, Glob_n
                 Bmac(i, j) = 8*Al(i, ii)*Al(jj, j)
               ENDDO
             ENDDO
-            ! O_O3(ii,jj) = O_O3(ii,jj)+8.0_dprec*At_rijm1rBr(Glob_n,Skl,invAkl,Bmac,ii,jj)
+            ! O_O3(ii,jj) = O_O3(ii,jj)+8.0_wp*At_rijm1rBr(Glob_n,Skl,invAkl,Bmac,ii,jj)
             ! III-3
             ! Bmac=ZERO;
-            Bmac(ii, 1:Glob_n) = Bmac(ii, 1:Glob_n)-4*Al(jj, ii)*(Ak(jj, 1:Glob_n)+4.0_dprec*Al(jj, 1:Glob_n))
-            Bmac(jj, 1:Glob_n) = Bmac(jj, 1:Glob_n)+4*Al(jj, ii)*(Ak(jj, 1:Glob_n)+4.0_dprec*Al(jj, 1:Glob_n))
+            Bmac(ii, 1:Glob_n) = Bmac(ii, 1:Glob_n)-4*Al(jj, ii)*(Ak(jj, 1:Glob_n)+4.0_wp*Al(jj, 1:Glob_n))
+            Bmac(jj, 1:Glob_n) = Bmac(jj, 1:Glob_n)+4*Al(jj, ii)*(Ak(jj, 1:Glob_n)+4.0_wp*Al(jj, 1:Glob_n))
             ! O_O3(ii,jj) = O_O3(ii,jj)+At_rijm1rBr(Glob_n,Skl,invAkl,Bmac,ii,jj)
             ! III-4
             ! Bmac=ZERO;
@@ -2263,8 +2273,8 @@ CONTAINS
                 Cmac(i, j) = (Al(i, jj)+Ak(i, jj))*Al(ii, j)
               ENDDO
             ENDDO
-            ! O_O3(ii,jj) = O_O3(ii,jj) + 8.0_dprec*At_rijm1rBrrCr(Glob_n,Skl,invAkl,Bmac,Cmac,ii,jj)
-            O_O3(ii, jj) = O_O3(ii, jj) + 8.0_dprec*ME_rXr_rYr_over_rij(Bmac, Cmac, ii, jj, invAkl, rkl_m1(ii, jj))
+            ! O_O3(ii,jj) = O_O3(ii,jj) + 8.0_wp*At_rijm1rBrrCr(Glob_n,Skl,invAkl,Bmac,Cmac,ii,jj)
+            O_O3(ii, jj) = O_O3(ii, jj) + 8.0_wp*ME_rXr_rYr_over_rij(Bmac, Cmac, ii, jj, invAkl, rkl_m1(ii, jj))
             O_O3(ii, jj) = O_O3(ii, jj)*Glob_ChargeMatrix(jj, ii)/Glob_Mass(ii+1)/Glob_Mass(jj+1)
           ENDIF
         ENDDO
@@ -2287,15 +2297,15 @@ CONTAINS
 
       IMPLICIT NONE
 
-      REAL(dprec) :: ME_rXr_over_rij
+      REAL(wp) :: ME_rXr_over_rij
 
       ! Arguments:
-      REAL(dprec) :: X(Glob_n, Glob_n), invCkl(Glob_n, Glob_n), ME_1_over_rij
+      REAL(wp) :: X(Glob_n, Glob_n), invCkl(Glob_n, Glob_n), ME_1_over_rij
       INTEGER     :: i, j
       ! Local variables
-      REAL(dprec) :: TrCJ
-      REAL(dprec) :: CXi(Glob_n), CXj(Glob_n)
-      REAL(dprec) :: TrCX, TrCXCJ
+      REAL(wp) :: TrCJ
+      REAL(wp) :: CXi(Glob_n), CXj(Glob_n)
+      REAL(wp) :: TrCX, TrCXCJ
       INTEGER     :: m, p, q
 
       IF (i == j) THEN
@@ -2358,14 +2368,14 @@ CONTAINS
       ! ME_1_over_rij :: the value of <phi_k| 1/r_{ij} |phi_l> matrix element
       IMPLICIT NONE
 
-      REAL(dprec) :: ME_rXr_rYr_over_rij
+      REAL(wp) :: ME_rXr_rYr_over_rij
       ! Arguments:
-      REAL(dprec) :: X(Glob_n, Glob_n), Y(Glob_n, Glob_n), invCkl(Glob_n, Glob_n), ME_1_over_rij
+      REAL(wp) :: X(Glob_n, Glob_n), Y(Glob_n, Glob_n), invCkl(Glob_n, Glob_n), ME_1_over_rij
       INTEGER     :: i, j
       ! Local variables
-      REAL(dprec) :: TrCJ
-      REAL(dprec) :: Ys(Glob_n, Glob_n), Xs(Glob_n, Glob_n), CX(Glob_n, Glob_n), CY(Glob_n, Glob_n), CXCYi(Glob_n), CXCYj(Glob_n)
-      REAL(dprec) :: TrCX, TrCY, TrCXCY, TrCXCJ, TrCYCJ, TrCXCYCJ
+      REAL(wp) :: TrCJ
+      REAL(wp) :: Ys(Glob_n, Glob_n), Xs(Glob_n, Glob_n), CX(Glob_n, Glob_n), CY(Glob_n, Glob_n), CXCYi(Glob_n), CXCYj(Glob_n)
+      REAL(wp) :: TrCX, TrCY, TrCXCY, TrCXCJ, TrCYCJ, TrCXCYCJ
       INTEGER     :: m, p, q
 
       IF (i == j) THEN
@@ -2483,12 +2493,12 @@ CONTAINS
       !     <\phi_k|r_1^{-2}|\phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl
-      REAL(dprec), INTENT(OUT)                     :: r1m2_kl
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl
+      REAL(wp), INTENT(OUT)                     :: r1m2_kl
 
-      REAL(dprec) :: pak1, pak2
-      pak1 = 2.0_dprec/REAL(mk+ml+1)
+      REAL(wp) :: pak1, pak2
+      pak1 = 2.0_wp/REAL(mk+ml+1)
       pak2 = Skl/invAkl(1, 1)
       r1m2_kl = pak1*pak2
     END SUBROUTINE r1m2
@@ -2499,11 +2509,11 @@ CONTAINS
       !    <\phi_k|r_1^{-4}|\phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl
-      REAL(dprec), INTENT(OUT)                     :: r1m4_kl
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl
+      REAL(wp), INTENT(OUT)                     :: r1m4_kl
 
-      r1m4_kl = 4.0_dprec/((mk+ml)**2-1)/invAkl(1, 1)**2*Skl
+      r1m4_kl = 4.0_wp/((mk+ml)**2-1)/invAkl(1, 1)**2*Skl
     END SUBROUTINE r1m4
 
 
@@ -2512,14 +2522,14 @@ CONTAINS
       !     <\phi_k|r'Br|\phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B
-      REAL(dprec), INTENT(OUT)                     :: rBr_kl
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B
+      REAL(wp), INTENT(OUT)                     :: rBr_kl
 
       INTEGER     :: i, j
-      REAL(dprec) :: ABA11, trAB, pak
+      REAL(wp) :: ABA11, trAB, pak
 
-      pak = REAL((mk+ml), dprec)/invAkl(1, 1)
+      pak = REAL((mk+ml), wp)/invAkl(1, 1)
 
       ABA11 = ZERO
       trAB = ZERO
@@ -2529,7 +2539,7 @@ CONTAINS
           trAB = trAB+invAkl(i, j)*B(j, i)
         ENDDO
       ENDDO
-      rBr_kl = 0.5_dprec*Skl*(3.0_dprec*trAB+ pak*ABA11)
+      rBr_kl = 0.5_wp*Skl*(3.0_wp*trAB+ pak*ABA11)
     END SUBROUTINE rBr
 
 
@@ -2538,12 +2548,12 @@ CONTAINS
       !  <\phi_k|r_1^{-2} r'Br|\phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B
-      REAL(dprec), INTENT(OUT)                     :: r1m2_rBr_kl
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B
+      REAL(wp), INTENT(OUT)                     :: r1m2_rBr_kl
 
       INTEGER     :: i, j
-      REAL(dprec) :: ABA11, trAB
+      REAL(wp) :: ABA11, trAB
 
       ABA11 = ZERO
       trAB = ZERO
@@ -2554,7 +2564,7 @@ CONTAINS
         ENDDO
       ENDDO
       r1m2_rBr_kl = ONE/(mk+ml+ONE)*&
-           Skl/invAkl(1, 1)*(3.0_dprec*trAB+(mk+ml-2)*ABA11/invAkl(1, 1))
+           Skl/invAkl(1, 1)*(3.0_wp*trAB+(mk+ml-2)*ABA11/invAkl(1, 1))
 
     END SUBROUTINE r1m2_rBr
 
@@ -2563,13 +2573,13 @@ CONTAINS
       ! <\phi_k|r_1^{-2} r'Br|\phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B
-      REAL(dprec), INTENT(OUT)                     :: nower1m2_rBr_kl
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B
+      REAL(wp), INTENT(OUT)                     :: nower1m2_rBr_kl
 
       INTEGER     :: i, j
-      REAL(dprec) :: ABA11, trAB
-      REAL(dprec) :: pak1, pak2, pak3
+      REAL(wp) :: ABA11, trAB
+      REAL(wp) :: pak1, pak2, pak3
 
       ABA11 = ZERO
       trAB = ZERO
@@ -2580,11 +2590,11 @@ CONTAINS
         ENDDO
       ENDDO
       pak1 = Skl/invAkl(1, 1)
-      pak2 = REAL((mk+ml-2), dprec)/REAL((mk+ml+1), dprec)
+      pak2 = REAL((mk+ml-2), wp)/REAL((mk+ml+1), wp)
       pak3 = ABA11/invAkl(1, 1)
 
       nower1m2_rBr_kl = ONE/(mk+ml+ONE)*&
-           pak1*3.0_dprec*TrAB + pak2*pak1*pak3
+           pak1*3.0_wp*TrAB + pak2*pak1*pak3
 
     END SUBROUTINE nower1m2_rBr
 
@@ -2594,13 +2604,13 @@ CONTAINS
       !     <\phi_k|r_1^{-4} r'Br|\phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B
-      REAL(dprec), INTENT(OUT)                     :: r1m4_rBr_kl
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B
+      REAL(wp), INTENT(OUT)                     :: r1m4_rBr_kl
 
 
       INTEGER     :: i, j
-      REAL(dprec) :: ABA11, trAB
+      REAL(wp) :: ABA11, trAB
 
 
       ABA11 = ZERO
@@ -2611,8 +2621,8 @@ CONTAINS
           trAB = trAB+invAkl(i, j)*B(j, i)
         ENDDO
       ENDDO
-      r1m4_rBr_kl = 2.0_dprec/((mk+ml)**2-ONE)*Skl/invAkl(1, 1)**2&
-           *(3.0_dprec*trAB+(mk+ml-4)*ABA11/invAkl(1, 1))
+      r1m4_rBr_kl = 2.0_wp/((mk+ml)**2-ONE)*Skl/invAkl(1, 1)**2&
+           *(3.0_wp*trAB+(mk+ml-4)*ABA11/invAkl(1, 1))
 
     END SUBROUTINE r1m4_rBr
 
@@ -2622,14 +2632,14 @@ CONTAINS
       !     <\phi_k|(r'Br)(r'Cr)|\phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B, C
-      REAL(dprec), INTENT(OUT)                     :: rBrrCr_kl
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B, C
+      REAL(wp), INTENT(OUT)                     :: rBrrCr_kl
 
 
       INTEGER     :: i, j, k, l
-      REAL(dprec) :: trAB, trAc, trABAC
-      REAL(dprec) :: ABA11, ACA11, ABACA11
+      REAL(wp) :: trAB, trAc, trABAC
+      REAL(wp) :: ABA11, ACA11, ABACA11
 
       trAB = ZERO
       trAC = ZERO
@@ -2653,11 +2663,11 @@ CONTAINS
           ENDDO
         ENDDO
       ENDDO
-      rBrrCr_kl = 0.25_dprec*Skl* &
-           (9.0_dprec*trAB*trAC+6.0_dprec*trABAC&
-           +3.0_dprec*(mk+ml)/invAkl(1, 1)*(trAB*ACA11+trAC*ABA11)&
+      rBrrCr_kl = 0.25_wp*Skl* &
+           (9.0_wp*trAB*trAC+6.0_wp*trABAC&
+           +3.0_wp*(mk+ml)/invAkl(1, 1)*(trAB*ACA11+trAC*ABA11)&
            +(mk+ml-2)*(mk+ml)/invAkl(1, 1)**2*ABA11*ACA11&
-           +4.0_dprec*(mk+ml)/invAkl(1, 1)*ABACA11)
+           +4.0_wp*(mk+ml)/invAkl(1, 1)*ABACA11)
       !   write(*,*)'rBrrCr_kl=',rBrrCr_kl
     END SUBROUTINE rBrrCr
 
@@ -2666,15 +2676,15 @@ CONTAINS
       !     <\phi_k|(r'Br)(r'Cr)|\phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B, C
-      REAL(dprec), INTENT(OUT)                     :: nowerBrrCr_kl
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B, C
+      REAL(wp), INTENT(OUT)                     :: nowerBrrCr_kl
 
 
       INTEGER     :: i, j, k, l
-      REAL(dprec) :: trAB, trAc, trABAC
-      REAL(dprec) :: ABA11, ACA11, ABACA11
-      REAL(dprec) :: pak1, pak2, pak3
+      REAL(wp) :: trAB, trAc, trABAC
+      REAL(wp) :: ABA11, ACA11, ABACA11
+      REAL(wp) :: pak1, pak2, pak3
 
       trAB = ZERO
       trAC = ZERO
@@ -2703,11 +2713,11 @@ CONTAINS
       pak2 = ABA11/invAkl(1, 1)
       pak3 = ABACA11/invAkl(1, 1)
 
-      nowerBrrCr_kl = 0.25_dprec*Skl* &
-           (9.0_dprec*trAB*trAC+6.0_dprec*trABAC&
-           +3.0_dprec*(mk+ml)*(trAB*pak1+trAC*pak2)&
+      nowerBrrCr_kl = 0.25_wp*Skl* &
+           (9.0_wp*trAB*trAC+6.0_wp*trABAC&
+           +3.0_wp*(mk+ml)*(trAB*pak1+trAC*pak2)&
            +(mk+ml-2)*(mk+ml)*pak1*pak2&
-           +4.0_dprec*(mk+ml)*pak3)
+           +4.0_wp*(mk+ml)*pak3)
 
     END SUBROUTINE nowerBrrCr
 
@@ -2717,13 +2727,13 @@ CONTAINS
       !     <\phi_k|r_1^{-2} (r'Br)(r'Cr)|\phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B, C
-      REAL(dprec), INTENT(OUT)                     :: r1m2_rBrrCr_kl
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B, C
+      REAL(wp), INTENT(OUT)                     :: r1m2_rBrrCr_kl
 
       INTEGER     :: i, j, k, l
-      REAL(dprec) :: trAB, trAc, trABAC
-      REAL(dprec) :: ABA11, ACA11, ABACA11
+      REAL(wp) :: trAB, trAc, trABAC
+      REAL(wp) :: ABA11, ACA11, ABACA11
 
       trAB = ZERO
       trAC = ZERO
@@ -2747,11 +2757,11 @@ CONTAINS
           ENDDO
         ENDDO
       ENDDO
-      r1m2_rBrrCr_kl = 0.5_dprec/(mk+ml+1)*Skl/invAkl(1, 1)* &
-           (9.0_dprec*trAB*trAC+6.0_dprec*trABAC&
-           +3.0_dprec*(mk+ml-2)/invAkl(1, 1)*(trAB*ACA11+trAC*ABA11)&
+      r1m2_rBrrCr_kl = 0.5_wp/(mk+ml+1)*Skl/invAkl(1, 1)* &
+           (9.0_wp*trAB*trAC+6.0_wp*trABAC&
+           +3.0_wp*(mk+ml-2)/invAkl(1, 1)*(trAB*ACA11+trAC*ABA11)&
            +(mk+ml-4)*(mk+ml-2)/invAkl(1, 1)**2*ABA11*ACA11&
-           +4.0_dprec*(mk+ml-2)/invAkl(1, 1)*ABACA11)
+           +4.0_wp*(mk+ml-2)/invAkl(1, 1)*ABACA11)
 
     END SUBROUTINE r1m2_rBrrCr
 
@@ -2760,15 +2770,15 @@ CONTAINS
       !     <\phi_k|r_1^{-2} (r'Br)(r'Cr)|\phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B, C
-      REAL(dprec), INTENT(OUT)                     :: nower1m2_rBrrCr_kl
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B, C
+      REAL(wp), INTENT(OUT)                     :: nower1m2_rBrrCr_kl
 
       INTEGER     :: i, j, k, l
-      REAL(dprec) :: trAB, trAc, trABAC
-      REAL(dprec) :: ABA11, ACA11, ABACA11
+      REAL(wp) :: trAB, trAc, trABAC
+      REAL(wp) :: ABA11, ACA11, ABACA11
 
-      REAL(dprec) :: pak1, pak2, pak3, pak4, pak5, pak6, pak7, pak8, pak9, pak10, pak11
+      REAL(wp) :: pak1, pak2, pak3, pak4, pak5, pak6, pak7, pak8, pak9, pak10, pak11
       trAB = ZERO
       trAC = ZERO
       ABA11 = ZERO
@@ -2796,16 +2806,16 @@ CONTAINS
       pak2 = ABA11/invAkl(1, 1)
       pak3 = ABACA11/invAkl(1, 1)
       pak4 = Skl/invAkl(1, 1)
-      pak5 = REAL((mk+ml-2), dprec)/REAL((mk+ml+1), dprec)
-      pak6 = REAL((mk+ml-4)*(mk+ml-2), dprec)/REAL((mk+ml+1), dprec)
-      pak7 = REAL((mk+ml-2), dprec)/REAL((mk+ml+1), dprec)
-      pak8 = 0.5_dprec/REAL((mk+ml+1), dprec)
+      pak5 = REAL((mk+ml-2), wp)/REAL((mk+ml+1), wp)
+      pak6 = REAL((mk+ml-4)*(mk+ml-2), wp)/REAL((mk+ml+1), wp)
+      pak7 = REAL((mk+ml-2), wp)/REAL((mk+ml+1), wp)
+      pak8 = 0.5_wp/REAL((mk+ml+1), wp)
       pak9 = pak6*pak1*pak2
-      pak10 = 4.0_dprec*pak7*pak3
-      pak11 = 3.0_dprec*pak5
+      pak10 = 4.0_wp*pak7*pak3
+      pak11 = 3.0_wp*pak5
 
-      nower1m2_rBrrCr_kl = pak8*pak4*(9.0_dprec*TrAB*TrAC + 6.0_dprec*TrABAC)+&
-                0.5_dprec*pak4*(pak11*(TrAB*pak1 + TrAC*pak2) + pak9 + pak10)
+      nower1m2_rBrrCr_kl = pak8*pak4*(9.0_wp*TrAB*TrAC + 6.0_wp*TrABAC)+&
+                0.5_wp*pak4*(pak11*(TrAB*pak1 + TrAC*pak2) + pak9 + pak10)
 
     END SUBROUTINE nower1m2_rBrrCr
 
@@ -2815,13 +2825,13 @@ CONTAINS
       !     <\phi_k|r_1^{-4} (r'Br)(r'Cr)|\phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B, C
-      REAL(dprec), INTENT(OUT)                     :: r1m4_rBrrCr_kl
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B, C
+      REAL(wp), INTENT(OUT)                     :: r1m4_rBrrCr_kl
 
       INTEGER     :: i, j, k, l
-      REAL(dprec) :: trAB, trAc, trABAC
-      REAL(dprec) :: ABA11, ACA11, ABACA11
+      REAL(wp) :: trAB, trAc, trABAC
+      REAL(wp) :: ABA11, ACA11, ABACA11
 
       trAB = ZERO
       trAC = ZERO
@@ -2846,10 +2856,10 @@ CONTAINS
         ENDDO
       ENDDO
       r1m4_rBrrCr_kl = ONE/((mk+ml)**2-1)*Skl/invAkl(1, 1)**2* &
-           (9.0_dprec*trAB*trAC+6.0_dprec*trABAC&
-           +3.0_dprec*(mk+ml-4)/invAkl(1, 1)*(trAB*ACA11+trAC*ABA11)&
+           (9.0_wp*trAB*trAC+6.0_wp*trABAC&
+           +3.0_wp*(mk+ml-4)/invAkl(1, 1)*(trAB*ACA11+trAC*ABA11)&
            +(mk+ml-6)*(mk+ml-4)/invAkl(1, 1)**2*ABA11*ACA11&
-           +4.0_dprec*(mk+ml-4)/invAkl(1, 1)*ABACA11)
+           +4.0_wp*(mk+ml-4)/invAkl(1, 1)*ABACA11)
 
     END SUBROUTINE r1m4_rBrrCr
 
@@ -2858,15 +2868,15 @@ CONTAINS
       !     <\phi_k|r_1^{-4} (r'Br)(r'Cr)|\phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B, C
-      REAL(dprec), INTENT(OUT)                     :: nower1m4_rBrrCr_kl
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, B, C
+      REAL(wp), INTENT(OUT)                     :: nower1m4_rBrrCr_kl
 
 
       INTEGER     :: i, j, k, l
-      REAL(dprec) :: trAB, trAc, trABAC
-      REAL(dprec) :: ABA11, ACA11, ABACA11
-      REAL(dprec) :: pak1, pak2, pak3, pak4, pak5, pak6, pak7, pak8, pak9, pak10
+      REAL(wp) :: trAB, trAc, trABAC
+      REAL(wp) :: ABA11, ACA11, ABACA11
+      REAL(wp) :: pak1, pak2, pak3, pak4, pak5, pak6, pak7, pak8, pak9, pak10
 
       trAB = ZERO
       trAC = ZERO
@@ -2894,42 +2904,42 @@ CONTAINS
       pak2 = ACA11/invAkl(1, 1)
       pak3 = ABA11/invAkl(1, 1)
       pak4 = ABACA11/invAkl(1, 1)
-      pak5 = REAL((mk+ml-6), dprec)/REAL((mk+ml+1), dprec)
-      pak6 = REAL((mk+ml-4), dprec)/REAL((mk+ml-1), dprec)
-      pak7 = REAL(mk, dprec)/REAL((mk+ml-1), dprec)
-      pak8 = REAL(ml, dprec)/REAL((mk+ml+1), dprec)
+      pak5 = REAL((mk+ml-6), wp)/REAL((mk+ml+1), wp)
+      pak6 = REAL((mk+ml-4), wp)/REAL((mk+ml-1), wp)
+      pak7 = REAL(mk, wp)/REAL((mk+ml-1), wp)
+      pak8 = REAL(ml, wp)/REAL((mk+ml+1), wp)
       pak9 = pak7*pak8*pak1
       pak10 = pak8*pak1*pak6
 
-      nower1m4_rBrrCr_kl = pak9* 9.0_dprec*TrAB*TrAC +&
-           pak9*6.0_dprec*TrABAC+&
-           mk*3.0_dprec*pak10*(TrAB*pak2 + TrAC*pak3)+&
-           pak1*REAL(ml*mk, dprec)*pak5*pak6*pak2*pak3+&
-           pak10*4.0_dprec*REAL(mk, dprec)*pak4
+      nower1m4_rBrrCr_kl = pak9* 9.0_wp*TrAB*TrAC +&
+           pak9*6.0_wp*TrABAC+&
+           mk*3.0_wp*pak10*(TrAB*pak2 + TrAC*pak3)+&
+           pak1*REAL(ml*mk, wp)*pak5*pak6*pak2*pak3+&
+           pak10*4.0_wp*REAL(mk, wp)*pak4
 
     END SUBROUTINE nower1m4_rBrrCr
 
 
-    REAL(dprec) FUNCTION nJnnJn_kl (n, mk, ml, Skl, Ak, Al, invAkl)
+    REAL(wp) FUNCTION nJnnJn_kl (n, mk, ml, Skl, Ak, Al, invAkl)
       ! Calculate matrix element:
       !     <\nabla' J \nabla \phi_k|\nabla' J \nabla \phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, Ak, Al
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, Ak, Al
 
 
       INTEGER                          :: i, j, k, l
-      REAL(dprec)                      :: trJAk, trJAl, ABA11, TrAB, sum111
-      REAL(dprec)                      :: ACA11, TrAC
-      REAL(dprec), DIMENSION(1:n, 1:n) :: B, C
-      REAL(dprec)                      :: r1m2_kl, r1m4_kl
-      REAL(dprec)                      :: rBr_kl, r1m4_rBr_kl, r1m2_rBr_kl
-      REAL(dprec)                      :: rBrrCr_kl, r1m2_rBrrCr_kl, r1m4_rBrrCr_kl
-      REAL(dprec), DIMENSION(1:16)     :: Wyn, Wod, wynw, Stare
-      REAL(dprec)                      :: pak1, pak2, pak1a, pak1b, pak2a, pak2b, pak
-      REAL(dprec)                      :: pak3, pak4, pak5, pak6, pak7
-      REAL(dprec)                      :: nowerBrrCr_kl, nower1m2_rBr_kl, nower1m2_rBrrCr_kl, nower1m4_rBrrCr_kl
+      REAL(wp)                      :: trJAk, trJAl, ABA11, TrAB, sum111
+      REAL(wp)                      :: ACA11, TrAC
+      REAL(wp), DIMENSION(1:n, 1:n) :: B, C
+      REAL(wp)                      :: r1m2_kl, r1m4_kl
+      REAL(wp)                      :: rBr_kl, r1m4_rBr_kl, r1m2_rBr_kl
+      REAL(wp)                      :: rBrrCr_kl, r1m2_rBrrCr_kl, r1m4_rBrrCr_kl
+      REAL(wp), DIMENSION(1:16)     :: Wyn, Wod, wynw, Stare
+      REAL(wp)                      :: pak1, pak2, pak1a, pak1b, pak2a, pak2b, pak
+      REAL(wp)                      :: pak3, pak4, pak5, pak6, pak7
+      REAL(wp)                      :: nowerBrrCr_kl, nower1m2_rBr_kl, nower1m2_rBrrCr_kl, nower1m4_rBrrCr_kl
 
       trJAk = ZERO
       trJAl = ZERO
@@ -2943,8 +2953,8 @@ CONTAINS
       Wyn = ZERO
       Wod = ZERO
       Stare = ZERO
-      Wyn(1) = 36.0_dprec*trJAk*trJAl*Skl
-      Wod(1) = 36.0_dprec*Ak(1, 1)*Al(1, 1)*Skl
+      Wyn(1) = 36.0_wp*trJAk*trJAl*Skl
+      Wod(1) = 36.0_wp*Ak(1, 1)*Al(1, 1)*Skl
 
       !    write(*,*)'1  ', wyn(1)
 
@@ -2962,50 +2972,50 @@ CONTAINS
       ENDDO
       !
       CALL rBr(n, mk, ml, Skl, B, invAkl, rBr_kl)
-      Wyn(3) = -24.0_dprec*trJAk*rBr_kl
+      Wyn(3) = -24.0_wp*trJAk*rBr_kl
 
       !    write(*,*)'3',wyn(3)
 
       CALL rBr(n, mk, ml, Skl, C, invAkl, rBr_kl)
-      Wyn(2) = -24.0_dprec*trJAl*rBr_kl
+      Wyn(2) = -24.0_wp*trJAl*rBr_kl
 
-      Wod(2) = -12.0_dprec*Ak(1, 1)*Ak(1, 1)*Al(1, 1)*Skl*&
-           REAL((mk+ml+3), dprec)*invAkl(1, 1)
+      Wod(2) = -12.0_wp*Ak(1, 1)*Ak(1, 1)*Al(1, 1)*Skl*&
+           REAL((mk+ml+3), wp)*invAkl(1, 1)
 
       !     write(*,*)'2',wyn(2)
 
 
       ! begin Wyn(4)********************************************
       CALL rBrrCr(n, mk, ml, Skl, C, B, invAkl, rBrrCr_kl)
-      Stare(4) = +16.0_dprec*rBrrCr_kl
+      Stare(4) = +16.0_wp*rBrrCr_kl
 
       CALL nowerBrrCr(n, mk, ml, Skl, C, B, invAkl, nowerBrrCr_kl)
-      Wyn(4) = 16.0_dprec*nowerBrrCr_kl
+      Wyn(4) = 16.0_wp*nowerBrrCr_kl
 
 
       !    write(*,*) '4',wyn(4),Stare(4)
       ! end Wyn(4)*******************************************************
       ! begin Wyn(5) i Wyn(6)********************************************
       CALL r1m2(n, mk, ml, Skl, invAkl, r1m2_kl)
-      Stare(5) = -6.0_dprec*(mk+1)*mk*trJAl*r1m2_kl
-      Stare(6) = -6.0_dprec*(ml+1)*ml*trJAk*r1m2_kl
+      Stare(5) = -6.0_wp*(mk+1)*mk*trJAl*r1m2_kl
+      Stare(6) = -6.0_wp*(ml+1)*ml*trJAk*r1m2_kl
 
-      pak1 = REAL((mk+1)*mk, dprec)/REAL((mk+ml+1), dprec)
+      pak1 = REAL((mk+1)*mk, wp)/REAL((mk+ml+1), wp)
       pak2 = Skl/invAkl(1, 1)
 
-      Wyn(5) = -12.0_dprec*TrJAl*pak1*pak2
+      Wyn(5) = -12.0_wp*TrJAl*pak1*pak2
 
-      pak1 = REAL((ml+1)*ml, dprec)/REAL((mk+ml+1), dprec)
+      pak1 = REAL((ml+1)*ml, wp)/REAL((mk+ml+1), wp)
       pak2 = Skl/invAkl(1, 1)
 
-      Wyn(6) = -12.0_dprec*TrJAk*pak1*pak2
+      Wyn(6) = -12.0_wp*TrJAk*pak1*pak2
 
       !    write(*,*)'5',wyn(5),stare(5)
       !    write(*,*) '6',wyn(6),stare(6)
       ! end Wyn(5) i Wyn(6)*******************************************************
       ! DO Wyn(7)********************************************************
       CALL r1m2_rBr(n, mk, ml, Skl, B, invAkl, r1m2_rBr_kl)
-      Stare(7) = +4.0_dprec*(mk+1)*mk*r1m2_rBr_kl
+      Stare(7) = +4.0_wp*(mk+1)*mk*r1m2_rBr_kl
 
       ABA11 = ZERO
       trAB = ZERO
@@ -3016,22 +3026,22 @@ CONTAINS
         ENDDO
       ENDDO
 
-      pak1a = REAL(mk*(mk+1), dprec)/(REAL((mk+ml+1), dprec))
+      pak1a = REAL(mk*(mk+1), wp)/(REAL((mk+ml+1), wp))
       pak1b = Skl/invAkl(1, 1)
-      pak2a = REAL((mk+ml-2), dprec)/(REAL((mk+ml+1), dprec))
+      pak2a = REAL((mk+ml-2), wp)/(REAL((mk+ml+1), wp))
       pak2b = ABA11/invAkl(1, 1)
 
-      Wyn(7) = 12.0_dprec*pak1a*pak1b*TrAB +&
-           4.0_dprec*REAL(mk*(mk+1), dprec)*pak2a*pak1b*pak2b
+      Wyn(7) = 12.0_wp*pak1a*pak1b*TrAB +&
+           4.0_wp*REAL(mk*(mk+1), wp)*pak2a*pak1b*pak2b
 
 
-      Wod(7) = 4.0_dprec*Skl*Al(1, 1)*Al(1, 1)*REAL(mk*(mk+1), dprec)
+      Wod(7) = 4.0_wp*Skl*Al(1, 1)*Al(1, 1)*REAL(mk*(mk+1), wp)
       !    write(*,*) '7',wyn(7),stare(7),wod(7)
       ! end Wyn(7)********************************************************
 
       ! begin Wyn(8)*******************************************************
       CALL r1m2_rBr(n, mk, ml, Skl, C, invAkl, r1m2_rBr_kl)
-      Stare(8) = +4.0_dprec*(ml+1)*ml*r1m2_rBr_kl
+      Stare(8) = +4.0_wp*(ml+1)*ml*r1m2_rBr_kl
 
       ACA11 = ZERO
       trAC = ZERO
@@ -3042,15 +3052,15 @@ CONTAINS
         ENDDO
       ENDDO
 
-      pak1a = REAL(ml*(ml+1), dprec)/(REAL((mk+ml+1), dprec))
+      pak1a = REAL(ml*(ml+1), wp)/(REAL((mk+ml+1), wp))
       pak1b = Skl/invAkl(1, 1)
-      pak2a = REAL((mk+ml-2), dprec)/(REAL((mk+ml+1), dprec))
+      pak2a = REAL((mk+ml-2), wp)/(REAL((mk+ml+1), wp))
       pak2b = ACA11/invAkl(1, 1)
 
-      Wyn(8) = 12.0_dprec*pak1a*pak1b*TrAC+&
-           4.0_dprec*REAL(ml*(ml+1), dprec)*pak2a*pak1b*pak2b
+      Wyn(8) = 12.0_wp*pak1a*pak1b*TrAC+&
+           4.0_wp*REAL(ml*(ml+1), wp)*pak2a*pak1b*pak2b
 
-      Wod(8) = 4.0_dprec*Skl*Ak(1, 1)*Ak(1, 1)*REAL(ml*(ml+1), dprec)
+      Wod(8) = 4.0_wp*Skl*Ak(1, 1)*Ak(1, 1)*REAL(ml*(ml+1), wp)
 
       !    write(*,*) '8',wyn(8),stare(8),wod(8)
       ! end Wyn(8)*********************************************************
@@ -3067,20 +3077,20 @@ CONTAINS
       ENDDO
 
       CALL r1m2_rBr(n, mk, ml, Skl, B, invAkl, r1m2_rBr_kl)
-      Stare(9) = +12.0_dprec*mk*trJAl*r1m2_rBr_kl
+      Stare(9) = +12.0_wp*mk*trJAl*r1m2_rBr_kl
 
       CALL nower1m2_rBr(n, mk, ml, Skl, B, invAkl, nower1m2_rBr_kl)
-      Wyn(9) = 12.0_dprec*REAL(mk, dprec)*TrJAl*nower1m2_rBr_kl
-      Wod(9) = 24.0_dprec*REAL(mk, dprec)*Ak(1, 1)*Al(1, 1)*Skl
+      Wyn(9) = 12.0_wp*REAL(mk, wp)*TrJAl*nower1m2_rBr_kl
+      Wod(9) = 24.0_wp*REAL(mk, wp)*Ak(1, 1)*Al(1, 1)*Skl
 
       !    write(*,*) '9',wyn(9),Stare(9),wod(9)
 
       CALL r1m2_rBr(n, mk, ml, Skl, C, invAkl, r1m2_rBr_kl)
-      Stare(10) = +12.0_dprec*ml*trJAk*r1m2_rBr_kl
+      Stare(10) = +12.0_wp*ml*trJAk*r1m2_rBr_kl
 
       CALL nower1m2_rBr(n, mk, ml, Skl, C, invAkl, nower1m2_rBr_kl)
-      Wyn(10) = 12.0_dprec*ml*TrJAk*nower1m2_rBr_kl
-      Wod(10) = 24.0_dprec*REAL(ml, dprec)*Al(1, 1)*Ak(1, 1)*Skl
+      Wyn(10) = 12.0_wp*ml*TrJAk*nower1m2_rBr_kl
+      Wod(10) = 24.0_wp*REAL(ml, wp)*Al(1, 1)*Ak(1, 1)*Skl
 
       !    write(*,*) '10',wyn(10),Stare(10),wod(10)
       ! end Wyn(9) i Wyn(10)***********************************************
@@ -3100,12 +3110,12 @@ CONTAINS
       ENDDO
 
       CALL r1m2_rBrrCr(n, mk, ml, Skl, B, C, invAkl, r1m2_rBrrCr_kl)
-      Stare(11) = -8.0_dprec*mk*r1m2_rBrrCr_kl
+      Stare(11) = -8.0_wp*mk*r1m2_rBrrCr_kl
 
       CALL nower1m2_rBrrCr(n, mk, ml, Skl, B, C, invAkl, nower1m2_rBrrCr_kl)
-      Wyn(11) = -8.0_dprec*REAL(mk, dprec)*nower1m2_rBrrCr_kl
-      Wod(11) = -8.0_dprec*Al(1, 1)*Al(1, 1)*Ak(1, 1)*&
-           Skl*REAL(mk*(mk+ml+3), dprec)*invAkl(1, 1)
+      Wyn(11) = -8.0_wp*REAL(mk, wp)*nower1m2_rBrrCr_kl
+      Wod(11) = -8.0_wp*Al(1, 1)*Al(1, 1)*Ak(1, 1)*&
+           Skl*REAL(mk*(mk+ml+3), wp)*invAkl(1, 1)
 
       !    write(*,*) '11',wyn(11),Stare(11),wod(11)
 
@@ -3126,12 +3136,12 @@ CONTAINS
       ENDDO
 
       CALL r1m2_rBrrCr(n, mk, ml, Skl, B, C, invAkl, r1m2_rBrrCr_kl)
-      Stare(12) = -8.0_dprec*ml*r1m2_rBrrCr_kl
+      Stare(12) = -8.0_wp*ml*r1m2_rBrrCr_kl
 
       CALL nower1m2_rBrrCr(n, mk, ml, Skl, B, C, invAkl, nower1m2_rBrrCr_kl)
-      Wyn(12) = -8.0_dprec*ml*nower1m2_rBrrCr_kl
+      Wyn(12) = -8.0_wp*ml*nower1m2_rBrrCr_kl
 
-      Wod(12) = -8.0_dprec*Al(1, 1)*Ak(1, 1)*Ak(1, 1)*Skl*REAL(ml*(mk+ml+3), dprec)*invAkl(1, 1)
+      Wod(12) = -8.0_wp*Al(1, 1)*Ak(1, 1)*Ak(1, 1)*Skl*REAL(ml*(mk+ml+3), wp)*invAkl(1, 1)
 
       !    write(*,*) '12',wyn(12),Stare(12)
 
@@ -3140,13 +3150,13 @@ CONTAINS
       CALL r1m4(n, mk, ml, Skl, invAkl, r1m4_kl)
       Stare(13) = mk*ml*(mk+1)*(ml+1)*r1m4_kl
 
-      pak1 = REAL(mk*(ml+1), dprec)/REAL((mk+ml-1), dprec)
+      pak1 = REAL(mk*(ml+1), wp)/REAL((mk+ml-1), wp)
       pak1a = pak1/invAkl(1, 1)
-      pak2 = REAL(ml*(mk+1), dprec)/REAL((mk+ml+1), dprec)
+      pak2 = REAL(ml*(mk+1), wp)/REAL((mk+ml+1), wp)
       pak2a = pak2/invAkl(1, 1)
       pak = pak1a*pak2a
 
-      Wyn(13) = 4.0_dprec*Skl*pak
+      Wyn(13) = 4.0_wp*Skl*pak
       Wod(13) = Wyn(13)
       !    write(*,*) '13',wyn(13),Stare(13),Wod(13)
 
@@ -3163,10 +3173,10 @@ CONTAINS
       ENDDO
 
       CALL r1m4_rBr(n, mk, ml, Skl, C, invAkl, r1m4_rBr_kl)
-      Stare(14) = -2.0_dprec*(mk+1)*mk*ml*r1m4_rBr_kl
+      Stare(14) = -2.0_wp*(mk+1)*mk*ml*r1m4_rBr_kl
 
       CALL r1m4_rBr(n, mk, ml, Skl, B, invAkl, r1m4_rBr_kl)
-      Stare(15) = -2.0_dprec*mk*(ml+1)*ml*r1m4_rBr_kl
+      Stare(15) = -2.0_wp*mk*(ml+1)*ml*r1m4_rBr_kl
 
 
       ACA11 = ZERO
@@ -3179,15 +3189,15 @@ CONTAINS
       ENDDO
 
       pak1 = ACA11/invAkl(1, 1)
-      pak2 = Skl/invAkl(1, 1)**2.0_dprec
-      pak3 = REAL((mk+ml-4), dprec)/REAL((mk+ml-1), dprec)
-      pak4 = REAL((mk+1), dprec)/REAL((mk+ml+1), dprec)
-      pak5 = REAL(mk, dprec)/REAL((mk+ml-1), dprec)
-      pak6 = REAL(mk, dprec)*REAL(ml, dprec)*pak4
-      pak7 = REAL(ml, dprec)*pak4
+      pak2 = Skl/invAkl(1, 1)**2.0_wp
+      pak3 = REAL((mk+ml-4), wp)/REAL((mk+ml-1), wp)
+      pak4 = REAL((mk+1), wp)/REAL((mk+ml+1), wp)
+      pak5 = REAL(mk, wp)/REAL((mk+ml-1), wp)
+      pak6 = REAL(mk, wp)*REAL(ml, wp)*pak4
+      pak7 = REAL(ml, wp)*pak4
 
-      Wyn(14) = -4.0_dprec*pak5*pak2*3.0_dprec*TrAC*pak7 - &
-           4.0_dprec*pak2*pak3*pak1*pak6
+      Wyn(14) = -4.0_wp*pak5*pak2*3.0_wp*TrAC*pak7 - &
+           4.0_wp*pak2*pak3*pak1*pak6
 
 
       ABA11 = ZERO
@@ -3201,26 +3211,26 @@ CONTAINS
 
       pak1 = ABA11/invAkl(1, 1)
       pak2 = Skl/invAkl(1, 1)**2
-      pak3 = REAL((mk+ml-4), dprec)/REAL((mk+ml-1), dprec)
-      pak4 = REAL((ml+1), dprec)/REAL((mk+ml+1), dprec)
-      pak5 = REAL(mk, dprec)/REAL((mk+ml-1), dprec)
-      pak6 = REAL(mk, dprec)*REAL(ml, dprec)*pak4
-      pak7 = REAL(ml, dprec)*pak4
+      pak3 = REAL((mk+ml-4), wp)/REAL((mk+ml-1), wp)
+      pak4 = REAL((ml+1), wp)/REAL((mk+ml+1), wp)
+      pak5 = REAL(mk, wp)/REAL((mk+ml-1), wp)
+      pak6 = REAL(mk, wp)*REAL(ml, wp)*pak4
+      pak7 = REAL(ml, wp)*pak4
 
-      Wyn(15) = -4.0_dprec*pak5*pak2*3.0_dprec*TrAB*pak7 - &
-           4.0_dprec*pak2*pak3*pak1*pak6
+      Wyn(15) = -4.0_wp*pak5*pak2*3.0_wp*TrAB*pak7 - &
+           4.0_wp*pak2*pak3*pak1*pak6
 
       !    write(*,*) '14',wyn(14),Stare(14),wod(14)
       !    write(*,*) '15',wyn(15),stare(15),wod(15)
 
       ! Wyn(16)***************************************************************
       CALL r1m4_rBrrCr(n, mk, ml, Skl, B, C, invAkl, r1m4_rBrrCr_kl)
-      Stare(16) = +4.0_dprec*mk*ml*r1m4_rBrrCr_kl
+      Stare(16) = +4.0_wp*mk*ml*r1m4_rBrrCr_kl
 
       CALL nower1m4_rBrrCr(n, mk, ml, Skl, B, C, invAkl, nower1m4_rBrrCr_kl)
-      Wyn(16) = +4.0_dprec*nower1m4_rBrrCr_kl
+      Wyn(16) = +4.0_wp*nower1m4_rBrrCr_kl
 
-      Wod(16) = 16.0_dprec*REAL(mk*ml, dprec)*Ak(1, 1)*Al(1, 1)*Skl
+      Wod(16) = 16.0_wp*REAL(mk*ml, wp)*Ak(1, 1)*Al(1, 1)*Skl
 
       !    write(*,*) '16',wyn(16),stare(16),wod(16)
       ! end Wyn(16)***********************************************************
@@ -3247,30 +3257,30 @@ CONTAINS
     END FUNCTION nJnnJn_kl
 
 
-    REAL(dprec) FUNCTION nJiinnJiin_kl (n, ii, mk, ml, Skl, Ak, Al, invAkl)
+    REAL(wp) FUNCTION nJiinnJiin_kl (n, ii, mk, ml, Skl, Ak, Al, invAkl)
       ! Calculate matrix element:
       !     <\nabla' Jii \nabla \phi_k|\nabla' Jii \nabla \phi_l>
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, ii, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, Ak, Al
+      REAL(wp), INTENT(IN)                      :: Skl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl, Ak, Al
 
 
       INTEGER                          :: i, j, k, l
-      REAL(dprec), DIMENSION(1:n, 1:n) :: B, C
-      REAL(dprec)                      :: r1m2_kl, r1m4_kl, sum111
-      REAL(dprec)                      :: rBr_kl, r1m2_rBr_kl, r1m4_rBr_kl
-      REAL(dprec)                      :: rBrrCr_kl, r1m2_rBrrCr_kl, r1m4_rBrrCr_kl
-      REAL(dprec), DIMENSION(1:16)     :: Wyn, Stare
+      REAL(wp), DIMENSION(1:n, 1:n) :: B, C
+      REAL(wp)                      :: r1m2_kl, r1m4_kl, sum111
+      REAL(wp)                      :: rBr_kl, r1m2_rBr_kl, r1m4_rBr_kl
+      REAL(wp)                      :: rBrrCr_kl, r1m2_rBrrCr_kl, r1m4_rBrrCr_kl
+      REAL(wp), DIMENSION(1:16)     :: Wyn, Stare
 
-      REAL(dprec) :: pak1, pak2, pak3, pak4, pak5, pak6, pak7, pak8, pak9
-      REAL(dprec) :: nowerBrrCr_kl, nower1m2_rBr_kl, nower1m2_rBrrCr_kl, nower1m4_rBrrCr_kl
-      REAL(dprec) :: ACA11, TrAB, ABA11, TrAC, TrJAk, TrJAl
+      REAL(wp) :: pak1, pak2, pak3, pak4, pak5, pak6, pak7, pak8, pak9
+      REAL(wp) :: nowerBrrCr_kl, nower1m2_rBr_kl, nower1m2_rBrrCr_kl, nower1m4_rBrrCr_kl
+      REAL(wp) :: ACA11, TrAB, ABA11, TrAC, TrJAk, TrJAl
 
       Wyn = ZERO
       Stare = ZERO
 
-      Wyn(1) = 36.0_dprec*Ak(ii, ii)*Al(ii, ii)*Skl
+      Wyn(1) = 36.0_wp*Ak(ii, ii)*Al(ii, ii)*Skl
       !    write(*,*) '1 ii',wyn(1)
       DO i = 1, n
         DO j = 1, n
@@ -3279,18 +3289,18 @@ CONTAINS
         ENDDO
       ENDDO
       CALL rBr(n, mk, ml, Skl, B, invAkl, rBr_kl)
-      Wyn(2) = -24.0_dprec*Al(ii, ii)*rBr_kl
+      Wyn(2) = -24.0_wp*Al(ii, ii)*rBr_kl
       !    write(*,*) '2 ii',wyn(2)
       CALL rBr(n, mk, ml, Skl, C, invAkl, rBr_kl)
-      Wyn(3) = -24.0_dprec*Ak(ii, ii)*rBr_kl
+      Wyn(3) = -24.0_wp*Ak(ii, ii)*rBr_kl
       !    write(*,*) '3 ii',wyn(3)
 
       ! begin Wyn(4)*********************************************
       CALL rBrrCr(n, mk, ml, Skl, B, C, invAkl, rBrrCr_kl)
-      Stare(4) = +16.0_dprec*rBrrCr_kl
+      Stare(4) = +16.0_wp*rBrrCr_kl
 
       CALL nowerBrrCr(n, mk, ml, Skl, C, B, invAkl, nowerBrrCr_kl)
-      Wyn(4) = 16.0_dprec*nowerBrrCr_kl
+      Wyn(4) = 16.0_wp*nowerBrrCr_kl
 
       !    write(*,*) '4 ii',wyn(4)
       !*********************************************************
@@ -3298,19 +3308,19 @@ CONTAINS
       ! begin Wyn(5) i Wyn(6)************************************
       IF (ii .EQ. 1) THEN
         CALL r1m2(n, mk, ml, Skl, invAkl, r1m2_kl)
-        Stare(5) = -6.0_dprec*Al(1, 1)*mk*(mk+1)*r1m2_kl
-        Stare(6) = -6.0_dprec*Ak(1, 1)*ml*(ml+1)*r1m2_kl
+        Stare(5) = -6.0_wp*Al(1, 1)*mk*(mk+1)*r1m2_kl
+        Stare(6) = -6.0_wp*Ak(1, 1)*ml*(ml+1)*r1m2_kl
 
-        pak1 = REAL((mk+1)*mk, dprec)/REAL((mk+ml+1), dprec)
+        pak1 = REAL((mk+1)*mk, wp)/REAL((mk+ml+1), wp)
         pak2 = Skl/invAkl(1, 1)
 
-        Wyn(5) = -12.0_dprec*Al(1, 1)*pak1*pak2
+        Wyn(5) = -12.0_wp*Al(1, 1)*pak1*pak2
 
 
-        pak1 = REAL((ml+1)*ml, dprec)/REAL((mk+ml+1), dprec)
+        pak1 = REAL((ml+1)*ml, wp)/REAL((mk+ml+1), wp)
         pak2 = Skl/invAkl(1, 1)
 
-        Wyn(6) = -12.0_dprec*Ak(1, 1)*pak1*pak2
+        Wyn(6) = -12.0_wp*Ak(1, 1)*pak1*pak2
 
 
         !    write(*,*) '5 ii',wyn(5),stare(5)
@@ -3328,16 +3338,16 @@ CONTAINS
           C(i, 1) = C(i, 1)+Al(i, 1)
         ENDDO
         CALL r1m2_rBr(n, mk, ml, Skl, B, invAkl, r1m2_rBr_kl)
-        Stare(9) = +12.0_dprec*Al(1, 1)*mk*r1m2_rBr_kl
+        Stare(9) = +12.0_wp*Al(1, 1)*mk*r1m2_rBr_kl
 
         CALL r1m2_rBr(n, mk, ml, Skl, C, invAkl, r1m2_rBr_kl)
-        Stare(10) = +12.0_dprec*Ak(1, 1)*ml*r1m2_rBr_kl
+        Stare(10) = +12.0_wp*Ak(1, 1)*ml*r1m2_rBr_kl
 
         CALL nower1m2_rBr(n, mk, ml, Skl, B, invAkl, nower1m2_rBr_kl)
-        Wyn(9) = 12.0_dprec*REAL(mk, dprec)*Al(1, 1)*nower1m2_rBr_kl
+        Wyn(9) = 12.0_wp*REAL(mk, wp)*Al(1, 1)*nower1m2_rBr_kl
 
         CALL nower1m2_rBr(n, mk, ml, Skl, C, invAkl, nower1m2_rBr_kl)
-        Wyn(10) = 12.0_dprec*ml*Ak(1, 1)*nower1m2_rBr_kl
+        Wyn(10) = 12.0_wp*ml*Ak(1, 1)*nower1m2_rBr_kl
 
         !       write(*,*) '9 ii', Wyn(9), stare(9)
         !       write(*,*) '10 ii',wyn(10),stare(10)
@@ -3352,9 +3362,9 @@ CONTAINS
         ENDDO
 
         CALL r1m2_rBr(n, mk, ml, Skl, B, invAkl, r1m2_rBr_kl)
-        Stare(8) = +4.0_dprec*ml*(ml+1)*r1m2_rBr_kl
+        Stare(8) = +4.0_wp*ml*(ml+1)*r1m2_rBr_kl
         CALL r1m2_rBr(n, mk, ml, Skl, C, invAkl, r1m2_rBr_kl)
-        Stare(7) = +4.0_dprec*mk*(mk+1)*r1m2_rBr_kl
+        Stare(7) = +4.0_wp*mk*(mk+1)*r1m2_rBr_kl
 
         ABA11 = ZERO
         trAB = ZERO
@@ -3364,13 +3374,13 @@ CONTAINS
             trAB = trAB+invAkl(i, j)*B(j, i)
           ENDDO
         ENDDO
-        pak1 = REAL(ml*(ml+1), dprec)/(REAL((mk+ml+1), dprec))
+        pak1 = REAL(ml*(ml+1), wp)/(REAL((mk+ml+1), wp))
         pak2 = Skl/invAkl(1, 1)
-        pak3 = REAL((mk+ml-2), dprec)/(REAL((mk+ml+1), dprec))
+        pak3 = REAL((mk+ml-2), wp)/(REAL((mk+ml+1), wp))
         pak4 = ABA11/invAkl(1, 1)
 
-        Wyn(8) = 12.0_dprec*pak1*pak2*TrAB+&
-             4.0_dprec*REAL(ml*(ml+1), dprec)*pak3*pak2*pak4
+        Wyn(8) = 12.0_wp*pak1*pak2*TrAB+&
+             4.0_wp*REAL(ml*(ml+1), wp)*pak3*pak2*pak4
 
         ACA11 = ZERO
         trAC = ZERO
@@ -3380,13 +3390,13 @@ CONTAINS
             trAC = trAC+invAkl(i, j)*C(j, i)
           ENDDO
         ENDDO
-        pak1 = REAL(mk*(mk+1), dprec)/(REAL((mk+ml+1), dprec))
+        pak1 = REAL(mk*(mk+1), wp)/(REAL((mk+ml+1), wp))
         pak2 = Skl/invAkl(1, 1)
-        pak3 = REAL((mk+ml-2), dprec)/(REAL((mk+ml+1), dprec))
+        pak3 = REAL((mk+ml-2), wp)/(REAL((mk+ml+1), wp))
         pak4 = ACA11/invAkl(1, 1)
 
-        Wyn(7) = 12.0_dprec*pak1*pak2*TrAC +&
-              4.0_dprec*REAL(mk*(mk+1), dprec)*pak3*pak2*pak4
+        Wyn(7) = 12.0_wp*pak1*pak2*TrAC +&
+              4.0_wp*REAL(mk*(mk+1), wp)*pak3*pak2*pak4
 
 
         !    write(*,*) '7 ii',wyn(7),stare(7)
@@ -3402,10 +3412,10 @@ CONTAINS
           B(i, 1) = B(i, 1)+Ak(i, 1)
         ENDDO
         CALL r1m2_rBrrCr(n, mk, ml, Skl, B, C, invAkl, r1m2_rBrrCr_kl)
-        Stare(11) = -8.0_dprec*mk*r1m2_rBrrCr_kl
+        Stare(11) = -8.0_wp*mk*r1m2_rBrrCr_kl
 
         CALL nower1m2_rBrrCr(n, mk, ml, Skl, B, C, invAkl, nower1m2_rBrrCr_kl)
-        Wyn(11) = -8.0_dprec*REAL(mk, dprec)*nower1m2_rBrrCr_kl
+        Wyn(11) = -8.0_wp*REAL(mk, wp)*nower1m2_rBrrCr_kl
 
 
         !       write(*,*) '11 ii',wyn(11),stare(11)
@@ -3421,10 +3431,10 @@ CONTAINS
           B(i, 1) = B(i, 1)+Al(i, 1)
         ENDDO
         CALL r1m2_rBrrCr(n, mk, ml, Skl, B, C, invAkl, r1m2_rBrrCr_kl)
-        Stare(12) = -8.0_dprec*ml*r1m2_rBrrCr_kl
+        Stare(12) = -8.0_wp*ml*r1m2_rBrrCr_kl
 
         CALL nower1m2_rBrrCr(n, mk, ml, Skl, B, C, invAkl, nower1m2_rBrrCr_kl)
-        Wyn(12) = -8.0_dprec*ml*nower1m2_rBrrCr_kl
+        Wyn(12) = -8.0_wp*ml*nower1m2_rBrrCr_kl
 
         !       write(*,*) '12 ii',wyn(12),stare(12)
 
@@ -3433,13 +3443,13 @@ CONTAINS
         CALL r1m4(n, mk, ml, Skl, invAkl, r1m4_kl)
         Stare(13) = mk*ml*(mk+1)*(ml+1)*r1m4_kl
 
-        pak1 = REAL(mk*(ml+1), dprec)/REAL((mk+ml-1), dprec)
+        pak1 = REAL(mk*(ml+1), wp)/REAL((mk+ml-1), wp)
         pak2 = pak1/invAkl(1, 1)
-        pak3 = REAL(ml*(mk+1), dprec)/REAL((mk+ml+1), dprec)
+        pak3 = REAL(ml*(mk+1), wp)/REAL((mk+ml+1), wp)
         pak4 = pak3/invAkl(1, 1)
         pak5 = pak2*pak4
 
-        Wyn(13) = 4.0_dprec*Skl*pak5
+        Wyn(13) = 4.0_wp*Skl*pak5
 
         !   write(*,*) '13 ii',wyn(13),Stare(13)
 
@@ -3456,10 +3466,10 @@ CONTAINS
         ENDDO
 
         CALL r1m4_rBr(n, mk, ml, Skl, C, invAkl, r1m4_rBr_kl)
-        Stare(14) = -2.0_dprec*(mk+1)*mk*ml*r1m4_rBr_kl
+        Stare(14) = -2.0_wp*(mk+1)*mk*ml*r1m4_rBr_kl
 
         CALL r1m4_rBr(n, mk, ml, Skl, B, invAkl, r1m4_rBr_kl)
-        Stare(15) = -2.0_dprec*mk*(ml+1)*ml*r1m4_rBr_kl
+        Stare(15) = -2.0_wp*mk*(ml+1)*ml*r1m4_rBr_kl
 
         ACA11 = ZERO
         trAC = ZERO
@@ -3472,14 +3482,14 @@ CONTAINS
 
         pak1 = ACA11/invAkl(1, 1)
         pak2 = Skl/invAkl(1, 1)**2
-        pak3 = REAL((mk+ml-4), dprec)/REAL((mk+ml-1), dprec)
-        pak4 = REAL((mk+1), dprec)/REAL((mk+ml+1), dprec)
-        pak5 = REAL(mk, dprec)/REAL((mk+ml-1), dprec)
-        pak6 = REAL(mk, dprec)*REAL(ml, dprec)*pak4
-        pak7 = REAL(ml, dprec)*pak4
+        pak3 = REAL((mk+ml-4), wp)/REAL((mk+ml-1), wp)
+        pak4 = REAL((mk+1), wp)/REAL((mk+ml+1), wp)
+        pak5 = REAL(mk, wp)/REAL((mk+ml-1), wp)
+        pak6 = REAL(mk, wp)*REAL(ml, wp)*pak4
+        pak7 = REAL(ml, wp)*pak4
 
-        Wyn(14) = -4.0_dprec*pak5*pak2*3.0_dprec*TrAC*pak7 - &
-             4.0_dprec*pak2*pak3*pak1*pak6
+        Wyn(14) = -4.0_wp*pak5*pak2*3.0_wp*TrAC*pak7 - &
+             4.0_wp*pak2*pak3*pak1*pak6
 
 
         ABA11 = ZERO
@@ -3493,14 +3503,14 @@ CONTAINS
 
         pak1 = ABA11/invAkl(1, 1)
         pak2 = Skl/invAkl(1, 1)**2
-        pak3 = REAL((mk+ml-4), dprec)/REAL((mk+ml-1), dprec)
-        pak4 = REAL((ml+1), dprec)/REAL((mk+ml+1), dprec)
-        pak5 = REAL(mk, dprec)/REAL((mk+ml-1), dprec)
-        pak6 = REAL(mk, dprec)*REAL(ml, dprec)*pak4
-        pak7 = REAL(ml, dprec)*pak4
+        pak3 = REAL((mk+ml-4), wp)/REAL((mk+ml-1), wp)
+        pak4 = REAL((ml+1), wp)/REAL((mk+ml+1), wp)
+        pak5 = REAL(mk, wp)/REAL((mk+ml-1), wp)
+        pak6 = REAL(mk, wp)*REAL(ml, wp)*pak4
+        pak7 = REAL(ml, wp)*pak4
 
-        Wyn(15) = -4.0_dprec*pak5*pak2*3.0_dprec*TrAB*pak7 - &
-             4.0_dprec*pak2*pak3*pak1*pak6
+        Wyn(15) = -4.0_wp*pak5*pak2*3.0_wp*TrAB*pak7 - &
+             4.0_wp*pak2*pak3*pak1*pak6
 
 
         !    write(*,*) '14 ii',wyn(14),Stare(14)
@@ -3509,7 +3519,7 @@ CONTAINS
         ! Wyn(16)***************************************************************
 
         CALL r1m4_rBrrCr(n, mk, ml, Skl, B, C, invAkl, r1m4_rBrrCr_kl)
-        Stare(16) = +4.0_dprec*mk*ml*r1m4_rBrrCr_kl
+        Stare(16) = +4.0_wp*mk*ml*r1m4_rBrrCr_kl
         Wyn(16) = stare(16)
         !       write(*,*) '16 ii',wyn(16),stare(16)
 
@@ -3543,7 +3553,7 @@ CONTAINS
 
       IMPLICIT NONE
       INTEGER                          :: n, i, j
-      REAL(dprec), DIMENSION(1:n, 1:n) :: Ak, Al, Msum
+      REAL(wp), DIMENSION(1:n, 1:n) :: Ak, Al, Msum
 
 
       DO i = 1, n
@@ -3563,10 +3573,10 @@ CONTAINS
 
       IMPLICIT NONE
       INTEGER, INTENT(IN)                               :: n, i, j
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n)      :: Ak, Al
-      REAL(dprec), INTENT(OUT), DIMENSION(1:n-1, 1:n-1) :: Dkl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n)      :: Ak, Al
+      REAL(wp), INTENT(OUT), DIMENSION(1:n-1, 1:n-1) :: Dkl
 
-      REAL(dprec), DIMENSION(1:n, 1:n) :: Akl
+      REAL(wp), DIMENSION(1:n, 1:n) :: Akl
       INTEGER                          :: ii, jj
 
       CALL suma_macierzy(n, Ak, Al, Akl)
@@ -3592,10 +3602,10 @@ CONTAINS
 
       IMPLICIT NONE
       INTEGER, INTENT(IN)                               :: n, i
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n)      :: Ak, Al
-      REAL(dprec), INTENT(OUT), DIMENSION(1:n-1, 1:n-1) :: Dkl_ii
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n)      :: Ak, Al
+      REAL(wp), INTENT(OUT), DIMENSION(1:n-1, 1:n-1) :: Dkl_ii
 
-      REAL(dprec), DIMENSION(1:n, 1:n) :: Akl
+      REAL(wp), DIMENSION(1:n, 1:n) :: Akl
 
       CALL suma_macierzy(n, Ak, Al, Akl)
 
@@ -3610,11 +3620,11 @@ CONTAINS
 
       IMPLICIT NONE
       INTEGER                          :: n, np
-      REAL(dprec), DIMENSION(1:n, 1:n) :: a
-      REAL(dprec), DIMENSION(1:n)      :: wek
+      REAL(wp), DIMENSION(1:n, 1:n) :: a
+      REAL(wp), DIMENSION(1:n)      :: wek
 
       INTEGER     :: i, j, k
-      REAL(dprec) :: sum
+      REAL(wp) :: sum
 
       DO i = 1, n
         DO j = i, n
@@ -3637,8 +3647,8 @@ CONTAINS
 
       IMPLICIT NONE
       INTEGER                     :: n, i, j, k
-      REAL(dprec)                 :: detD
-      REAL(dprec), DIMENSION(1:n) :: wek
+      REAL(wp)                 :: detD
+      REAL(wp), DIMENSION(1:n) :: wek
 
       detD = ONE
       DO i = 1, n
@@ -3653,9 +3663,9 @@ CONTAINS
 
       IMPLICIT NONE
       INTEGER                          :: n, i, j, k
-      REAL(dprec), DIMENSION(1:n)      :: wek
-      REAL(dprec), DIMENSION(1:n, 1:n) :: a, invDkl
-      REAL(dprec)                      :: sum
+      REAL(wp), DIMENSION(1:n)      :: wek
+      REAL(wp), DIMENSION(1:n, 1:n) :: a, invDkl
+      REAL(wp)                      :: sum
 
       DO i = 1, n
         a(i, i) = wek(i)
@@ -3687,20 +3697,20 @@ CONTAINS
     END SUBROUTINE invD
 
 
-    REAL(dprec) FUNCTION delta_Rij (n, mk, ml, i, j, Ak, Al, Skl, invAkl, detAkl)
+    REAL(wp) FUNCTION delta_Rij (n, mk, ml, i, j, Ak, Al, Skl, invAkl, detAkl)
       ! Calculate matrix element:
       !    < phi_k | delta (r_ij) |  phi_l>
 
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, i, j, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl, detAkl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: Ak, Al, invAkl
+      REAL(wp), INTENT(IN)                      :: Skl, detAkl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: Ak, Al, invAkl
 
       INTEGER                              :: p, ii, jj
-      REAL(dprec), DIMENSION(1:n-1, 1:n-1) :: Dkl, workDkl, inv_Dkl
-      REAL(dprec), DIMENSION(1:n)          :: wek
-      REAL(dprec)                          :: det_Dkl
-      REAL(dprec)                          :: aa, dd, pak1, pak2, pak3
+      REAL(wp), DIMENSION(1:n-1, 1:n-1) :: Dkl, workDkl, inv_Dkl
+      REAL(wp), DIMENSION(1:n)          :: wek
+      REAL(wp)                          :: det_Dkl
+      REAL(wp)                          :: aa, dd, pak1, pak2, pak3
 
       p = (mk+ml)/2
 
@@ -3729,26 +3739,26 @@ CONTAINS
       pak2 = detAkl/det_Dkl
       pak3 = ONE/Glob_Pi
 
-      delta_Rij = Skl*(pak2)**(3.0_dprec/2.0_dprec)*&
-                  pak3**(3.0_dprec/2.0_dprec)*(pak1)**p
+      delta_Rij = Skl*(pak2)**(3.0_wp/2.0_wp)*&
+                  pak3**(3.0_wp/2.0_wp)*(pak1)**p
 
     END FUNCTION delta_Rij
 
 
-    REAL(dprec) FUNCTION delta_Ri (n, mk, ml, i, Ak, Al, Skl, invAkl, detAkl)
+    REAL(wp) FUNCTION delta_Ri (n, mk, ml, i, Ak, Al, Skl, invAkl, detAkl)
       ! Calculate matrix element:
       !    < phi_k | delta (r_i) |  phi_l>
 
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, i, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl, detAkl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: Ak, Al, invAkl
+      REAL(wp), INTENT(IN)                      :: Skl, detAkl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: Ak, Al, invAkl
 
       INTEGER                              :: p, ii, jj
-      REAL(dprec), DIMENSION(1:n-1, 1:n-1) :: Dkl_ii, workDkl_ii, inv_Dkl_ii
-      REAL(dprec), DIMENSION(1:n)          :: wek
-      REAL(dprec)                          :: det_Dkl_ii
-      REAL(dprec)                          :: aa, dd, pak1, pak2, pak3
+      REAL(wp), DIMENSION(1:n-1, 1:n-1) :: Dkl_ii, workDkl_ii, inv_Dkl_ii
+      REAL(wp), DIMENSION(1:n)          :: wek
+      REAL(wp)                          :: det_Dkl_ii
+      REAL(wp)                          :: aa, dd, pak1, pak2, pak3
 
       p = (mk+ml)/2
 
@@ -3770,29 +3780,29 @@ CONTAINS
       pak2 = ONE/Glob_Pi
       pak3 = detAkl/det_Dkl_ii
 
-      delta_Ri = Skl*(pak3)**(3.0_dprec/2.0_dprec)*&
-                 pak2**(3.0_dprec/2.0_dprec)*(pak1)**p
+      delta_Ri = Skl*(pak3)**(3.0_wp/2.0_wp)*&
+                 pak2**(3.0_wp/2.0_wp)*(pak1)**p
 
     END FUNCTION delta_Ri
 
 
-    REAL(dprec) FUNCTION delta_R1 (n, Skl, invAkl, detAkl)
+    REAL(wp) FUNCTION delta_R1 (n, Skl, invAkl, detAkl)
       ! Calculate matrix element:
       !    < phi_k | delta (r_1) |  phi_l>
 
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n
-      REAL(dprec), INTENT(IN)                      :: Skl, detAkl
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl
+      REAL(wp), INTENT(IN)                      :: Skl, detAkl
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: invAkl
 
-      REAL(dprec) :: aa, gmp32
+      REAL(wp) :: aa, gmp32
 
       ! gmp32 = 1/(2*Glob_Pi)/Gamma(3/2)
 
-      gmp32 = 0.17958712212516656168908198362769275528_dprec
+      gmp32 = 0.17958712212516656168908198362769275528_wp
       aa = invAkl(1, 1)
 
-      delta_R1 = Skl*gmp32/(aa**(3.0_dprec/2.0_dprec))
+      delta_R1 = Skl*gmp32/(aa**(3.0_wp/2.0_wp))
 
     END FUNCTION delta_R1
 
@@ -3807,19 +3817,19 @@ CONTAINS
     ! act on them as in the PG_0S reference (scaled charge products).
     SUBROUTINE Darwin(n, i, j, mk, ml, cvel, Skl, Ak, Al, invAkl, Darwin_kl)
       ! Calculate matrix element Darwin correction:
-      !      darwin_kl = 1.0d0_dprec/(8.0d0_dprec*cvel*cvel)*
+      !      darwin_kl = 1.0d0_wp/(8.0d0_wp*cvel*cvel)*
       !                  ( sums )
 
       IMPLICIT NONE
       INTEGER, INTENT(IN)                          :: n, mk, ml
-      REAL(dprec), INTENT(IN)                      :: Skl, cvel
-      REAL(dprec), INTENT(IN), DIMENSION(1:n, 1:n) :: Ak, Al, invAkl
-      REAL(dprec), INTENT(OUT)                     :: darwin_kl
+      REAL(wp), INTENT(IN)                      :: Skl, cvel
+      REAL(wp), INTENT(IN), DIMENSION(1:n, 1:n) :: Ak, Al, invAkl
+      REAL(wp), INTENT(OUT)                     :: darwin_kl
 
       INTEGER     :: p, i, j, k, l
-      REAL(dprec) :: sum1, sum2, sum3, Const, ilo
+      REAL(wp) :: sum1, sum2, sum3, Const, ilo
 
-      Const = -Glob_Pi/(2.0_dprec*cvel*cvel)
+      Const = -Glob_Pi/(2.0_wp*cvel*cvel)
       p = (mk+ml)/2
       sum1 = ZERO
       sum2 = ZERO
@@ -3871,14 +3881,14 @@ CONTAINS
       IMPLICIT NONE
 
       INTEGER(2), INTENT(IN)                  :: n, par
-      REAL(dprec), DIMENSION(1:n), INTENT(IN) :: Input
-      REAL(dprec), INTENT(OUT)                :: output
+      REAL(wp), DIMENSION(1:n), INTENT(IN) :: Input
+      REAL(wp), INTENT(OUT)                :: output
 
 
-      REAL(dprec), DIMENSION(1:n) :: Dod, Uje
+      REAL(wp), DIMENSION(1:n) :: Dod, Uje
       LOGICAL(1), DIMENSION(1:n)  :: maska
       INTEGER(2)                  :: i, j, k, ipos
-      REAL(dprec)                 :: wynu, wynd, wynk
+      REAL(wp)                 :: wynu, wynd, wynk
 
 
       output = 0
