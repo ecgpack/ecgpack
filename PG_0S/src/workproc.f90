@@ -4,7 +4,6 @@ MODULE workproc
   USE misc
   USE linalg
   USE globvars
-  USE data_gamma
   USE iso_fortran_env, ONLY: int64
   USE qrlinalg, ONLY: qr_real_state, QR_SUCCESS, QR_ERR_INVALID_ARGUMENT, &
                       QR_ERR_ALLOCATION, QR_ERR_INVALID_STATE, &
@@ -836,7 +835,8 @@ CONTAINS
             (ReadChar(1:9) == 'OVERLAP_D') .OR. (ReadChar(1:9) == 'ELIM_LCFN') .OR. &
             (ReadChar(1:9) == 'ELIM_LND1') .OR. (ReadChar(1:9) == 'SEPR_LND1') .OR. &
             (ReadChar(1:9) == 'SEPR_FLCF') .OR. (ReadChar(1:9) == 'SAVE_FILE') .OR. &
-            (ReadChar(1:9) == 'SAVE_HSWF') .OR. (ReadChar(1:9) == 'SAVE_HS_R')) THEN
+            (ReadChar(1:9) == 'SAVE_HSWF') .OR. (ReadChar(1:9) == 'SAVE_HS_R') .OR. &
+            (ReadChar(1:9) == 'DENSITIES')) THEN
           Glob_NumOfBBOPSteps = Glob_NumOfBBOPSteps + 1
         ELSE
           IsBBOPStep = .FALSE.
@@ -886,6 +886,7 @@ CONTAINS
       !   OPT_CYCLE:  Method A B C D E F G Q R H
       !   FULL_OPT1:  Method A B C D Q R E F FileName1
       !   EXPC_VALS:  Method A
+      !   DENSITIES:  Method A FileName1..4
       !   OVERLAP_D:  Method A [FileName1]   (FileName1 optional, default overlap.txt)
       !   SAVE_HSWF:  Method A FileName1..4
       !   SAVE_HS_R:  Method A FileName1 FileName2
@@ -942,6 +943,20 @@ CONTAINS
           READ(1, *) Glob_BBOP(i)%Action(1:9), Glob_BBOP(i)%GSEPSolutionMethod, Glob_BBOP(i)%A
         ! write(*,'(1x,a9,1x,a1,1x,i6)') Glob_BBOP(i)%Action(1:9),  &
         !        Glob_BBOP(i)%GSEPSolutionMethod,Glob_BBOP(i)%A
+
+        ! DENSITIES: the same four file names as in the reference codes
+        ! (CF grid, CF output, density grid, density output); only the
+        ! nucleus-nucleus correlation function is available here.
+        CASE ('DENSITIES')
+          READ(1, *) Glob_BBOP(i)%Action(1:9), Glob_BBOP(i)%GSEPSolutionMethod, &
+            Glob_BBOP(i)%A, Glob_BBOP(i)%FileName1(1:Glob_FileNameLength), &
+            Glob_BBOP(i)%FileName2(1:Glob_FileNameLength), &
+            Glob_BBOP(i)%FileName3(1:Glob_FileNameLength), &
+            Glob_BBOP(i)%FileName4(1:Glob_FileNameLength)
+          j1 = LEN_TRIM(Glob_BBOP(i)%FileName1(1:Glob_FileNameLength))
+          j2 = LEN_TRIM(Glob_BBOP(i)%FileName2(1:Glob_FileNameLength))
+          j3 = LEN_TRIM(Glob_BBOP(i)%FileName3(1:Glob_FileNameLength))
+          j4 = LEN_TRIM(Glob_BBOP(i)%FileName4(1:Glob_FileNameLength))
 
         ! OVERLAP_D: Method A, plus an OPTIONAL 4th field naming the file that
         ! receives the full spectrum (default: Glob_OverlapFileName). The record
@@ -1353,7 +1368,7 @@ CONTAINS
           ErrorInDataFile = .TRUE.
         ENDIF
 
-        ! The z-index indexes the precomputed gamma tables in data_gamma.f90
+        ! The z-index indexes the precomputed gamma tables in globvars.f90
         ! (0-based: a power of 0 is a plain Gaussian).
         ! Out of range it reads past the end of those tables, which surfaces
         ! far away inside MatrixElementsOpt instead of here.
@@ -1677,6 +1692,18 @@ CONTAINS
         CASE ('EXPC_VALS')
           WRITE(1, '(1x,a9,1x,a1,1x,i6)') Glob_BBOP(i)%Action(1:9), &
             Glob_BBOP(i)%GSEPSolutionMethod, Glob_BBOP(i)%A
+
+        CASE ('DENSITIES')
+          j1 = LEN_TRIM(Glob_BBOP(i)%FileName1(1:Glob_FileNameLength))
+          j2 = LEN_TRIM(Glob_BBOP(i)%FileName2(1:Glob_FileNameLength))
+          j3 = LEN_TRIM(Glob_BBOP(i)%FileName3(1:Glob_FileNameLength))
+          j4 = LEN_TRIM(Glob_BBOP(i)%FileName4(1:Glob_FileNameLength))
+          WRITE(1, '(1x,a9,1x,a1,1x,i6)', ADVANCE='no') &
+            Glob_BBOP(i)%Action(1:9), Glob_BBOP(i)%GSEPSolutionMethod, Glob_BBOP(i)%A
+          CALL writestring(1, Glob_BBOP(i)%FileName1, j1)
+          CALL writestring(1, Glob_BBOP(i)%FileName2, j2)
+          CALL writestring(1, Glob_BBOP(i)%FileName3, j3)
+          CALL writestringadv(1, Glob_BBOP(i)%FileName4, j4)
 
         ! OVERLAP_D carries the spectrum file name as its 4th field, so the
         ! line reads back the way it was given (the default name is written
@@ -3193,7 +3220,7 @@ CONTAINS
     REAL(8) :: PWRChangeProb = 0.5_8
 
     ! Largest EVEN premultiplier power this build allows. Powers index
-    ! the gamma tables in data_gamma.f90, which are generated up to
+    ! the gamma tables in globvars.f90, which are generated up to
     ! Glob_MaxPowerAllowed, so nothing above it may ever be produced.
     INTEGER, PARAMETER :: PWRMax = 2*(Glob_MaxPowerAllowed/2)
 
@@ -10457,7 +10484,7 @@ CONTAINS
     ! block is regenerated when the energy cannot be evaluated, a new pair
     ! overlap exceeds OverlapThreshold or a linear coefficient exceeds
     ! LinCoeffThreshold, up to Glob_BadOverlapOrLinCoeffLim attempts (then
-    ! the run stops, EC0130). A threshold <= 0 disables its test. The
+    ! the last block is kept). A threshold <= 0 disables its test. The
     ! names ZIndSet/ZIndSetBest/ZIndOptSequence and the "Z-index" messages
     ! refer to the premultiplier power in Glob_PWR.
     ! Arguments: Kstart, Kstop, Kstep (the last block may be smaller),
@@ -10775,10 +10802,11 @@ CONTAINS
       ! The three flags are primed so that the loop always runs at least
       ! once. It ends when the block passes the energy, overlap and linear
       ! coefficient tests, or when the attempt budget runs out - in which
-      ! case the run stops, as in the reference BasisEnlQ. A block in which
-      ! the Young operator nearly annihilates a new function (IsShapeBad,
-      ! C > Glob_MaxSelfOverlapCancel) is redrawn without limit and without
-      ! spending the attempt budget.
+      ! case the last block is kept regardless, which is deliberate: a
+      ! basis that is slightly too linearly dependent is better than no
+      ! progress at all. A block in which the Young operator nearly
+      ! annihilates a new function (IsShapeBad, C > Glob_MaxSelfOverlapCancel)
+      ! is redrawn without limit and without spending the attempt budget.
       !------------------------------------------------------------------
       IsOverlapBad = .TRUE.
       IsAnyLinCoeffBad = .TRUE.
@@ -11249,17 +11277,6 @@ CONTAINS
 
       ENDDO  ! (IsOverlapBad.or.IsAnyLinCoeffBad).and. &
       ! (AttemptToGetGoodOverlap<=Glob_BasisEnlBadOverlapLim)
-
-      ! The attempt budget ran out: stop, as the reference BasisEnlQ does. The
-      ! last accepted block is already in the data file (SaveResults per block).
-      IF (IsOverlapBad .OR. IsAnyLinCoeffBad .OR. IsEnergyBad) THEN
-        IF (Glob_ProcID == 0) THEN
-          WRITE(*, *) 'Error EC0130 in BasisEnlG: unable to construct an acceptable candidate block'
-          WRITE(*, '(1x,a,1x,i0,1x,a)') 'No block passed the energy, overlap and linear coefficient tests in', &
-            Glob_BadOverlapOrLinCoeffLim, 'attempts'
-        ENDIF
-        CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
-      ENDIF
 
 
       !==================================================================
@@ -11812,10 +11829,11 @@ CONTAINS
       ! The three flags are primed so that the loop always runs at least
       ! once. It ends when the block passes the energy, overlap and linear
       ! coefficient tests, or when the attempt budget runs out - in which
-      ! case the run stops, as in the reference BasisEnlQ. A block in which
-      ! the Young operator nearly annihilates a new function (IsShapeBad,
-      ! C > Glob_MaxSelfOverlapCancel) is redrawn without limit and without
-      ! spending the attempt budget.
+      ! case the last block is kept regardless, which is deliberate: a
+      ! basis that is slightly too linearly dependent is better than no
+      ! progress at all. A block in which the Young operator nearly
+      ! annihilates a new function (IsShapeBad, C > Glob_MaxSelfOverlapCancel)
+      ! is redrawn without limit and without spending the attempt budget.
       !------------------------------------------------------------------
       IsOverlapBad = .TRUE.
       IsAnyLinCoeffBad = .TRUE.
@@ -12303,17 +12321,6 @@ CONTAINS
 
       ENDDO  ! (IsOverlapBad.or.IsAnyLinCoeffBad).and. &
       ! (AttemptToGetGoodOverlap<=Glob_BasisEnlBadOverlapLim)
-
-      ! The attempt budget ran out: stop, as the reference BasisEnlQ does. The
-      ! last accepted block is already in the data file (SaveResults per block).
-      IF (IsOverlapBad .OR. IsAnyLinCoeffBad .OR. IsEnergyBad) THEN
-        IF (Glob_ProcID == 0) THEN
-          WRITE(*, *) 'Error EC0140 in BasisEnlI: unable to construct an acceptable candidate block'
-          WRITE(*, '(1x,a,1x,i0,1x,a)') 'No block passed the energy, overlap and linear coefficient tests in', &
-            Glob_BadOverlapOrLinCoeffLim, 'attempts'
-        ENDIF
-        CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
-      ENDIF
 
 
       !==================================================================
@@ -17481,7 +17488,7 @@ CONTAINS
 
     IF ((GSEPSolMethod /= 'G') .AND. (GSEPSolMethod /= 'I') .AND. (GSEPSolMethod /= 'Q')) THEN
       IF (Glob_ProcID == 0) THEN
-        WRITE(*, *) 'Error EC0197 in SaveHSRaw: wrong GSEP solution method'
+        WRITE(*, *) 'Error EC0203 in SaveHSRaw: wrong GSEP solution method'
       ENDIF
       CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
     ENDIF
@@ -17875,7 +17882,7 @@ CONTAINS
     ! (fires when BasisSize equals the current basis size; RETURNS
     ! normally). FileName receives the full spectrum; ReadIOFile fills it
     ! with Glob_OverlapFileName when the line names no file.
-    ! Only 'G' (DSYEV on rank 0) is
+    ! Only 'G' (DSYEVX on rank 0) is
     ! accepted; the former 'I' path (unpivoted LDL^T inverse iteration) was
     ! removed because it gave less (no lambda_max, no condition number), was
     ! least reliable exactly when S is nearly singular, and was not faster.
@@ -17900,16 +17907,20 @@ CONTAINS
     !------------------------------------------------------------------
     INTEGER                             :: N                  ! Glob_CurrBasisSize
     INTEGER                             :: i, j               ! loop counters
-    INTEGER                             :: ErrorCode          ! DSYEV INFO
+    INTEGER                             :: ErrorCode          ! DSYEVX INFO
     INTEGER                             :: OpenFileErr        ! IOSTAT of the mirror-file OPEN
-    INTEGER                             :: BlockSizeForDSYEV  ! ILAENV block size
-    INTEGER                             :: LWork              ! DSYEV workspace length
+    INTEGER                             :: BlockSizeForDSYEVX ! ILAENV block size
+    INTEGER                             :: LWork              ! DSYEVX workspace length
+    INTEGER                             :: NumOfEigvalsFound  ! DSYEVX M (N for RANGE='A')
     INTEGER                             :: NLow, NHigh        ! eigenvalues listed in the low and high blocks
     INTEGER                             :: IHigh              ! first index of the high block
     REAL(wp)                            :: CondNum            ! lambda_max / lambda_min
+    REAL(wp)                            :: Zdummy(1, 1)       ! DSYEVX Z, not referenced with JOBZ='N'
     LOGICAL                             :: IsFileOK           ! the mirror file could be opened
     LOGICAL                             :: IsSwapFileOK       ! H and S came from the swap file
-    REAL(wp), ALLOCATABLE, DIMENSION(:) :: Work               ! DSYEV workspace
+    REAL(wp), ALLOCATABLE, DIMENSION(:) :: Work               ! DSYEVX workspace
+    INTEGER, ALLOCATABLE, DIMENSION(:)  :: IWork              ! DSYEVX integer workspace (5*N)
+    INTEGER, ALLOCATABLE, DIMENSION(:)  :: IFAIL              ! DSYEVX IFAIL (used only with JOBZ='V')
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: Eigvals            ! the spectrum of S, ascending
 
 
@@ -17938,13 +17949,13 @@ CONTAINS
       WRITE(*, *)
       IF (Verbose >= 1) WRITE(*, *) 'Routine OverlapDiag started'
       IF (Verbose >= 1) WRITE(*, *) 'Number of basis functions', N
-      WRITE(*, *) 'Eigensolver G: DSYEV, full spectrum of S'
+      WRITE(*, *) 'Eigensolver G: DSYEVX, full spectrum of S'
     ENDIF
 
-    ! Workspace size, same rule as everywhere else in this file: DSYEV
-    ! needs at least 3*N-1, which MAX((NB+3)*N, 8*N) always exceeds.
-    BlockSizeForDSYEV = ILAENV(1, 'DSYTRD', 'VIU', N, N, N, N)
-    LWork = MAX((BlockSizeForDSYEV+3)*N, 8*N)
+    ! Workspace size, same rule as everywhere else in this file: DSYEVX
+    ! needs at least 8*N, which MAX((NB+3)*N, 8*N) always satisfies.
+    BlockSizeForDSYEVX = ILAENV(1, 'DSYTRD', 'VIU', N, N, N, N)
+    LWork = MAX((BlockSizeForDSYEVX+3)*N, 8*N)
 
 
     !==================================================================
@@ -17971,6 +17982,8 @@ CONTAINS
     ALLOCATE(Glob_SklBuff1(Glob_HSBuffLen))
     ALLOCATE(Glob_SklBuff2(Glob_HSBuffLen))
     ALLOCATE(Work(LWork))
+    ALLOCATE(IWork(5*N))
+    ALLOCATE(IFAIL(N))
     ALLOCATE(Eigvals(N))
 
 
@@ -18014,7 +18027,7 @@ CONTAINS
         WRITE(2, *)
         WRITE(2, *) 'Routine OverlapDiag started'
         WRITE(2, *) 'Number of basis functions', N
-        WRITE(2, *) 'Eigensolver G: DSYEV, full spectrum of S'
+        WRITE(2, *) 'Eigensolver G: DSYEVX, full spectrum of S'
       ENDIF
     ENDIF
 
@@ -18024,20 +18037,23 @@ CONTAINS
     !==================================================================
     ! Whole spectrum
     !==================================================================
-    ! DSYEV destroys the triangle it reads, which is fine - S is not
+    ! DSYEVX destroys the triangle it reads, which is fine - S is not
     ! needed afterwards. Eigenvalues come back in Eigvals in ASCENDING
-    ! order. Solved on rank 0 and broadcast. A failure is not fatal: the
+    ! order. With JOBZ='N', RANGE='A' and ABSTOL=0 it takes the same path
+    ! as DSYEV: DSYTRD, then DSTERF; VL, VU, IL and IU are not referenced.
+    ! Solved on rank 0 and broadcast. A failure is not fatal: the
     ! step is a diagnostic, so it is reported and the step is skipped.
     !------------------------------------------------------------------
     IF (Glob_ProcID == 0) THEN
-      CALL DSYEV('N', 'U', N, Glob_S, Glob_HSLeadDim, Eigvals, Work, LWork, ErrorCode)
+      CALL DSYEVX('N', 'A', 'U', N, Glob_S, Glob_HSLeadDim, ZERO, ZERO, 1, N, ZERO, &
+                  NumOfEigvalsFound, Eigvals, Zdummy, 1, Work, LWork, IWork, IFAIL, ErrorCode)
     ENDIF
     CALL MPI_BCAST(ErrorCode, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
 
     IF (ErrorCode /= 0) THEN
 
       IF (Glob_ProcID == 0) THEN
-        WRITE(*, *) 'Warning in OverlapDiag: routine DSYEV failed with error code', ErrorCode
+        WRITE(*, *) 'Warning in OverlapDiag: routine DSYEVX failed with error code', ErrorCode
         WRITE(*, *) 'No eigenvalues are reported for this step.'
       ENDIF
 
@@ -18118,6 +18134,8 @@ CONTAINS
     ! Release everything
     !==================================================================
     DEALLOCATE(Eigvals)
+    DEALLOCATE(IFAIL)
+    DEALLOCATE(IWork)
     DEALLOCATE(Work)
     DEALLOCATE(Glob_SklBuff2)
     DEALLOCATE(Glob_SklBuff1)
@@ -18309,14 +18327,25 @@ CONTAINS
     ! ('G' DSYGVX, 'I' inverse iteration, 'Q' QR factorization). RETURNS normally. Through
     ! ExpValuesMatElem of module matelem: S, T, V and H = T + V; for every
     ! pseudoparticle pair 1/r, r, r^2 and delta(r); the mass-velocity,
-    ! Darwin and orbit-orbit corrections (also times alpha^2); optionally
-    ! the nucleus-nucleus correlation function on the grid of
-    ! Glob_CorrFuncGridFileName, written to Glob_CorrFuncFileName (skipped
-    ! when the grid file is absent or malformed). Two-particle quantities
-    ! are also averaged over the equivalent-pair sets of ProgramDataInit.
-    ! SymmAdaptMethod must be 1 (Y'Y on the ket; ExpValuesMatElem takes a
-    ! single symmetry matrix), else EC0196. Action and FileName1..4 are NOT
-    ! REFERENCED; they keep the call signature.
+    ! Darwin and orbit-orbit corrections (also times alpha^2). Two-particle
+    ! quantities are also averaged over the equivalent-pair sets of
+    ! ProgramDataInit. SymmAdaptMethod must be 1 (Y'Y on the ket;
+    ! ExpValuesMatElem takes a single symmetry matrix), else EC0194.
+    !
+    ! Action is 'EXPC_VALS' or 'DENSITIES'. As in the reference codes,
+    ! DENSITIES additionally evaluates the correlation function on a
+    ! user-supplied grid; only the nucleus-nucleus one (pair 0-1, r_1, the
+    ! g_1 of the reference codes) is available in PG_0S, and the particle
+    ! densities are not:
+    !   FileName1 - grid for the correlation function (one value r >= 0 per
+    !               line); 'none', 'NONE' or 'None' skips the correlation
+    !               function. A bad or missing grid file stops the run
+    !               (EC0196, EC0197).
+    !   FileName2 - file where the correlation function is stored
+    !   FileName3 - grid for the particle densities: not available; a name
+    !               other than 'none' is ignored with warning WC0195
+    !   FileName4 - file for the particle densities: NOT REFERENCED
+    ! For EXPC_VALS the four names are not referenced.
     !==================================================================
 
     IMPLICIT NONE
@@ -18324,12 +18353,12 @@ CONTAINS
     !------------------------------------------------------------------
     ! Arguments
     !------------------------------------------------------------------
-    CHARACTER(9), INTENT(IN)                   :: Action           ! NOT REFERENCED - see the header
+    CHARACTER(9), INTENT(IN)                   :: Action           ! 'EXPC_VALS' or 'DENSITIES'
     INTEGER, INTENT(IN)                        :: SymmAdaptMethod  ! must be 1 - see the header
     CHARACTER(1)                               :: GSEPSolMethod    ! 'G' = DSYGVX, 'I' = inverse iteration
-    CHARACTER(Glob_FileNameLength), INTENT(IN) :: FileName1        ! NOT REFERENCED
-    CHARACTER(Glob_FileNameLength), INTENT(IN) :: FileName2        ! NOT REFERENCED
-    CHARACTER(Glob_FileNameLength), INTENT(IN) :: FileName3        ! NOT REFERENCED
+    CHARACTER(Glob_FileNameLength), INTENT(IN) :: FileName1        ! correlation-function grid
+    CHARACTER(Glob_FileNameLength), INTENT(IN) :: FileName2        ! correlation-function output
+    CHARACTER(Glob_FileNameLength), INTENT(IN) :: FileName3        ! density grid - not available
     CHARACTER(Glob_FileNameLength), INTENT(IN) :: FileName4        ! NOT REFERENCED
 
     !------------------------------------------------------------------
@@ -18357,10 +18386,15 @@ CONTAINS
     REAL(wp), ALLOCATABLE, DIMENSION(:, :) :: Eigvecs
     INTEGER, ALLOCATABLE, DIMENSION(:)     :: IFAIL
 
-    ! -- correlation-function grid -----------------------------------
-    INTEGER  :: OpenFileErr  ! IOSTAT of the grid-file OPEN
-    INTEGER  :: ReadErr      ! IOSTAT while counting grid points
-    REAL(wp) :: q            ! one grid value while counting
+    ! -- correlation function ----------------------------------------
+    LOGICAL  :: AreCorrFuncNeeded  ! DENSITIES with a grid file other than 'none'
+    LOGICAL  :: IsFile1OK          ! the grid file was read without problems
+    INTEGER  :: OpenFileErr        ! IOSTAT of the grid-file OPEN and READ
+    INTEGER  :: NumCFGridPoints    ! number of grid points
+    REAL(wp) :: temp1              ! one grid value while counting
+    REAL(wp), ALLOCATABLE, DIMENSION(:) :: CFGrid  ! grid points
+    REAL(wp), ALLOCATABLE, DIMENSION(:) :: CFkl    ! one basis pair
+    REAL(wp), ALLOCATABLE, DIMENSION(:) :: CF      ! the correlation function
 
     ! -- the accumulation --------------------------------------------
     INTEGER                             :: NumOfExpcVals  ! length of the packed value vector
@@ -18386,7 +18420,6 @@ CONTAINS
     LOGICAL, ALLOCATABLE, DIMENSION(:)        :: SetHasZero     ! particle 0 listed: r_0j stands for r_j
     CHARACTER(11)                             :: lab            ! quantity label, e.g. delta(r_ij)
     CHARACTER(40)                             :: fmts           ! run-time format of the symmetrized lines
-    REAL(wp), ALLOCATABLE, DIMENSION(:)    :: CorrFunckl, CorrFunc
 
     ! -- symmetrized averages ----------------------------------------
     REAL(wp) :: beta  ! running sum over one equivalent-pair set
@@ -18406,7 +18439,7 @@ CONTAINS
     ENDIF
     IF (SymmAdaptMethod /= 1) THEN
       IF (Glob_ProcID == 0) THEN
-        WRITE(*, *) 'Error EC0196 in ExpectationValues: SymmAdaptMethod must be 1'
+        WRITE(*, *) 'Error EC0194 in ExpectationValues: SymmAdaptMethod must be 1'
         WRITE(*, *) 'ExpValuesMatElem takes a single symmetry matrix (Y''Y on the ket)'
       ENDIF
       CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! STOP
@@ -18427,70 +18460,90 @@ CONTAINS
 
 
     !==================================================================
-    ! Grid for the nucleus-nucleus correlation function
+    ! Grid for the correlation function (DENSITIES only)
     !==================================================================
-    ! Rank 0 looks for Glob_CorrFuncGridFileName (one nonnegative value per
-    ! line); the verdict is broadcast so every rank sizes the CorrFunc
-    ! arrays alike. Glob_CorrFuncNPoints must stay positive even when the
-    ! function is not computed (ExpValuesMatElem dimensions with it): hence 1.
+    ! As in the reference codes: the correlation function is needed when
+    ! the action is DENSITIES and FileName1 is not 'none'. Only the
+    ! nucleus-nucleus function (pair 0-1) is available; the particle
+    ! densities are not, so a density grid (FileName3) other than 'none'
+    ! is ignored with a warning.
     !------------------------------------------------------------------
-    Glob_IsCorrFuncNeeded = .FALSE.
-    Glob_CorrFuncNPoints = 1
+    AreCorrFuncNeeded = .FALSE.
 
-    IF (Glob_ProcID == 0) THEN
-
-      OPEN(1, FILE=Glob_CorrFuncGridFileName, STATUS='old', IOSTAT=OpenFileErr)
-
-      IF (OpenFileErr == 0) THEN
-
-        Glob_CorrFuncNPoints = 0
-        ReadErr = 0
-        q = ZERO
-        DO WHILE (ReadErr == 0)
-          READ(1, *, IOSTAT=ReadErr) q
-          IF (q < ZERO) ReadErr = 222
-          Glob_CorrFuncNPoints = Glob_CorrFuncNPoints+1
-        ENDDO
-        Glob_CorrFuncNPoints = Glob_CorrFuncNPoints-1
-
-        IF ((ReadErr > 0) .OR. (Glob_CorrFuncNPoints <= 0)) THEN
-          Glob_IsCorrFuncNeeded = .FALSE.
-          WRITE(*, *)
-          WRITE(*, *) 'File ', TRIM(Glob_CorrFuncGridFileName), &
-                     ' does not contain properly formatted data'
-          IF (Verbose >= 1) WRITE(*, *) 'Nucleus-nucleus correlation function will not be computed'
-        ELSE
-          Glob_IsCorrFuncNeeded = .TRUE.
+    IF (Action == 'DENSITIES') THEN
+      IF (.NOT. ((FileName1 == ' ') .OR. (FileName1 == 'none') .OR. (FileName1 == 'NONE') .OR. &
+                 (FileName1 == 'None'))) AreCorrFuncNeeded = .TRUE.
+      IF (.NOT. ((FileName3 == ' ') .OR. (FileName3 == 'none') .OR. (FileName3 == 'NONE') .OR. &
+                 (FileName3 == 'None'))) THEN
+        IF (Glob_ProcID == 0) THEN
+          WRITE(*, *) 'Warning WC0195 in ExpectationValues: particle densities are not available in PG_0S;'
+          WRITE(*, *) 'the density grid file ', TRIM(FileName3), ' is ignored'
         ENDIF
-
-      ELSE
-
-        IF (Verbose >= 1) WRITE(*, *)
-        IF (Verbose >= 1) WRITE(*, *) 'File ', TRIM(Glob_CorrFuncGridFileName), ' not found'
-        IF (Verbose >= 1) WRITE(*, *) 'Nucleus-nucleus correlation function will not be computed'
-        Glob_IsCorrFuncNeeded = .FALSE.
-
       ENDIF
-
-      CLOSE(1)
-
-      IF (.NOT. Glob_IsCorrFuncNeeded) Glob_CorrFuncNPoints = 1
-
     ENDIF
 
-    CALL MPI_BCAST(Glob_IsCorrFuncNeeded, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
-    CALL MPI_BCAST(Glob_CorrFuncNPoints, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
-
-    IF (Glob_IsCorrFuncNeeded) THEN
-      ALLOCATE(Glob_CorrFuncGrid(Glob_CorrFuncNPoints))
+    ! Here we determine the number of grid points for correlation
+    ! function calculation (one value r >= 0 per line)
+    NumCFGridPoints = 0
+    IF (AreCorrFuncNeeded) THEN
       IF (Glob_ProcID == 0) THEN
-        OPEN(1, FILE=Glob_CorrFuncGridFileName, STATUS='old')
-        DO i = 1, Glob_CorrFuncNPoints
-          READ(1, *) Glob_CorrFuncGrid(i)
+        IsFile1OK = .TRUE.
+        OPEN(1, FILE=FileName1, STATUS='old', IOSTAT=OpenFileErr)
+        IF (OpenFileErr == 0) THEN
+          NumCFGridPoints = 0
+          temp1 = ZERO
+          DO WHILE (OpenFileErr == 0)
+            READ(1, *, IOSTAT=OpenFileErr) temp1
+            IF (temp1 < ZERO) THEN
+              OpenFileErr = 111
+            ELSE
+              NumCFGridPoints = NumCFGridPoints+1
+            ENDIF
+          ENDDO
+          NumCFGridPoints = NumCFGridPoints-1
+          IF ((OpenFileErr > 0) .OR. (NumCFGridPoints == 0)) THEN
+            ! Improper data in the input file
+            WRITE(*, *) 'Error EC0196 in ExpectationValues: improper data in file ', TRIM(FileName1)
+            IsFile1OK = .FALSE.
+          ENDIF
+          CLOSE(1)
+        ELSE
+          IsFile1OK = .FALSE.
+        ENDIF
+      ENDIF
+      CALL MPI_BCAST(IsFile1OK, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+      CALL MPI_BCAST(NumCFGridPoints, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+      ! stop if there were problems with correlation function grid file
+      IF (.NOT. IsFile1OK) THEN
+        IF (Glob_ProcID == 0) THEN
+          WRITE(*, *) 'Error EC0197 in ExpectationValues: cannot open CF grid file ', TRIM(FileName1)
+        ENDIF
+        CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
+      ENDIF
+    ENDIF
+
+    ! Allocate the arrays for the grid points and the function values;
+    ! one element when the function is not needed, to have valid arguments
+    IF (AreCorrFuncNeeded) THEN
+      ALLOCATE(CFGrid(NumCFGridPoints))
+      ALLOCATE(CFkl(NumCFGridPoints))
+      ALLOCATE(CF(NumCFGridPoints))
+    ELSE
+      ALLOCATE(CFGrid(1))
+      ALLOCATE(CFkl(1))
+    ENDIF
+
+    ! Now we open file FileName1 again, but this time we read the data
+    ! from it into array CFGrid
+    IF (AreCorrFuncNeeded) THEN
+      IF (Glob_ProcID == 0) THEN
+        OPEN(1, FILE=FileName1, STATUS='old')
+        DO i = 1, NumCFGridPoints
+          READ(1, *) CFGrid(i)
         ENDDO
         CLOSE(1)
       ENDIF
-      CALL MPI_BCAST(Glob_CorrFuncGrid, Glob_CorrFuncNPoints, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+      CALL MPI_BCAST(CFGrid, NumCFGridPoints, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
     ENDIF
 
 
@@ -18535,9 +18588,9 @@ CONTAINS
     !  delta(r)  MEkl(3*np2 + 1 : 4*np2)
     !  S, T, V, MV, Darwin, Darwin1, OO
     !            MEkl(4*np2 + 1 : 4*np2 + 7)
-    !  CorrFunc  MEkl(4*np2 + 8 : 4*np2 + 7 + Glob_CorrFuncNPoints)  (only when needed)
+    !  CF        MEkl(4*np2 + 8 : 4*np2 + 7 + NumCFGridPoints)  (only when needed)
     NumOfExpcVals = 4*np2+7
-    IF (Glob_IsCorrFuncNeeded) NumOfExpcVals = NumOfExpcVals+Glob_CorrFuncNPoints
+    IF (AreCorrFuncNeeded) NumOfExpcVals = NumOfExpcVals+NumCFGridPoints
 
     ALLOCATE(MEkl(NumOfExpcVals))
     ALLOCATE(MEkl_s(NumOfExpcVals))
@@ -18554,9 +18607,6 @@ CONTAINS
 
     ALLOCATE(deltarkl(n, n))
     ALLOCATE(deltar(n, n))
-
-    ALLOCATE(CorrFunckl(Glob_CorrFuncNPoints))
-    IF (Glob_IsCorrFuncNeeded) ALLOCATE(CorrFunc(Glob_CorrFuncNPoints))
 
     CALL ReadSwapFileAndDistributeData(IsSwapFileOK)
 
@@ -18728,7 +18778,8 @@ CONTAINS
                                   Glob_PWR(j), Glob_NonlinParam(1:npt, j), &
                                   Glob_YHYMatr(1:n, 1:n, k), &
                                   Skl, Tkl, Vkl, rmkl, rkl, r2kl, deltarkl, &
-                                  MVkl, Darwinkl, Darwin1kl, OOkl, CorrFunckl)
+                                  MVkl, Darwinkl, Darwin1kl, OOkl, &
+                                  NumCFGridPoints, CFGrid, CFkl, AreCorrFuncNeeded)
 
             c = 0
             DO a = 1, n
@@ -18758,9 +18809,9 @@ CONTAINS
             c = c+1; MEkl(c) = Darwinkl
             c = c+1; MEkl(c) = Darwin1kl
             c = c+1; MEkl(c) = OOkl
-            IF (Glob_IsCorrFuncNeeded) THEN
-              MEkl(c+1:c+Glob_CorrFuncNPoints) = CorrFunckl(1:Glob_CorrFuncNPoints)
-              c = c+Glob_CorrFuncNPoints
+            IF (AreCorrFuncNeeded) THEN
+              MEkl(c+1:c+NumCFGridPoints) = CFkl(1:NumCFGridPoints)
+              c = c+NumCFGridPoints
             ENDIF
 
             MEkl_s(1:NumOfExpcVals) = MEkl_s(1:NumOfExpcVals) &
@@ -18809,9 +18860,9 @@ CONTAINS
     c = c+1; Darwin = MEkl_r(c)
     c = c+1; Darwin1 = MEkl_r(c)
     c = c+1; OO = MEkl_r(c)
-    IF (Glob_IsCorrFuncNeeded) THEN
-      CorrFunc(1:Glob_CorrFuncNPoints) = MEkl_r(c+1:c+Glob_CorrFuncNPoints)
-      c = c+Glob_CorrFuncNPoints
+    IF (AreCorrFuncNeeded) THEN
+      CF(1:NumCFGridPoints) = MEkl_r(c+1:c+NumCFGridPoints)
+      c = c+NumCFGridPoints
     ENDIF
 
     ! ExpValuesMatElem returns T and V separately; H is their sum.
@@ -19030,21 +19081,26 @@ CONTAINS
         DEALLOCATE(SetAvg)
       ENDIF
 
-      IF (Glob_IsCorrFuncNeeded) THEN
-        WRITE(*, *) 'Nucleus-nucleus correlation function is saved in file ', &
-                   TRIM(Glob_CorrFuncFileName)
-        WRITE(2, '(a)') ' Nucleus-nucleus correlation function is saved in file '// &
-                       TRIM(Glob_CorrFuncFileName)
-      ENDIF
-
       CLOSE(2)
 
-      IF (Glob_IsCorrFuncNeeded) THEN
-        OPEN(2, FILE=Glob_CorrFuncFileName, STATUS='replace')
-        DO i = 1, Glob_CorrFuncNPoints
-          WRITE(2, *) Glob_CorrFuncGrid(i), '  ', CorrFunc(i)
+      ! Saving the correlation function in the layout of the reference
+      ! codes: the grid column r and g1, the nucleus-nucleus function
+      ! (pair 0-1), which is the only one available here
+      IF (AreCorrFuncNeeded) THEN
+        OPEN(1, FILE=FileName2, STATUS='replace')
+        ! first we print titles of the data columns
+        WRITE(1, '(10x,a2,1x)', ADVANCE='no') '#r'
+        WRITE(1, '(21x,a1,i1,1x)', ADVANCE='no') 'g', 1
+        WRITE(1, *)
+        ! then we print the data columns themselves
+        DO k = 1, NumCFGridPoints
+          WRITE(1, '(1x,e23.16)', ADVANCE='no') CFGrid(k)
+          WRITE(1, '(1x,e23.16)', ADVANCE='no') CF(k)
+          WRITE(1, *)
         ENDDO
-        CLOSE(2)
+        CLOSE(1)
+        WRITE(*, *) 'Correlation function has been stored in file ', TRIM(FileName2)
+        WRITE(*, *)
       ENDIF
 
     ENDIF
@@ -19064,11 +19120,9 @@ CONTAINS
     DEALLOCATE(deltarkl)
     DEALLOCATE(deltar)
 
-    DEALLOCATE(CorrFunckl)
-    IF (Glob_IsCorrFuncNeeded) THEN
-      DEALLOCATE(CorrFunc)
-      DEALLOCATE(Glob_CorrFuncGrid)
-    ENDIF
+    DEALLOCATE(CFGrid)
+    DEALLOCATE(CFkl)
+    IF (AreCorrFuncNeeded) DEALLOCATE(CF)
 
     DEALLOCATE(MEkl)
     DEALLOCATE(MEkl_s)

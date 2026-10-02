@@ -39,9 +39,7 @@ PREC=8
 # Select which BLAS/LAPACK implementation the linear algebra routines are linked
 # against via the LINALG argument. Supported values:
 #   netlib   - Non-optimized reference BLAS/LAPACK compiled from the bundled modified Netlib
-#              source (default). Results in no additions to LINKFLAGS. The bundled source
-#              is BLAS.f, LAPACK.f and DSYGV.f (the simple drivers DSYGV/DSYEV, which the
-#              Netlib subset in LAPACK.f does not contain).
+#              source (default). Results in no additions to LINKFLAGS.
 #   mkl      - Intel Math Kernel Library.
 #   lblas    - Optimized BLAS/LAPACK exposed through the -lblas/-llapack symbolic links.
 #   openblas - OpenBLAS library.
@@ -75,7 +73,7 @@ SRC_DIR=./src
 # checks of the debug configuration must stay off for it. The bundled BLAS.f and LAPACK.f
 # have lines beyond column 72 and BLAS.f is preprocessed (QRLINALG_WP selects the kernels of
 # the working precision), hence QR_FIXED_FLAGS and QR_PREPROCESS_FLAGS; the latter is also
-# needed by qrlinalg.f90. DSYGV.f keeps to 72 columns and is compiled with FCFLAGS.
+# needed by qrlinalg.f90.
 
 ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma ocelote elgato),)
   # gfortran and Open MPI (default on most Linux systems)
@@ -249,22 +247,22 @@ endif
 # Creating lists of objects for convenience
 #
 # Module compile order (see the rules at the bottom):
-#   wp_def -> X1MACH, data_gamma, globvars -> misc, linalg -> matelem -> matform -> workproc -> main
+#   wp_def -> X1MACH, globvars -> spin, misc, linalg -> matelem -> matform -> workproc -> main
 #   wp_def -> qrupdate/qrupdate_linalg -> qrupdate_error -> qrupdate_real, qrupdate_complex
 #          -> qrupdate -> qrlinalg -> workproc   (the QR solution method)
-# dmng.f and the bundled BLAS.f, LAPACK.f and DSYGV.f also USE wp_def.
+# dmng.f and the bundled BLAS.f and LAPACK.f also USE wp_def.
 
 ifeq ($(LINALG), netlib)
-  export BARE_OBJS_LPKBLS=BLAS.o LAPACK.o DSYGV.o
+  export BARE_OBJS_LPKBLS=BLAS.o LAPACK.o
 else
   export BARE_OBJS_LPKBLS=
 endif
 export OBJS_LPKBLS=$(addprefix $(BUILD_DIR)/,$(BARE_OBJS_LPKBLS))
 
-export BARE_OBJS=wp_def_$(PREC).o X1MACH.o dmng.o data_gamma.o globvars.o misc.o linalg.o \
+export BARE_OBJS=wp_def_$(PREC).o X1MACH.o dmng.o globvars.o misc.o linalg.o \
               matelem.o matform.o qrupdate_linalg.o qrupdate_error.o \
               qrupdate_real.o qrupdate_complex.o qrupdate.o qrlinalg.o \
-              workproc.o main.o
+              workproc.o main.o spin.o
 export OBJS=$(addprefix $(BUILD_DIR)/,$(BARE_OBJS))
 export OBJS+=$(OBJS_LPKBLS)
 
@@ -326,17 +324,11 @@ $(BUILD_DIR)/BLAS.o: $(SRC_DIR)/BLAS.f $(BUILD_DIR)/wp_def_$(PREC).o
 $(BUILD_DIR)/LAPACK.o: $(SRC_DIR)/LAPACK.f $(BUILD_DIR)/BLAS.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_FIXED_FLAGS) -c $(SRC_DIR)/LAPACK.f -o $(BUILD_DIR)/LAPACK.o
 
-$(BUILD_DIR)/DSYGV.o: $(SRC_DIR)/DSYGV.f $(BUILD_DIR)/LAPACK.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/DSYGV.f -o $(BUILD_DIR)/DSYGV.o
-
 $(BUILD_DIR)/X1MACH.o: $(SRC_DIR)/X1MACH.f90 $(BUILD_DIR)/wp_def_$(PREC).o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/X1MACH.f90 -o $(BUILD_DIR)/X1MACH.o
 
 $(BUILD_DIR)/dmng.o: $(SRC_DIR)/dmng.f $(BUILD_DIR)/wp_def_$(PREC).o $(BUILD_DIR)/X1MACH.o
 	$(FC) $(DMNGFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/dmng.f -o $(BUILD_DIR)/dmng.o
-
-$(BUILD_DIR)/data_gamma.o: $(SRC_DIR)/data_gamma.f90 $(BUILD_DIR)/wp_def_$(PREC).o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/data_gamma.f90 -o $(BUILD_DIR)/data_gamma.o
 
 $(BUILD_DIR)/globvars.o: $(SRC_DIR)/globvars.f90 $(BUILD_DIR)/wp_def_$(PREC).o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/globvars.f90 -o $(BUILD_DIR)/globvars.o
@@ -347,7 +339,10 @@ $(BUILD_DIR)/misc.o: $(SRC_DIR)/misc.f90 $(BUILD_DIR)/globvars.o
 $(BUILD_DIR)/linalg.o: $(SRC_DIR)/linalg.f90 $(BUILD_DIR)/globvars.o $(OBJS_LPKBLS)
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/linalg.f90 -o $(BUILD_DIR)/linalg.o
 
-$(BUILD_DIR)/matelem.o: $(SRC_DIR)/matelem.f90 $(BUILD_DIR)/globvars.o $(BUILD_DIR)/data_gamma.o
+$(BUILD_DIR)/spin.o: $(SRC_DIR)/spin.f90 $(BUILD_DIR)/globvars.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/spin.f90 -o $(BUILD_DIR)/spin.o
+
+$(BUILD_DIR)/matelem.o: $(SRC_DIR)/matelem.f90 $(BUILD_DIR)/globvars.o $(BUILD_DIR)/spin.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/matelem.f90 -o $(BUILD_DIR)/matelem.o
 
 $(BUILD_DIR)/matform.o: $(SRC_DIR)/matform.f90 $(BUILD_DIR)/matelem.o $(BUILD_DIR)/misc.o $(BUILD_DIR)/linalg.o
@@ -371,7 +366,7 @@ $(BUILD_DIR)/qrupdate.o: $(SRC_DIR)/qrupdate/qrupdate.f90 $(BUILD_DIR)/qrupdate_
 $(BUILD_DIR)/qrlinalg.o: $(SRC_DIR)/qrlinalg.f90 $(BUILD_DIR)/qrupdate.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_PREPROCESS_FLAGS) -c $(SRC_DIR)/qrlinalg.f90 -o $(BUILD_DIR)/qrlinalg.o
 
-$(BUILD_DIR)/workproc.o: $(SRC_DIR)/workproc.f90 $(BUILD_DIR)/misc.o $(BUILD_DIR)/linalg.o $(BUILD_DIR)/matform.o $(BUILD_DIR)/matelem.o $(BUILD_DIR)/data_gamma.o $(BUILD_DIR)/dmng.o $(OBJS_LPKBLS) $(BUILD_DIR)/qrlinalg.o
+$(BUILD_DIR)/workproc.o: $(SRC_DIR)/workproc.f90 $(BUILD_DIR)/misc.o $(BUILD_DIR)/linalg.o $(BUILD_DIR)/matform.o $(BUILD_DIR)/matelem.o $(BUILD_DIR)/dmng.o $(OBJS_LPKBLS) $(BUILD_DIR)/qrlinalg.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/workproc.f90 -o $(BUILD_DIR)/workproc.o
 
 $(BUILD_DIR)/main.o: $(SRC_DIR)/main.f90 $(BUILD_DIR)/workproc.o
