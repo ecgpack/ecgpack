@@ -2,6 +2,9 @@ module matform
 !Module matform contains procedures that form Hamiltonian
 !and overlap matrices and related routines
   use matelem
+#ifdef USE_CUDA
+  use gpu_backend, only: gpu_active, gpu_build_HS, gpu_build_HS_deriv
+#endif
   implicit none
 
 contains
@@ -161,6 +164,13 @@ contains
     np=Glob_np
     np1=np+1
     nb=Glob_HSBuffLen
+#ifdef USE_CUDA
+    if (gpu_active()) then
+      call gpu_build_HS(Nmin,Nmax,StoreHS)
+      return
+    endif
+#endif
+
     allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
     call PrecomputeMatrixElements(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
                                   Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
@@ -280,6 +290,13 @@ contains
     np=Glob_np
     npt2=np*2
     nb=Glob_HSBuffLen
+#ifdef USE_CUDA
+    if (gpu_active()) then
+      call gpu_build_HS_deriv(Nmin,Nmax,StoreHSD)
+      return
+    endif
+#endif
+
 
     allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
     call PrecomputeMatrixElements(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
