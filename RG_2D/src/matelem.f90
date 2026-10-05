@@ -6,6 +6,9 @@ module matelem
 
 contains
 
+#ifdef USE_CUDA
+  attributes(host,device) &
+#endif
   subroutine MatrixElementsHS_RG_2D(n, np, m_k, mm_k, m_l, mm_l, Lk, Ll, Ak, Al, MAk, P, mass, chargeM, sqrtpi, pir3n2, &
                               Hkl, Skl, Tkl,Vkl, Dk, Dl, grad_k, grad_l)
 !This subroutine computes symmetry adapted matrix element with

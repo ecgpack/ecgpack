@@ -1,6 +1,9 @@
 program main
 
   use workproc
+#ifdef USE_CUDA
+  use gpu_backend, only: gpu_backend_init, gpu_finalize
+#endif
   implicit none
 
 !Local variables
@@ -22,6 +25,9 @@ program main
     write (*,*)
   endif
 
+#ifdef USE_CUDA
+  call gpu_backend_init()
+#endif
   call ReadIOFile()
   if (Glob_IsOptCycleScripted) call ReadBlackList()
   call ProgramDataInit()
@@ -303,6 +309,10 @@ program main
     write(*,*) 'Basis Building and Optimization Program is completed'
     write(*,*) 'Program has stopped'
   endif
+
+#ifdef USE_CUDA
+  call gpu_finalize()
+#endif
 
   call MPI_FINALIZE(Glob_MPIErrCode)
 
