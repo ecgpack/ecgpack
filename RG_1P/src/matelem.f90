@@ -267,7 +267,9 @@ contains
     tau2=ZERO
     do i=1,nn
       temp1=ZERO
-      do j=1,nn
+      !NVHPC miscompiles this constant-bound reduction at five particles.
+      !n equals nn, but keeping this bound runtime produces the correct Hkl.
+      do j=1,n
         temp1=temp1+vkinv_tAkltAlM(j)*Ak(j,i)
       enddo
       tau2=tau2+temp1*inv_tAkltvl(i)
@@ -540,7 +542,9 @@ contains
         enddo
         u3(i)=temp1
       enddo
-      do i=1,nn
+      !NVHPC miscompiles this gradient path at seven or more particles when
+      !this and neighboring reductions all use constant bounds.
+      do i=1,n
         temp1=ZERO
         do j=1,nn
           temp1=temp1+inv_tAkltAlM(i,j)*u3(j)

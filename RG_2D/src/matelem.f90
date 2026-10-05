@@ -258,7 +258,9 @@ contains
     do i=1,nn
       temp1=ZERO
       temp2=ZERO
-      do j=1,nn
+      !NVHPC miscompiles this constant-bound reduction at five particles.
+      !n equals nn, but keeping this bound runtime produces the correct Hkl.
+      do j=1,n
         temp1=temp1+vkinv_tAkltAlM(j)*Ak(j,i)
         temp2=temp2+bkinv_tAkltAlM(j)*Ak(j,i)
       enddo
