@@ -394,7 +394,9 @@ contains
       enddo
       !Evaluating Fkl=inv_tAkltAlM*inv_tAkltAl'
       !(only the upper triangle, then mirrored)
-      do j=1,nn
+      !A runtime bound prevents NVHPC from fusing this producer with the
+      !following conditional gradient loop; n equals nn.
+      do j=1,n
         do i=1,j
           temp1=ZERO
           do k=1,nn
