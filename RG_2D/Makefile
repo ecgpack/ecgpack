@@ -257,7 +257,7 @@ ifeq ($(USE_CUDA),yes)
     $(error USE_CUDA=yes requires PREC=8)
   endif
   export FCFLAGS+=-DUSE_CUDA -cuda -gpu=$(CUF_GPU),maxregcount:$(CUF_MAXREG),lto
-  export LINKFLAGS+=-cuda -gpu=$(CUF_GPU),maxregcount:$(CUF_MAXREG),lto
+  export LINKFLAGS+=-cuda -gpu=$(CUF_GPU),maxregcount:$(CUF_MAXREG),lto -cudalib=cusolver,cublas
   export BARE_OBJS+=gpu_backend.o
   export OBJS=$(addprefix $(BUILD_DIR)/,$(BARE_OBJS)) $(OBJS_LPKBLS)
   GPU_DEP=$(BUILD_DIR)/gpu_backend.o

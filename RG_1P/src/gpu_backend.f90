@@ -7,21 +7,33 @@ module gpu_backend
   use globvars        !Glob_* state, MPI symbols, wp / MPI_WP (via wp_def)
   use matelem,   only: MatrixElementsHS_RG_1P, PrecomputeMatrixElements
   use cudafor
+  use cublas
+  use cusolverDn
   implicit none
   private
 
   !Public surface used by the shared sources (every call site is #ifdef USE_CUDA):
   public :: gpu_backend_init      !collective one-time startup            (main)
   public :: gpu_finalize          !release device/handle at shutdown      (main)
+  public :: gpu_eig_active
+  public :: gpu_dsygvx
   public :: gpu_active            !.true. => use the CUDA ME backend      (matform)
   public :: gpu_build_HS          !energy matrix-element build            (matform)
   public :: gpu_build_HS_deriv    !energy+gradient matrix-element build   (matform)
 
   logical, save :: use_me    = .false.   !ECG_GPU=1
+  logical, save :: use_eig   = .false.   !ECG_GPU_EIG=1
   integer, save :: batch_cap = 16384     !ECG_GPU_BATCH: max pairs per GPU call
   logical, save :: ctx_ready = .false.   !device context successfully initialised
   logical, save :: use_determ = .false.  !ECG_DETERM=1: deterministic term reduction
                                          !(ordered, CPU-matching) instead of atomicAdd
+
+  type(cusolverDnHandle), save :: eig_hdl
+  logical, save :: eig_created = .false.
+  integer, save :: eig_cap_n = 0, eig_cap_work = 0
+  real(wp), device, allocatable, save :: dA(:,:), dB(:,:), dW(:), dwork(:)
+  integer, device, allocatable, save :: dinfo(:)
+  real(wp), allocatable, save :: hA(:,:), hB(:,:)
 
   !PERSISTENT MATRIX-ELEMENT WORKSPACE.
   !Everything below used to be allocated, filled and freed on EVERY call to the
@@ -102,6 +114,25 @@ contains
     call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
   end subroutine cuda_check
 
+  subroutine solver_check(istat, info, ctx)
+  !Abort on API failures. The device-side eigenproblem info is returned to
+  !the G-method caller so it can apply its existing recovery policy.
+    integer,      intent(in) :: istat, info
+    character(*), intent(in) :: ctx
+    integer :: dev, ierr, slen
+    character(MPI_MAX_PROCESSOR_NAME) :: node
+    if ((istat == CUSOLVER_STATUS_SUCCESS) .and. (info == 0)) return
+    node=''; slen=0; call MPI_Get_processor_name(node, slen, ierr)
+    dev=-1;  ierr = cudaGetDevice(dev)
+    write(*,'(1x,a)')             '=============== cuSOLVER FATAL =============='
+    write(*,'(1x,a,i0,a,a,a,i0)') 'rank ',Glob_ProcID,'  node ',trim(node),'  device ',dev
+    write(*,'(1x,a,a)')           'context: ',trim(ctx)
+    write(*,'(1x,a,i0,a,i0)')     'cusolver status ',istat,'   info ',info
+    write(*,'(1x,a)')             '============================================'
+    flush(6)
+    call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
+  end subroutine solver_check
+
   ! ==========================================================================
   !  (1) ORCHESTRATION -- env selection, lifecycle, chunked MPI builds
   ! ==========================================================================
@@ -117,6 +148,9 @@ contains
     if (Glob_ProcID==0) then
       call get_environment_variable('ECG_GPU', val, status=ios)
       use_me  = (ios==0) .and. (val(1:1)=='1')
+      call get_environment_variable('ECG_GPU_EIG', val, status=ios)
+      use_eig = (ios==0) .and. (val(1:1)=='1')
+      if (use_eig) use_me = .true.
       call get_environment_variable('ECG_GPU_BATCH', val, status=ios)
       if (ios==0) then
         read(val,*,iostat=ios) tmp
@@ -128,8 +162,10 @@ contains
       write(*,'(1x,a,l1,a,i0,a,l1)')'  ME on GPU=',use_me, &
                                     '   batch=',batch_cap,'   determ=',use_determ
       if (.not.use_me) write(*,'(1x,a)') '  (GPU disabled: matrix elements run on CPU)'
+      write(*,'(1x,a,l1)')          '  eig on GPU=',use_eig
       write(*,'(1x,a)')             '---------------------------------------------'
     endif
+    call MPI_BCAST(use_eig,    1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
     call MPI_BCAST(use_me,     1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
     call MPI_BCAST(batch_cap,  1, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
     call MPI_BCAST(use_determ, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
@@ -165,6 +201,10 @@ contains
   logical function gpu_active()
     gpu_active = use_me
   end function gpu_active
+
+  logical function gpu_eig_active()
+    gpu_eig_active = use_eig .and. ctx_ready
+  end function gpu_eig_active
 
   subroutine stage_constants()
   !Upload the per-run invariants: the Y+Y permutation matrices and their
@@ -547,9 +587,22 @@ contains
   end function gpu_init
 
   subroutine gpu_finalize()
+    integer :: istat
   !Release application-owned device and host buffers at shutdown.
   !Called once at shutdown (main, before MPI_FINALIZE).
     if (.not. ctx_ready) return
+    if (eig_created) then
+      istat = cusolverDnDestroy(eig_hdl)
+      eig_created = .false.
+    endif
+    if (allocated(dA)) deallocate(dA)
+    if (allocated(dB)) deallocate(dB)
+    if (allocated(dW)) deallocate(dW)
+    if (allocated(dwork)) deallocate(dwork)
+    if (allocated(dinfo)) deallocate(dinfo)
+    if (allocated(hA)) deallocate(hA)
+    if (allocated(hB)) deallocate(hB)
+    eig_cap_n=0; eig_cap_work=0
     !persistent matrix-element workspace
     if (allocated(d_Lm))  deallocate(d_Lm, d_Am, d_MAm, d_im)
     if (allocated(d_YHY)) deallocate(d_YHY, d_coeff)
@@ -559,5 +612,64 @@ contains
     if (allocated(Lh))    deallocate(Lh, Ah, MAh, im)
     cap_basis=0; cap_pairs=0; cap_grad=0; cap_terms=0; consts_ready=.false.
   end subroutine gpu_finalize
+
+  subroutine gpu_dsygvx(jobz_vec, n, H, ldH, S, ldS, iwhich, eval, Z, info_out)
+    integer  :: jobz_vec, n, ldH, ldS, iwhich, info_out
+    real(wp) :: H(ldH,n), S(ldS,n), eval, Z(*)
+    !Handle, device buffers and host staging are MODULE-scope + save (see top):
+    !host staging is heap so it is NOT a K*K automatic array on the stack, and the
+    !handle can be destroyed in gpu_finalize.
+    integer  :: lwork, meig, jobz, uplo
+    real(wp) :: hZ(n), hW1(1)    !hZ is a length-n vector (small), safe on the stack
+    integer  :: hinfo(1)
+
+    if (.not. eig_created) then
+      call solver_check(cusolverDnCreate(eig_hdl), 0, 'gpu_dsygvx: cusolverDnCreate')
+      allocate(dinfo(1)); eig_created = .true.
+    endif
+    if (n /= eig_cap_n) then
+      if (allocated(dA)) deallocate(dA, dB, dW)
+      if (allocated(hA)) deallocate(hA, hB)
+      allocate(dA(n,n), dB(n,n), dW(n))
+      allocate(hA(n,n), hB(n,n))       !exact leading dimension for cudaMemcpy
+      eig_cap_n = n
+    endif
+    hA(1:n,1:n) = H(1:n,1:n)           !host de-stride (ld -> n), then explicit H2D
+    hB(1:n,1:n) = S(1:n,1:n)
+    call cuda_check(cudaMemcpy(dA, hA, n*n), 'gpu_dsygvx: H2D A')   !array-section device
+    call cuda_check(cudaMemcpy(dB, hB, n*n), 'gpu_dsygvx: H2D B')   !assignment ICEs nvfortran
+
+    jobz = CUSOLVER_EIG_MODE_NOVECTOR
+    if (jobz_vec /= 0) jobz = CUSOLVER_EIG_MODE_VECTOR
+    uplo = CUBLAS_FILL_MODE_UPPER
+
+    call solver_check(cusolverDnDsygvdx_bufferSize(eig_hdl, CUSOLVER_EIG_TYPE_1, jobz, &
+        CUSOLVER_EIG_RANGE_I, uplo, n, dA, n, dB, n, 0.0_wp, 0.0_wp, &
+        iwhich, iwhich, meig, dW, lwork), 0, 'gpu_dsygvx: Dsygvdx_bufferSize')
+    if (lwork > eig_cap_work) then
+      if (allocated(dwork)) deallocate(dwork)
+      allocate(dwork(lwork)); eig_cap_work = lwork
+    endif
+    call solver_check(cusolverDnDsygvdx(eig_hdl, CUSOLVER_EIG_TYPE_1, jobz, &
+        CUSOLVER_EIG_RANGE_I, uplo, n, dA, n, dB, n, 0.0_wp, 0.0_wp, &
+        iwhich, iwhich, meig, dW, dwork, lwork, dinfo(1)), 0, 'gpu_dsygvx: Dsygvdx')
+    call cuda_check(cudaDeviceSynchronize(), 'gpu_dsygvx: solve sync')
+
+    call cuda_check(cudaMemcpy(hinfo, dinfo, 1), 'gpu_dsygvx: D2H info')
+    info_out = hinfo(1)
+    !Return numerical failures to the existing G-method recovery path.
+    !API/status failures still abort in solver_check.
+    if (info_out /= 0) return
+    if (meig < 1) then
+      info_out = -999
+      return
+    endif
+    call cuda_check(cudaMemcpy(hW1, dW, 1), 'gpu_dsygvx: D2H eigenvalue')
+    eval = hW1(1)               !selected eigenvalue (first of meig)
+    if (jobz_vec /= 0) then
+      call cuda_check(cudaMemcpy(hZ, dA, n), 'gpu_dsygvx: D2H eigenvector')
+      Z(1:n) = hZ(1:n)          !first column of A (the eigenvector)
+    endif
+  end subroutine gpu_dsygvx
 
 end module gpu_backend

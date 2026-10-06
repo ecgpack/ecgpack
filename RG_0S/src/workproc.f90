@@ -4,6 +4,9 @@ module workproc
   use matform
   use matelem
   use linalg
+#ifdef USE_CUDA
+  use gpu_backend, only: gpu_eig_active, gpu_dsygvx
+#endif
   use iso_fortran_env, only: int64
   use qrlinalg, only: qr_real_state,QR_SUCCESS,QR_ERR_INVALID_ARGUMENT, &
     QR_ERR_ALLOCATION,QR_ERR_INVALID_STATE, &
@@ -2185,10 +2188,19 @@ contains
         Glob_S(i,i)=ONE
       enddo
       if (Glob_ProcID==0) then
+#ifdef USE_CUDA
+        if (gpu_eig_active()) then
+          call gpu_dsygvx(0,Nmax,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim, &
+                          Glob_WhichEigenvalue,EVs(1),Z,ErrorCode)
+        else
+#endif
         call DSYGVX(1,'N','I','U',Nmax,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
                     ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForDSYGVX, &
                     NumOfEigvalsFound,EVs,Z,Nmax,Glob_WorkForDSYGVX,  &
                     Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
+#ifdef USE_CUDA
+        endif
+#endif
         ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
 !       VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
 !       LWORK, IWORK, IFAIL, INFO )
@@ -2248,10 +2260,19 @@ contains
         Glob_S(i,i)=ONE
       enddo
       if (Glob_ProcID==0) then
+#ifdef USE_CUDA
+        if (gpu_eig_active()) then
+          call gpu_dsygvx(1,Nmax,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim, &
+                          Glob_WhichEigenvalue,EVs(1),Glob_c,ErrorCode)
+        else
+#endif
         call   DSYGVX(1,'V','I','U',Nmax,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
                       ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForDSYGVX, &
                       NumOfEigvalsFound,EVs,Glob_c,Nmax,Glob_WorkForDSYGVX,  &
                       Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
+#ifdef USE_CUDA
+        endif
+#endif
         ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
 !       VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
 !       LWORK, IWORK, IFAIL, INFO )
@@ -2341,10 +2362,19 @@ contains
       enddo
 
       if (Glob_ProcID==0) then
+#ifdef USE_CUDA
+        if (gpu_eig_active()) then
+          call gpu_dsygvx(1,nfa,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim, &
+                          Glob_WhichEigenvalue,EVs(1),Glob_c,ErrorCode)
+        else
+#endif
         call   DSYGVX(1,'V','I','U',nfa,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
                       ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForDSYGVX, &
                       NumOfEigvalsFound,EVs,Glob_c,nfa,Glob_WorkForDSYGVX,  &
                       Glob_LWorkForDSYGVX,Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
+#ifdef USE_CUDA
+        endif
+#endif
         ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
 !       VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
 !       LWORK, IWORK, IFAIL, INFO )
@@ -12016,10 +12046,20 @@ AreMomDensNeeded   = .false.
 
       if (Glob_ProcID==0) then
         write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
+#ifdef USE_CUDA
+        if (gpu_eig_active()) then
+          call gpu_dsygvx(1,cbs,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim, &
+                          Glob_WhichEigenvalue,Evalue,Glob_c,ErrorCode)
+          NumOfEigvalsFound=0  ! Only the selected eigenpair was requested.
+        else
+#endif
         call DSYGVX(1,'V','I','U',cbs,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,  &
                     ZERO,ZERO,1,NumOfEigvecs,Glob_AbsTolForDSYGVX, &
                     NumOfEigvalsFound,Eigvals,Eigvecs,cbs,Glob_WorkForDSYGVX,Glob_LWorkForDSYGVX, &
                     Glob_IWorkForDSYGVX,IFAIL,ErrorCode)
+#ifdef USE_CUDA
+        endif
+#endif
         !SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
 !       VL, VU, IL, IU, ABSTOL,
 !       M, W, Z, LDZ, WORK, LWORK,
@@ -12037,8 +12077,10 @@ AreMomDensNeeded   = .false.
 
       !sending the eigenvalue and the eigenvector to all processes
       if (Glob_ProcID==0) then
-        Evalue=Eigvals(Glob_WhichEigenvalue)
-        Glob_c(1:cbs)=Eigvecs(1:cbs,Glob_WhichEigenvalue)
+        if (NumOfEigvalsFound>0) then
+          Evalue=Eigvals(Glob_WhichEigenvalue)
+          Glob_c(1:cbs)=Eigvecs(1:cbs,Glob_WhichEigenvalue)
+        endif
       endif
       call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
       call MPI_BCAST(Glob_c,cbs,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
@@ -12049,10 +12091,14 @@ AreMomDensNeeded   = .false.
         write(*,*) 'done'
         write(*,*) 'Energy: ',Evalue
         write(*,*)
-        write(*,*) 'Lowest eigenvalues:'
-        do i=1,NumOfEigvalsFound
-          write(*,*) i,' ',Eigvals(i)
-        enddo
+        if (NumOfEigvalsFound>0) then
+          write(*,*) 'Lowest eigenvalues:'
+          do i=1,NumOfEigvalsFound
+            write(*,*) i,' ',Eigvals(i)
+          enddo
+        else
+          write(*,*) 'Selected eigenvalue:',Glob_WhichEigenvalue,' ',Evalue
+        endif
         write(*,*)
       endif
     endif !if (GSEPSolMethod=='G')
