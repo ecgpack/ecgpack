@@ -6,29 +6,10 @@ module matelem
 
 contains
 
-  subroutine MatrixElementsHS_RG_1P(m_k, m_l, Lk, Ll, Ak, Al, MAk, P, Hkl, Skl, Dk, Dl, grad_k, grad_l)
-!CPU interface: supply global physics data to the shared arithmetic core.
-    integer,parameter :: nn=Glob_n
-    integer,intent(in)          :: m_k,m_l
-    real(wp),intent(in)      :: Lk(nn,nn), Ll(nn,nn)
-    real(wp),intent(in)      :: Ak(nn,nn), Al(nn,nn)
-    real(wp),intent(in)      :: MAk(nn,nn)
-    real(wp),intent(in)      :: P(nn,nn)
-    real(wp),intent(out)     :: Skl,Hkl
-    real(wp),intent(out)     :: Dk(2*Glob_np),Dl(2*Glob_np)
-    logical,intent(in)          :: grad_k, grad_l
-!Keep this load runtime for the NVHPC reduction/fusion workarounds in the core.
-    integer,volatile :: n
-
-    n=Glob_n
-    call MatrixElementsHSCore_RG_1P(n, Glob_np, m_k, m_l, Lk, Ll, Ak, Al, MAk, P, Glob_MassMatrix, &
-        Glob_ScaledPseudoChargeMatrix, Glob_SqrtPi, Glob_PiRaised3n2, Hkl, Skl, Dk, Dl, grad_k, grad_l)
-  end subroutine MatrixElementsHS_RG_1P
-
 #ifdef USE_CUDA
   attributes(host,device) &
 #endif
-  subroutine MatrixElementsHSCore_RG_1P(n, np, m_k, m_l, Lk, Ll, Ak, Al, MAk, P, mass, chargeM, sqrtpi, pir3n2, &
+  subroutine MatrixElementsHS_RG_1P(m_k, m_l, Lk, Ll, Ak, Al, MAk, P, &
                               Hkl, Skl, Dk, Dl, grad_k, grad_l)
 !This subroutine computes symmetry adapted matrix element with
 !two real L=1 correlated Gaussians:
@@ -44,7 +25,7 @@ contains
 !                premultiplier of the Gaussian
 !   Lk, Ll :: Precomputed lower-triangular parameter matrices.
 !   Ak, Al :: Precomputed Ak=Lk*Lk' and Al=Ll*Ll'.
-!   MAk    :: Precomputed mass*Ak.
+!   MAk    :: Precomputed Glob_MassMatrix*Ak.
 !   P  :: The symmetry permutation matrix of size n x n
 !   grad_k, grad_l :: Gradient flags
 !   grad_k=.true.  means that dHkldvechLk, dSkldvechLk need to be computed.
@@ -59,23 +40,23 @@ contains
 !           Dl=(dHkldvechLl,dSkldvechLl)
 
 !Arguments
-    integer,parameter :: nn=Glob_AllowedNumOfPseudoParticles
-    integer,intent(in) :: n, np
+    integer,parameter :: nn=Glob_n
     integer,intent(in)          :: m_k,m_l
     real(wp),intent(in)      :: Lk(nn,nn), Ll(nn,nn)
     real(wp),intent(in)      :: Ak(nn,nn), Al(nn,nn)
     real(wp),intent(in)      :: MAk(nn,nn)
     real(wp),intent(in)      :: P(nn,nn)
-    real(wp),intent(in)      :: mass(nn,nn), chargeM(0:nn,0:nn)
-    real(wp),intent(in)      :: sqrtpi, pir3n2
     real(wp),intent(out)     :: Skl,Hkl
-    real(wp),intent(out)     :: Dk(2*np),Dl(2*np)
+    real(wp),intent(out)     :: Dk(2*Glob_np),Dl(2*Glob_np)
     logical,intent(in)          :: grad_k, grad_l
 
 !Parameters (These are needed to declare static arrays. Using static
 !arrays makes the function call a little faster in comparison with
 !the case when arrays are dynamically allocated in stack)
 !Local variables
+    !Keep the workaround bounds runtime even though Glob_n is a parameter.
+    integer,volatile :: n
+    integer           np
     integer           tvl(nn)
     real(wp)       tAl(nn,nn),tAkl(nn,nn)
     real(wp)       inv_tAkl(nn,nn)
@@ -94,6 +75,8 @@ contains
     real(wp)       Tkl, Vkl
     integer           i,j,k,indx
 
+    n=Glob_n
+    np=Glob_np
 !Lk, Ll, Ak, Al arrive precomputed once per basis-function sweep.
 
 !Then we permute elements of Al to account for
@@ -240,7 +223,7 @@ contains
 !temp1=abs(det_Ll*det_Lk)/det_tAkl
     temp1=det_tAkl*sqrt(det_tAkl)
 !Skl=Glob_2Raised3n2*tau3*temp1*sqrt(temp1/(inv_Akk(m_k,m_k)*inv_All(m_l,m_l)))
-    Skl=pir3n2*tau3/(TWO*temp1)
+    Skl=Glob_PiRaised3n2*tau3/(TWO*temp1)
 
 !Doing multiplication inv_tAkltAl=inv_tAkl*tAl
     do i=1,nn
@@ -258,7 +241,7 @@ contains
       do j=1,nn
         temp1=ZERO
         do k=1,nn
-          temp1=temp1+inv_tAkltAl(j,k)*mass(k,i)
+          temp1=temp1+inv_tAkltAl(j,k)*Glob_MassMatrix(k,i)
         enddo
         inv_tAkltAlM(j,i)=temp1
       enddo
@@ -287,7 +270,7 @@ contains
     do i=1,nn
       temp1=ZERO
       !NVHPC miscompiles this constant-bound reduction at five particles.
-      !n equals nn, but keeping this bound runtime produces the correct Hkl.
+      !n equals nn; the runtime bound avoids incorrect Hkl.
       do j=1,n
         temp1=temp1+vkinv_tAkltAlM(j)*Ak(j,i)
       enddo
@@ -301,7 +284,7 @@ contains
 !and the potential energy. Notice that only the lower triangles
 !of eta1, sqrt_eta1, eta2, and Rkl are filled.
     Vkl=ZERO
-    temp1=Skl*(TWO/sqrtpi)
+    temp1=Skl*(TWO/Glob_SqrtPi)
     do i=1,nn
       temp2=inv_tAkl(i,i)
       temp3=sqrt(temp2)
@@ -313,7 +296,7 @@ contains
       temp4=vkinv_tAkl(i)*inv_tAkltvl(i)
       eta2(i,i)=temp4
       Rkl(i,i)=temp1*(ONE-temp4/(THREE*temp2*tau3))/temp3
-      Vkl=Vkl+chargeM(i,0)*Rkl(i,i)
+      Vkl=Vkl+Glob_ScaledPseudoChargeMatrix(i,0)*Rkl(i,i)
     enddo
     do i=1,nn
       do j=i+1,nn
@@ -328,7 +311,7 @@ contains
         temp4=(vkinv_tAkl(i)-vkinv_tAkl(j))*(inv_tAkltvl(i)-inv_tAkltvl(j))
         eta2(j,i)=temp4
         Rkl(j,i)=temp1*(ONE-temp4/(THREE*temp2*tau3))/temp3
-        Vkl=Vkl+chargeM(i,j)*Rkl(j,i)
+        Vkl=Vkl+Glob_ScaledPseudoChargeMatrix(i,j)*Rkl(j,i)
       enddo
     enddo
 
@@ -418,7 +401,7 @@ contains
             temp1=temp1-twosym_tFkl(k,j)*Lk(k,i)
           enddo
           indx=indx+1
-          Dk(np+indx)=Skl*temp1
+          Dk(Glob_np+indx)=Skl*temp1
         enddo
       enddo
     endif
@@ -453,7 +436,7 @@ contains
             temp1=temp1-twosym_tGkl(k,j)*Ll(k,i)
           enddo
           indx=indx+1
-          Dl(np+indx)=Skl*temp1
+          Dl(Glob_np+indx)=Skl*temp1
         enddo
       enddo
     endif
@@ -473,8 +456,8 @@ contains
       temp3=ONETHIRD/tau3
       !terms with Jii (interaction with the reference particle)
       do i=1,nn
-        temp1=(TWO/sqrtpi)/(eta1(i,i)*sqrt_eta1(i,i))
-        temp5=chargeM(i,0)*temp1
+        temp1=(TWO/Glob_SqrtPi)/(eta1(i,i)*sqrt_eta1(i,i))
+        temp5=Glob_ScaledPseudoChargeMatrix(i,0)*temp1
         temp2=ONE-eta2(i,i)/(eta1(i,i)*tau3)
         Cmat(i,i)=Cmat(i,i)+temp5*temp2
         temp6=temp5*temp3
@@ -485,8 +468,8 @@ contains
       !terms with Jij (interparticle interactions)
       do i=1,nn
         do j=i+1,nn
-          temp1=(TWO/sqrtpi)/(eta1(j,i)*sqrt_eta1(j,i))
-          temp5=chargeM(i,j)*temp1
+          temp1=(TWO/Glob_SqrtPi)/(eta1(j,i)*sqrt_eta1(j,i))
+          temp5=Glob_ScaledPseudoChargeMatrix(i,j)*temp1
           temp2=ONE-eta2(j,i)/(eta1(j,i)*tau3)
           temp4=temp5*temp2
           Cmat(i,i)=Cmat(i,i)+temp4
@@ -593,7 +576,7 @@ contains
             temp1=temp1+Zsym(k,j)*Lk(k,i)
           enddo
           indx=indx+1
-          Dk(indx)=Skl*temp1+HklOverSkl*Dk(np+indx)
+          Dk(indx)=Skl*temp1+HklOverSkl*Dk(Glob_np+indx)
         enddo
       enddo
     endif
@@ -607,7 +590,7 @@ contains
       do i=1,nn
         do j=1,nn
           inv_tAklAk(j,i)=-inv_tAkltAl(j,i)
-          inv_tAklAkM(j,i)=mass(j,i)-inv_tAkltAlM(j,i)
+          inv_tAklAkM(j,i)=Glob_MassMatrix(j,i)-inv_tAkltAlM(j,i)
         enddo
         inv_tAklAk(i,i)=inv_tAklAk(i,i)+ONE
       enddo
@@ -642,7 +625,7 @@ contains
       temp2=temp1*tau2/tau3
       do j=1,nn
         do i=1,nn
-          Zsym(i,j)=12*(mass(i,j)-inv_tAkltAlM(i,j) &
+          Zsym(i,j)=12*(Glob_MassMatrix(i,j)-inv_tAkltAlM(i,j) &
                         -inv_tAkltAlM(j,i)+Fkl(i,j)) &
                     +temp1*(u1(i)*vkinv_tAkl(j)+vkinv_tAkl(i)*u1(j) &
                             -inv_tAkltvl(i)*u2(j)-u2(i)*inv_tAkltvl(j)) &
@@ -678,12 +661,12 @@ contains
             temp1=temp1+W3(k,j)*Ll(k,i)
           enddo
           indx=indx+1
-          Dl(indx)=Skl*temp1+HklOverSkl*Dl(np+indx)
+          Dl(indx)=Skl*temp1+HklOverSkl*Dl(Glob_np+indx)
         enddo
       enddo
     endif
 
-  end subroutine MatrixElementsHSCore_RG_1P
+  end subroutine MatrixElementsHS_RG_1P
 
   subroutine PrecomputeMatrices_L_A_MA(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
 !This subroutine precomputes the Lk, Ak, and MAk=M*Ak matrices for all basis functions, so that
@@ -697,7 +680,7 @@ contains
 !  Lk: Lk matrices for all basis functions (nn x nn x Nmax)
 !  Ak: Ak matrices for all basis functions (nn x nn x Nmax)
 !  MAk: M*Ak matrices for all basis functions (nn x nn x Nmax)
-    integer,parameter     :: nn=Glob_AllowedNumOfPseudoParticles
+    integer,parameter     :: nn=Glob_n
     integer, intent(in)   :: np, Nmax
     real(wp),intent(in)   :: NonlinParam(np,Nmax), MassMatrix(nn,nn)
     real(wp),intent(out)  :: Lk(nn,nn,Nmax), Ak(nn,nn,Nmax)

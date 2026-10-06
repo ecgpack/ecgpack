@@ -170,7 +170,6 @@ contains
       return
     endif
 #endif
-
     allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
     call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
                                   Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
@@ -193,21 +192,27 @@ contains
         q=(i-1)*Glob_NumYHYTerms-1
         do j=1,Glob_NumYHYTerms
           if (mod(q+j,Glob_NumOfProcs)==Glob_ProcID) then
-!        call MatrixElementsHS_RG_1P(mk,ml,mmk,mml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
+!        call MatrixElementsHS_RG_1P(mk,ml,mmk,mml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
 !               Hkl1,Skl1,Dk1,Dl1,.false.,.false.)
-!        call MatrixElementsHS_RG_1P(mk,mml,mmk,ml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
+!        call MatrixElementsHS_RG_1P(mk,mml,mmk,ml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
 !               Hkl2,Skl2,Dk2,Dl2,.false.,.false.)
 
-!        call MatrixElementsHS_RG_1P(mmk,ml,mk,mml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
+!        call MatrixElementsHS_RG_1P(mmk,ml,mk,mml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
 !               Hkl3,Skl3,Dk3,Dl3,.false.,.false.)
-!        call MatrixElementsHS_RG_1P(mmk,mml,mk,ml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
+!        call MatrixElementsHS_RG_1P(mmk,mml,mk,ml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
 !               Hkl4,Skl4,Dk4,Dl4,.false.,.false.)
 !                Hkl=2*Hkl1-2*Hkl2!-Hkl3+Hkl4
 !                Skl=2*Skl1-2*Skl2!-Skl3+Skl4
 !                Dk=2*Dk1-2*Dk2!-Dk3+Dk4
 !                Dl=2*Dl1-2*Dl2!-Dl3+Dl4
-            call MatrixElementsHS_RG_2P(mk, ml, mmk, mml, Lh(1,1,k), Lh(1,1,l), Ah(1,1,k), Ah(1,1,l), &
-                MAh(1,1,k), Glob_YHYMatr(1,1,j), Hkl, Skl, Dk, Dl, .false., .false.)
+            call MatrixElementsHS_RG_2P(mk,ml,mmk,mml,Lh(1,1,k),Lh(1,1,l), &
+                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k), &
+#ifdef USE_CUDA
+                                        Glob_YHYMatr(1,1,j), &
+#else
+                                        Glob_YHYMatr(1:n,1:n,j), &
+#endif
+                                  Hkl,Skl,Dk,Dl,.false.,.false.)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl
           endif
@@ -318,7 +323,6 @@ contains
     endif
 #endif
 
-
     allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
     call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
                                   Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
@@ -351,21 +355,27 @@ contains
         q=(i-1)*Glob_NumYHYTerms-1
         do j=1,Glob_NumYHYTerms
           if (mod(q+j,Glob_NumOfProcs)==Glob_ProcID) then
-!        call MatrixElementsHS_RG_1P(mk,ml,mmk,mml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
+!        call MatrixElementsHS_RG_1P(mk,ml,mmk,mml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
 !               Hkl1,Skl1,Dk1,Dl1,.true.,grad_l)
-!        call MatrixElementsHS_RG_1P(mk,mml,mmk,ml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
+!        call MatrixElementsHS_RG_1P(mk,mml,mmk,ml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
 !               Hkl2,Skl2,Dk2,Dl2,.true.,grad_l)
 
-!        call MatrixElementsHS_RG_1P(mmk,ml,mk,mml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
+!        call MatrixElementsHS_RG_1P(mmk,ml,mk,mml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
 !               Hkl3,Skl3,Dk3,Dl3,.false.,.false.)
-!        call MatrixElementsHS_RG_1P(mmk,mml,mk,ml,Paramk,Paraml,Glob_YHYMatr(1,1,j), &
+!        call MatrixElementsHS_RG_1P(mmk,mml,mk,ml,Paramk,Paraml,Glob_YHYMatr(1:n,1:n,j), &
 !               Hkl4,Skl4,Dk4,Dl4,.false.,.false.)
 !                Hkl=2*Hkl1-2*Hkl2!-Hkl3+Hkl4
 !                Skl=2*Skl1-2*Skl2!-Skl3+Skl4
 !                Dk=2*Dk1-2*Dk2!-Dk3+Dk4
 !                Dl=2*Dl1-2*Dl2!-Dl3+Dl4
-            call MatrixElementsHS_RG_2P(mk, ml, mmk, mml, Lh(1,1,k), Lh(1,1,l), Ah(1,1,k), Ah(1,1,l), &
-                MAh(1,1,k), Glob_YHYMatr(1,1,j), Hkl, Skl, Dk, Dl, .true., grad_l)
+            call MatrixElementsHS_RG_2P(mk,ml,mmk,mml,Lh(1,1,k),Lh(1,1,l), &
+                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k), &
+#ifdef USE_CUDA
+                                        Glob_YHYMatr(1,1,j), &
+#else
+                                        Glob_YHYMatr(1:n,1:n,j), &
+#endif
+                                  Hkl,Skl,Dk,Dl,.true.,grad_l)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl
             Dksum(1:npt2)=Dksum(1:npt2)+Glob_YHYCoeff(j)*Dk(1:npt2)

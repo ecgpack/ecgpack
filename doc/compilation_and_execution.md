@@ -140,6 +140,11 @@ unless `ECG_GPU=1` selects GPU matrix assembly or `ECG_GPU_EIG=1` also selects
 cuSOLVER for single-eigenpair method-G solves. Shabyt's V100 GPUs require
 `sm_70`, which NVHPC 25.9 supports; NVHPC 26.5 does not support `sm_70`.
 
+CUDA-enabled binaries require a visible CUDA device even with `ECG_GPU=0`:
+mass and scaled-charge arrays use CUDA managed memory shared by the CPU and GPU
+matrix-element routines. Use a `gpu=no` build on machines without a CUDA device;
+gfortran builds retain ordinary host allocations.
+
 `CUDA_ARCH` is the target GPU's compute capability in `sm_XX` form: compute
 capability 8.0 becomes `sm_80`, passed to nvfortran as `-gpu=cc80`. Find the
 GPU model with `nvidia-smi` on a compute node, then look up its capability in
