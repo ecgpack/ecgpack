@@ -7,6 +7,7 @@ Basic theory, mathematical formalism, and evaluation of the most important matri
 * [T. Shomenov and S. Bubin, Explicitly correlated Gaussians for high-precision variational calculations of $S^e$, $P^e$, and $D^e$ states of quantum systems: An efficient algorithm, Phys. Rev. E 108, 065308 (2023)](https://doi.org/10.1103/PhysRevE.108.065308)
 * [S. Bubin and L. Adamowicz, Energy and energy gradient matrix elements with $N$-particle explicitly correlated complex Gaussian basis functions with $L$ = 1, J. Chem. Phys. 128, 114107 (2008)](https://doi.org/10.1063/1.2894866)
 * [S. Bubin and L. Adamowicz, Matrix elements of $N$-particle explicitly correlated Gaussian basis functions with complex exponential parameters, J. Chem. Phys. 124, 224317 (2006)](https://doi.org/10.1063/1.2204605)
+* [D. Kinghorn and L. Adamowicz, A correlated basis set for nonadiabatic energy calculations on diatomic molecules, J. Chem. Phys. 110, 7166 (1999)](https://doi.org/10.1063/1.478620)
 
 Most formulas implementad in ECGPACK codes that generate basis sets are taken from the above references.
 

@@ -130,29 +130,24 @@ contains
       read(1,*) ReadChar(1:9),ReadInt
       write(*,'(1x,a9,1x,i6)') ReadChar(1:9),ReadInt
       Line=Line+1
-      Glob_n=ReadInt-1 !Glob_n is the number of pseudoparticles
-      if ((Glob_n<1).or.(ReadChar(1:9)/='PARTICLES')) then
+!The number of pseudoparticles, Glob_n, is fixed at compile time. Here we only
+!check that the number of particles specified in the input file matches it
+      if ((ReadInt<2).or.(ReadChar(1:9)/='PARTICLES')) then
         write(*,*) 'Error EC0102 in data file, line ',Line
         ErrorInDataFile=.true.
       endif
-    endif
-    call MPI_BCAST(Glob_n,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(Glob_BasisTypeSupplied,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    if (Glob_n/=Glob_AllowedNumOfPseudoParticles) then
-      if (Glob_ProcID==0) then
+      if (ReadInt-1/=Glob_n) then
         write (*,*) 'The version of the code you are running was compiled for the case'
         write (*,*) 'when the number of particles in the system is equal to', &
           Glob_AllowedNumOfParticles
-        write (*,*) 'while the number of particles specified in the input file is',Glob_n+1
+        write (*,*) 'while the number of particles specified in the input file is',ReadInt
         write (*,*) 'Please make appropriate changes. Program will now stop.'
+        ErrorInDataFile=.true.
       endif
-      ErrorInDataFile=.true.
     endif
+    call MPI_BCAST(Glob_BasisTypeSupplied,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
     call MPI_BCAST(ErrorInDataFile,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
     if (ErrorInDataFile) call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
-    Glob_np=Glob_n*(Glob_n+1)/2
-    Glob_npt=Glob_np+Glob_np
-    Glob_2Raised3n2=TWO**((3*Glob_n)/TWO)
 
     allocate(Glob_Mass(Glob_n+1))
     if (Glob_ProcID==0) then
@@ -2978,7 +2973,7 @@ contains
 !Arguments:
     integer  fb,fe
 !Local variables:
-    real(wp) temp(Glob_AllowedNumOfPseudoParticles*(Glob_AllowedNumOfPseudoParticles+1))
+    real(wp) temp(Glob_n*(Glob_n+1))
     integer i,j,f,t,fbm,fep
 
     f=(fe-fb+1)/2 !integer division!

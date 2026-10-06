@@ -1,0 +1,27 @@
+ BASIS_TYPE PG_0S
+ PARTICLES      4
+ MASSES   3.6704829678500000E+03   1.8361526724700000E+03   1.0000000000000000E+00   1.0000000000000000E+00
+ CHARGES   1.0000000000000000E+00   1.0000000000000000E+00  -1.0000000000000000E+00  -1.0000000000000000E+00
+ SYMMETRY (1+P34)
+ BASIS_SIZE  0
+ CURRENT_ENERGY    1.0E30
+ WHICH_EIGENVALUE      1
+ EIGVAL_TOLERANCE   9.9999999999999998E-13
+ INVITPARAMETER   1.0000009999999999E+00
+ LAST_EIGVAL_TOL   1.0E0
+ BEST_EIGVAL_TOL   1.0E0
+ WORST_EIGVAL_TOL  1.0E-30
+ GENERATOR_PARAM   6.9999999999999996E-01   1.0000000000000000E+00   3.0000000000000000E+00
+ ==============================
+    0  1.0E30      0      0      0
+ ==============================
+ BASIS_ENL  G        1      5      1    500    200   0.95    3.0
+ FULL_OPT1  G        5      1      5 999999   0.95    3.0     60     60      none
+ FULL_OPT1  G        5      1      5 999999   0.95    3.0     60     60      none
+ OPT_CYCLE  G        5      1      5      1      1     10    130   0.95    3.0     10
+ SAVE_FILE  5      inout_HD_1Se-01-00005.txt
+ BASIS_ENL  I        6     10      1    500    200   0.95    3.0
+ FULL_OPT1  I       10      1     10 999999   0.95    3.0     60     60      none
+ OPT_CYCLE  I       10      1     10      1      1     10    130   0.95    3.0     10
+ SAVE_FILE  10     inout_HD_1Se-01-00010.txt
+ ==============================

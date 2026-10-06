@@ -137,7 +137,7 @@ CONTAINS
 
       ELSE
 
-        IF (particle_n1/=Glob_AllowedNumOfPseudoParticles) then
+        IF (particle_n1/=Glob_n) then
           write(*,*) ' '
           write (*,*) 'The version of the code you are running was compiled for the case'
           write (*,*) 'when the number of particles in the system is equal to', &
@@ -147,7 +147,6 @@ CONTAINS
           write(*,*) ' '
           ErrorInDataFile=.true.
         EndIF
-        Glob_n=particle_n1
 
       ENDIF
 
@@ -155,13 +154,6 @@ CONTAINS
 
     CALL MPI_BCAST(ErrorInDataFILE,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
     IF (ErrorInDataFILE) call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
-
-    CALL MPI_BCAST(Glob_n,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-
-    Glob_2Raised3n2=TWO**((3*Glob_n)/TWO)
-    Glob_PiRaised3n2=Glob_Pi**((3*Glob_n)/TWO)
-    Glob_np=Glob_n*(Glob_n+1)/2
-    Glob_npt=Glob_np
 
 !-------------------------------------------------------------------
 ! reading the masses of particles from the wave function FILEs
@@ -1450,7 +1442,7 @@ CONTAINS
 !alpha = sqrt( 0.5 * (m0^3 + m_k^3)/(m0*m_k*(m0 + m_k)^2) )
     Glob_dmva2 = (m0**3 + mk**3)/(TWO*m0*mk*(m0+mk)**2)
 !Glob_dmvB(i,i) = (beta^2 + gamma_i^2)/(alpha^2 * M_ii) - M_ii
-    Glob_dmvB(1:Glob_AllowedNumOfPseudoParticles,1:Glob_AllowedNumOfPseudoParticles)=ZERO
+    Glob_dmvB(1:Glob_n,1:Glob_n)=ZERO
 
     DO i=1,n
 
@@ -1459,7 +1451,7 @@ CONTAINS
 
     ENDDO
 
-    Glob_dmvM(1:Glob_AllowedNumOfPseudoParticles,1:Glob_AllowedNumOfPseudoParticles)=ZERO
+    Glob_dmvM(1:Glob_n,1:Glob_n)=ZERO
     Glob_dmvM(1:n,1:n)=Glob_MassMatrix(1:n,1:n)
     Glob_dmvMB=Glob_dmvM+Glob_dmvB
 

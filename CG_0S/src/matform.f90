@@ -140,7 +140,7 @@ contains
 !These arrays are not actually used but needed for proper calling
 !of subroutine MatrixElementsHS_CG_0S. Thus, one can set some small size
 !for them
-    complex(wp)  Dk(2),Dl(2)
+    complex(wp)  Dk(2*Glob_npt),Dl(2*Glob_npt)
 
     n=Glob_n
     np=Glob_np

@@ -17,7 +17,7 @@ usage_print() {
   echo "<machinename> is the name of the machine. Only a single value may be specified. It could be linux-generic (default), ubuntu-generic, irgetas, shabyt, etc."
   echo "<toolchainnames> are the names of the toolchains." 
   echo "<confignames> is the list of configurations that need to be built. Currently these could be debug or release. The default includes all configurations."
-  echo "<codenames> is the list of codes that need to be built. Currently these could be RG_0S,RG_1P,RG_2D,RG_2P,RG_0S-1P,RG_1P-2D,RG_1P-2P,RG_0S-2D,RG_0S-2P,RG_1P-1P,RG_2D-2D,RG_2P-2D,RG_2P-2P, as well as CG_0S. The default includes all codes except CG_0S."
+  echo "<codenames> is the list of codes that need to be built. Currently these could be PG_0S,RG_0S,RG_1P,RG_2D,RG_2P,RG_0S-1P,RG_1P-2D,RG_1P-2P,RG_0S-2D,RG_0S-2P,RG_1P-1P,RG_2D-2D,RG_2P-2D,RG_2P-2P, as well as CG_0S. The default includes all codes except CG_0S."
   echo "<nparticles> defines for how many particles each code must be build for. There is no default value. This argument must be present."
   echo "<precisions> is the kind parameter for real type. 8 corresponds to double precision (fp64), 10 corresponds to extended precision (fp80), 16 corresponds to quadruple precision. Different compilers/toolchain support different kinds. For example, Intel compilers supports only 8 and 16, while modern GNU compilers support 8, 10, and 16. The default value is 8."
   echo "<linalgnames> specifies which BLAS/LAPACK implementation to link against. Possible values are: netlib (default; non-optimized reference BLAS/LAPACK built from the bundled source), mkl (Intel Math Kernel Library), lblas (optimized BLAS/LAPACK exposed through the -lblas/-llapack symbolic links), openblas (OpenBLAS), and aocl (AMD AOCL-BLAS and AOCL-LAPACK). For precision=10 and precision=16 only netlib is available, so any other value is skipped because optimized BLAS/LAPACK is unavailable for these two precisions."
@@ -75,12 +75,23 @@ usage_print() {
   exit 1
 }
 
+# Number of parallel jobs (make -j) used within each build. By default all available
+# cores are used. Set it to 1 for a serial build or to any other value, if necessary.
+make_jobs=$(nproc)
+
+# Keep the output of each compiled file together when make runs parallel jobs.
+# Option --output-sync requires GNU make 4.0 or newer, so use it only if it is supported.
+make_sync_flag=""
+if make --output-sync=target --version > /dev/null 2>&1; then
+  make_sync_flag="--output-sync=target"
+fi
+
 # Set default values of arguments
 machine="linux-generic"
 toolchain="systemdefault"
 config="debug,release"
-# code="CG_0S, RG_0S, RG_1P, RG_2D, RG_2P, RG_0S-1P, RG_1P-2D, RG_1P-2P, RG_0S-2D, RG_0S-2P, RG_1P-1P, RG_2D-2D, RG_2P-2D, RG_2P-2P"
-code="RG_0S, RG_1P, RG_2D, RG_2P, RG_0S-1P, RG_1P-2D, RG_1P-2P, RG_0S-2D, RG_0S-2P, RG_1P-1P, RG_2D-2D, RG_2P-2D, RG_2P-2P"
+# code="CG_0S, PG_0S, RG_0S, RG_1P, RG_2D, RG_2P, RG_0S-1P, RG_1P-2D, RG_1P-2P, RG_0S-2D, RG_0S-2P, RG_1P-1P, RG_2D-2D, RG_2P-2D, RG_2P-2P"
+code="PG_0S, RG_0S, RG_1P, RG_2D, RG_2P, RG_0S-1P, RG_1P-2D, RG_1P-2P, RG_0S-2D, RG_0S-2P, RG_1P-1P, RG_2D-2D, RG_2P-2D, RG_2P-2P"
 nparticles=""
 precision="8"
 linalg="netlib"
@@ -140,7 +151,7 @@ done
 
 # Check if code is set properly
 for code_value in ${code_list[@]}; do
-  if [[ " CG_0S RG_0S RG_1P RG_2D RG_2P RG_0S-1P RG_0S-2D RG_0S-2P RG_1P-1P RG_1P-2D RG_1P-2P RG_2D-2D RG_2P-2D RG_2P-2P " != *" $code_value "* ]]; then
+  if [[ " CG_0S PG_0S RG_0S RG_1P RG_2D RG_2P RG_0S-1P RG_0S-2D RG_0S-2P RG_1P-1P RG_1P-2D RG_1P-2P RG_2D-2D RG_2P-2D RG_2P-2P " != *" $code_value "* ]]; then
     echo "ERROR, WRONG VALUE(S) OF ARGUMENT: code"
     usage_print
     exit 1
@@ -406,7 +417,10 @@ for toolchain_value in ${toolchain_list[@]}; do
             sed -i "s/MPI_DPREC=[^ ][^ ]*/MPI_DPREC=${MPI_REALX_name}/g" src/wp_def_${precision_value}.f90
             # Build the code
             make clean > /dev/null 2>&1
-            make_args=("${config_value}" "COMPILER=${compiler}" "MACHINE=${machine}" "PREC=${precision_value}" "LINALG=${linalg_value}" "OPENMP=${openmp_value}" "USE_CUDA=${gpu}" "EXEFILE=ecg")
+            make_args=("-j${make_jobs}" "${config_value}" "COMPILER=${compiler}" "MACHINE=${machine}" "PREC=${precision_value}" "LINALG=${linalg_value}" "OPENMP=${openmp_value}" "USE_CUDA=${gpu}" "EXEFILE=ecg")
+            if [[ -n "$make_sync_flag" ]]; then
+              make_args+=("${make_sync_flag}")
+            fi
             if [[ -n "$cuda_arch" ]]; then
               make_args+=("CUDA_ARCH=${cuda_arch}")
             fi
