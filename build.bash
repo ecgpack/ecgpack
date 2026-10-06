@@ -7,7 +7,7 @@ usage_print() {
   echo "Missing arguments or invalid arguments."
   echo ""  
   echo "PROPER USAGE:"
-  echo "$0 machine=<machinename> toolchain=<toolchainnames> config=<confignames> code=<codenames> nparticles=<nparticles> precision=<precisions> linalg=<linalgnames> openmp=<openmpflags>"
+  echo "$0 machine=<machinename> toolchain=<toolchainnames> config=<confignames> code=<codenames> nparticles=<nparticles> precision=<precisions> linalg=<linalgnames> openmp=<openmpflags> gpu=<yes|no> cuda_arch=<sm_XX>"
   echo ""
   echo "NOTE:"
   echo "All arguments are optional except nparticles. If multiple values are specified for an argument, they must be separated by a comma."
@@ -22,6 +22,8 @@ usage_print() {
   echo "<precisions> is the kind parameter for real type. 8 corresponds to double precision (fp64), 10 corresponds to extended precision (fp80), 16 corresponds to quadruple precision. Different compilers/toolchain support different kinds. For example, Intel compilers supports only 8 and 16, while modern GNU compilers support 8, 10, and 16. The default value is 8."
   echo "<linalgnames> specifies which BLAS/LAPACK implementation to link against. Possible values are: netlib (default; non-optimized reference BLAS/LAPACK built from the bundled source), mkl (Intel Math Kernel Library), lblas (optimized BLAS/LAPACK exposed through the -lblas/-llapack symbolic links), openblas (OpenBLAS), and aocl (AMD AOCL-BLAS and AOCL-LAPACK). For precision=10 and precision=16 only netlib is available, so any other value is skipped because optimized BLAS/LAPACK is unavailable for these two precisions."
   echo "<openmpflags> selects serial (no) or OpenMP (yes) builds. The default is no. Multiple values may be requested as openmp=no,yes. OpenMP is currently supported by RG_0S, RG_1P, RG_2D, and RG_2P. OpenMP binaries are stored in the same debug or release output directory as the serial ones, but their file name carries an additional _omp suffix."
+  echo "<gpu> enables the CUDA Fortran backend for RG_0S, RG_1P, RG_2D, and RG_2P. The default is no. gpu=yes requires an nvhpc toolchain and precision=8. GPU binaries carry an additional _gpu suffix."
+  echo "<cuda_arch> optionally overrides the Makefile GPU target, for example sm_70. With gpu=yes, the machine default is used when omitted."
   echo "" 
   echo "Supported toolchains on different machines are listed below."
   echo ""   
@@ -67,6 +69,7 @@ usage_print() {
   echo "    $0 machine=ocelote toolchain=intel-2020.4 config=debug,release code=RG_0S nparticles=5 precision=8,16 linalg=mkl,netlib"
   echo ""  
   echo "    $0 machine=shabyt nparticles=4,5 precision=10"
+  echo "    $0 machine=shabyt toolchain=nvhpc-25.9 config=release code=RG_0S,RG_1P,RG_2D,RG_2P nparticles=5 precision=8 linalg=netlib gpu=yes cuda_arch=sm_70"
   echo ""  
   echo "    $0 nparticles=6"
   exit 1
@@ -82,6 +85,8 @@ nparticles=""
 precision="8"
 linalg="netlib"
 openmp="no"
+gpu="no"
+cuda_arch=""
 
 # Parse the arguments
 for arg in "$@"; do
@@ -94,6 +99,8 @@ for arg in "$@"; do
     precision=*) precision="${arg#*=}" ;;
     linalg=*) linalg="${arg#*=}" ;;
     openmp=*) openmp="${arg#*=}" ;;
+    gpu=*) gpu="${arg#*=}" ;;
+    cuda_arch=*) cuda_arch="${arg#*=}" ;;
     *) echo "ERROR, INVALID ARGUMENT: $arg" ; echo "" ; usage_print ;;
   esac
 done
@@ -180,6 +187,39 @@ for openmp_value in ${openmp_list[@]}; do
     exit 1
   fi
 done
+
+if [[ "$gpu" != "yes" && "$gpu" != "no" ]]; then
+  echo "ERROR, WRONG VALUE OF ARGUMENT: gpu (expected yes or no)"
+  exit 1
+fi
+if [[ -n "$cuda_arch" && ! "$cuda_arch" =~ ^sm_[0-9]+[a-z]?$ ]]; then
+  echo "ERROR, INVALID CUDA ARCHITECTURE: $cuda_arch (expected sm_XX)"
+  exit 1
+fi
+if [[ "$gpu" = "no" && -n "$cuda_arch" ]]; then
+  echo "ERROR, cuda_arch requires gpu=yes"
+  exit 1
+fi
+if [[ "$gpu" = "yes" ]]; then
+  for toolchain_value in "${toolchain_list[@]}"; do
+    if [[ "$toolchain_value" != nvhpc-* ]]; then
+      echo "ERROR, gpu=yes requires an nvhpc toolchain: $toolchain_value"
+      exit 1
+    fi
+  done
+  for code_value in "${code_list[@]}"; do
+    if [[ " RG_0S RG_1P RG_2D RG_2P " != *" $code_value "* ]]; then
+      echo "ERROR, gpu=yes is unsupported for code=$code_value"
+      exit 1
+    fi
+  done
+  for precision_value in "${precision_list[@]}"; do
+    if [[ "$precision_value" != "8" ]]; then
+      echo "ERROR, gpu=yes requires precision=8"
+      exit 1
+    fi
+  done
+fi
 
 # Set the name of the directory where all binaries will be stored
 bindirname="bin"
@@ -332,6 +372,10 @@ for toolchain_value in ${toolchain_list[@]}; do
               openmp_builddir_suffix="-omp"
               openmp_binary_suffix="_omp"
             fi
+            gpu_binary_suffix=""
+            if [[ "$gpu" = "yes" ]]; then
+              gpu_binary_suffix="_gpu"
+            fi
             binsubdirname=${bindirname}/${machinedirname}${toolchain_value}/${config_value}
             binaryfilename=${code_value}_N${nparticles_value}_P${precision_value}
             # For precision=10 and precision=16 only netlib is available, so skip any other linalg value
@@ -339,11 +383,11 @@ for toolchain_value in ${toolchain_list[@]}; do
               continue
             fi
             # Always add the linalg value as a suffix to the binary file name
-            binaryfilename=${binaryfilename}_${linalg_value}${openmp_binary_suffix}
+            binaryfilename=${binaryfilename}_${linalg_value}${openmp_binary_suffix}${gpu_binary_suffix}
             echo ""
             echo "════════════════════════ Starting a new build ═════════════════════════"
             echo "machine="$machine "   toolchain="$toolchain_value "   config="$config_value
-            echo "code="$code_value "   nparticles="$nparticles_value "   precision="$precision_value "   linalg="$linalg_value "   openmp="$openmp_value
+            echo "code="$code_value "   nparticles="$nparticles_value "   precision="$precision_value "   linalg="$linalg_value "   openmp="$openmp_value "   gpu="$gpu "   cuda_arch="${cuda_arch:-machine-default}
             echo "───────────────────────────── make output ─────────────────────────────"
             # Check if file ${code_value}/src/wp_def_${precision_value}.f90 exists. This way
             # we also automtically test if the directory ${code_value} for this specific code exists
@@ -362,7 +406,11 @@ for toolchain_value in ${toolchain_list[@]}; do
             sed -i "s/MPI_DPREC=[^ ][^ ]*/MPI_DPREC=${MPI_REALX_name}/g" src/wp_def_${precision_value}.f90
             # Build the code
             make clean > /dev/null 2>&1
-            make ${config_value} COMPILER=${compiler} MACHINE=${machine} PREC=${precision_value} LINALG=${linalg_value} OPENMP=${openmp_value} EXEFILE=ecg
+            make_args=("${config_value}" "COMPILER=${compiler}" "MACHINE=${machine}" "PREC=${precision_value}" "LINALG=${linalg_value}" "OPENMP=${openmp_value}" "USE_CUDA=${gpu}" "EXEFILE=ecg")
+            if [[ -n "$cuda_arch" ]]; then
+              make_args+=("CUDA_ARCH=${cuda_arch}")
+            fi
+            make "${make_args[@]}"
             # Check if the build was successful
             if [ $? -eq 0 ]; then
               echo "═════════════════════ Build finished succesfully ══════════════════════"

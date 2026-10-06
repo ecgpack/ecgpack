@@ -125,6 +125,21 @@ The optional `openmp` argument accepts `no` (serial, the default), `yes` (OpenMP
 
 This command creates `bin/systemdefault/release/RG_0S_N4_P8_netlib_omp` and `bin/systemdefault/release/RG_1P_N4_P8_netlib_omp`.
 
+For the four real-ECG energy codes, `gpu=yes` builds the CUDA Fortran backend with
+NVHPC and double precision. The default is `gpu=no`. CUDA binaries have a `_gpu`
+suffix so they can coexist with CPU binaries; the optional `cuda_arch` argument
+overrides the machine's Makefile default GPU target:
+
+```bash
+./build.bash machine=shabyt toolchain=nvhpc-25.9 config=release code=RG_0S,RG_1P,RG_2D,RG_2P nparticles=5 precision=8 linalg=netlib gpu=yes cuda_arch=sm_70
+```
+
+This creates `bin/nvhpc-25.9/release/RG_0S_N5_P8_netlib_gpu` and the analogous
+binaries for the other three codes. CUDA-enabled binaries use the CPU at runtime
+unless `ECG_GPU=1` selects GPU matrix assembly or `ECG_GPU_EIG=1` also selects
+cuSOLVER for single-eigenpair method-G solves. Shabyt's V100 GPUs require
+`sm_70`, which NVHPC 25.9 supports; NVHPC 26.5 does not support `sm_70`.
+
 Note that `systemdefault` toolchain assumes that the system's default `mpif90` wrapper is accessible out of the box without loading any environment modules - regardless of the underlying compiler or MPI implementation it wraps.
 
 Script `build.bash` can use some common toolchains available in HPC systems/environments that are deployed with `Easybuild` - an open-source software management tool for scientific software, compilers, MPI libraries, BLAS/LAPACK libraries, and related packages. The following `Easybuild` toolchains can be invoked:
