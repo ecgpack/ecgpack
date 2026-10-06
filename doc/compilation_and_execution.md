@@ -140,6 +140,55 @@ unless `ECG_GPU=1` selects GPU matrix assembly or `ECG_GPU_EIG=1` also selects
 cuSOLVER for single-eigenpair method-G solves. Shabyt's V100 GPUs require
 `sm_70`, which NVHPC 25.9 supports; NVHPC 26.5 does not support `sm_70`.
 
+`CUDA_ARCH` is the target GPU's compute capability in `sm_XX` form: compute
+capability 8.0 becomes `sm_80`, passed to nvfortran as `-gpu=cc80`. Find the
+GPU model with `nvidia-smi` on a compute node, then look up its capability in
+[NVIDIA's GPU table](https://developer.nvidia.com/cuda/gpus) (which links a
+legacy GPU table). The Makefiles default to `sm_70` for Shabyt/V100 and
+`sm_90` for Irgetas/H100; use `CUDA_ARCH=sm_XX` with `make` or
+`cuda_arch=sm_XX` with `build.bash` to override the target. The loaded NVHPC
+version must support that target.
+
+Run GPU calculations inside a Slurm allocation. For Shabyt, a one-rank V100
+job submitted from the directory containing `inout.txt` can use:
+
+```bash
+#!/bin/bash
+#SBATCH --partition=NVIDIA
+#SBATCH --gres=gpu:v100:1
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --time=01:00:00
+
+module load NVHPC/25.9-CUDA-12.9.1
+export ECG_GPU=1
+# Optional for method G: export ECG_GPU_EIG=1
+mpirun -np 1 /absolute/path/to/RG_0S_N5_P8_netlib_gpu
+```
+
+For Irgetas/H100, the corresponding request is:
+
+```bash
+#!/bin/bash
+#SBATCH --account=hpcnc
+#SBATCH --partition=H100
+#SBATCH --qos=hpcnc-h100
+#SBATCH --gres=gpu:h100:1
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --time=01:00:00
+
+module load NVHPC/26.5-CUDA-13.2.0
+export ECG_GPU=1
+# Optional for method G: export ECG_GPU_EIG=1
+mpirun -np 1 /absolute/path/to/RG_0S_N5_P8_netlib_gpu
+```
+
+Submit either script with `sbatch run.sbatch`, adjusting the account, QoS,
+memory, time, and binary path for your allocation. The partition and `--gres`
+request a GPU compute node; `CUDA_ARCH` only selects the build target and does
+not reserve a GPU. Never run calculations on the login node.
+
 Note that `systemdefault` toolchain assumes that the system's default `mpif90` wrapper is accessible out of the box without loading any environment modules - regardless of the underlying compiler or MPI implementation it wraps.
 
 Script `build.bash` can use some common toolchains available in HPC systems/environments that are deployed with `Easybuild` - an open-source software management tool for scientific software, compilers, MPI libraries, BLAS/LAPACK libraries, and related packages. The following `Easybuild` toolchains can be invoked:

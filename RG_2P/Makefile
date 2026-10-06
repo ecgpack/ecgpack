@@ -47,6 +47,10 @@ LINALG=netlib
 
 # Native CUDA Fortran matrix assembly. Requires NVHPC nvfortran and PREC=8.
 USE_CUDA ?= no
+# CUDA_ARCH is the GPU compute capability (CC 8.0 -> sm_80 -> nvfortran -gpu=cc80).
+# Find the GPU model with nvidia-smi on a compute node, then look up its CC at
+# https://developer.nvidia.com/cuda/gpus (which links older GPU models).
+# MACHINE supplies a default; override with CUDA_ARCH=sm_XX if needed.
 CUDA_ARCH_shabyt = sm_70
 CUDA_ARCH_irgetas = sm_90
 CUDA_ARCH = $(or $(CUDA_ARCH_$(MACHINE)),sm_80)
