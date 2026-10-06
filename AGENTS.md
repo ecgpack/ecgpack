@@ -222,6 +222,8 @@ Because these sizes are known at compile time, the compiler checks explicit-shap
 
 ### Current Matrix-Element And Linear-Algebra Conventions
 
+In the four real-ECG energy codes, `MatrixElementsHS_<BASIS>` is the host wrapper with the original CPU argument list. It supplies host module data to `MatrixElementsHSCore_<BASIS>`, the shared arithmetic implementation marked `attributes(host,device)` in CUDA builds. GPU kernels call the core directly with staged device arrays. Keep runtime physics arrays explicit in the core; ordinary host module allocations are not device data. The wrapper uses a volatile runtime copy of `Glob_n` to preserve the NVHPC reduction/fusion loop workarounds; array extents remain compile-time constants. Do not duplicate the arithmetic between CPU and GPU routines.
+
 The primary energy-code entry points in `matelem.f90` use symmetry-qualified names:
 
 - Hamiltonian/overlap, optionally with nonlinear-parameter derivatives: `MatrixElementsHS_RG_0S`, `MatrixElementsHS_RG_1P`, `MatrixElementsHS_RG_2D`, `MatrixElementsHS_RG_2P`, and `MatrixElementsHS_CG_0S`

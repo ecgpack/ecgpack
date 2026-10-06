@@ -1,11 +1,11 @@
 module gpu_backend
 !CUDA backend for RG_0S matrix-element assembly. Compiled only with -DUSE_CUDA.
 !
-!The kernels call the shared host/device matrix-element routine in matelem.f90.
-!Physics constants are passed as kernel arguments because device code cannot read
-!host module globals.
+!The kernels call the shared host/device matrix-element core in matelem.f90.
+!Kernels supply device copies of runtime physics arrays; ordinary host module
+!allocations cannot be read by device code.
   use globvars        !Glob_* state, MPI symbols, wp / MPI_WP (via wp_def)
-  use matelem,   only: MatrixElementsHS_RG_0S, PrecomputeMatrices_L_A_MA
+  use matelem,   only: MatrixElementsHSCore_RG_0S, PrecomputeMatrices_L_A_MA
   use cudafor
   use cublas
   use cusolverDn
@@ -392,7 +392,7 @@ contains
       !so the result is reproducible run-to-run and matches the CPU sum order.
       do j = threadIdx%x, nterms, blockDim%x
         if (mod(qbase+j, nprocs) == procid) then
-          call MatrixElementsHS_RG_0S(n, np, Lm(1,1,k0), Lm(1,1,l0), &
+          call MatrixElementsHSCore_RG_0S(n, np, Lm(1,1,k0), Lm(1,1,l0), &
                               Am(1,1,k0), Am(1,1,l0), MAm(1,1,k0), &
                               YHYMatr((j-1)*n*n+1), mass, chargeM, &
                               sqrtpi, pir3n2, &
@@ -422,7 +422,7 @@ contains
       call syncthreads()
       do j = threadIdx%x, nterms, blockDim%x   !STRIDED: block size independent of nterms
         if (mod(qbase+j, nprocs) == procid) then
-          call MatrixElementsHS_RG_0S(n, np, Lm(1,1,k0), Lm(1,1,l0), &
+          call MatrixElementsHSCore_RG_0S(n, np, Lm(1,1,k0), Lm(1,1,l0), &
                               Am(1,1,k0), Am(1,1,l0), MAm(1,1,k0), &
                               YHYMatr((j-1)*n*n+1), mass, chargeM, &
                               sqrtpi, pir3n2, &
@@ -505,7 +505,7 @@ contains
     gl    = (grad_l_flag(pair_idx)==1)
     do j = threadIdx%x, nterms, nthr        !STRIDED: block size independent of nterms
       if (mod(qbase+j, nprocs) == procid) then
-        call MatrixElementsHS_RG_0S(n, np, Lm(1,1,k0), Lm(1,1,l0), &
+        call MatrixElementsHSCore_RG_0S(n, np, Lm(1,1,k0), Lm(1,1,l0), &
                             Am(1,1,k0), Am(1,1,l0), MAm(1,1,k0), &
                             YHYMatr((j-1)*n*n+1), mass, chargeM, &
                             sqrtpi, pir3n2, &

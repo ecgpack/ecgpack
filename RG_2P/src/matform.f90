@@ -206,10 +206,8 @@ contains
 !                Skl=2*Skl1-2*Skl2!-Skl3+Skl4
 !                Dk=2*Dk1-2*Dk2!-Dk3+Dk4
 !                Dl=2*Dl1-2*Dl2!-Dl3+Dl4
-            call MatrixElementsHS_RG_2P(n,np,mk,ml,mmk,mml,Lh(1,1,k),Lh(1,1,l), &
-                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1,1,j),Glob_MassMatrix,Glob_ScaledPseudoChargeMatrix, &
-              Glob_SqrtPi,Glob_PiRaised3n2, &
-                                  Hkl,Skl,Dk,Dl,.false.,.false.)
+            call MatrixElementsHS_RG_2P(mk, ml, mmk, mml, Lh(1,1,k), Lh(1,1,l), Ah(1,1,k), Ah(1,1,l), &
+                MAh(1,1,k), Glob_YHYMatr(1,1,j), Hkl, Skl, Dk, Dl, .false., .false.)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl
           endif
@@ -366,10 +364,8 @@ contains
 !                Skl=2*Skl1-2*Skl2!-Skl3+Skl4
 !                Dk=2*Dk1-2*Dk2!-Dk3+Dk4
 !                Dl=2*Dl1-2*Dl2!-Dl3+Dl4
-            call MatrixElementsHS_RG_2P(n,np,mk,ml,mmk,mml,Lh(1,1,k),Lh(1,1,l), &
-                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1,1,j),Glob_MassMatrix,Glob_ScaledPseudoChargeMatrix, &
-              Glob_SqrtPi,Glob_PiRaised3n2, &
-                                  Hkl,Skl,Dk,Dl,.true.,grad_l)
+            call MatrixElementsHS_RG_2P(mk, ml, mmk, mml, Lh(1,1,k), Lh(1,1,l), Ah(1,1,k), Ah(1,1,l), &
+                MAh(1,1,k), Glob_YHYMatr(1,1,j), Hkl, Skl, Dk, Dl, .true., grad_l)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl
             Dksum(1:npt2)=Dksum(1:npt2)+Glob_YHYCoeff(j)*Dk(1:npt2)

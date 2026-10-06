@@ -6,10 +6,31 @@ module matelem
 
 contains
 
+  subroutine MatrixElementsHS_RG_2D(m_k, mm_k, m_l, mm_l, Lk, Ll, Ak, Al, MAk, P, Hkl, Skl, Tkl, Vkl, Dk, &
+      Dl, grad_k, grad_l)
+!CPU interface: supply global physics data to the shared arithmetic core.
+    integer,parameter :: nn=Glob_n
+    integer,intent(in)          :: m_k,m_l,mm_k,mm_l
+    real(wp),intent(in)      :: Lk(nn,nn), Ll(nn,nn)
+    real(wp),intent(in)      :: Ak(nn,nn), Al(nn,nn)
+    real(wp),intent(in)      :: MAk(nn,nn)
+    real(wp),intent(in)      :: P(nn,nn)
+    real(wp),intent(out)     :: Skl,Hkl,Tkl, Vkl
+    real(wp),intent(out)     :: Dk(2*Glob_np),Dl(2*Glob_np)
+    logical,intent(in)          :: grad_k, grad_l
+!Keep this load runtime for the NVHPC reduction/fusion workarounds in the core.
+    integer,volatile :: n
+
+    n=Glob_n
+    call MatrixElementsHSCore_RG_2D(n, Glob_np, m_k, mm_k, m_l, mm_l, Lk, Ll, Ak, Al, MAk, P, &
+        Glob_MassMatrix, Glob_ScaledPseudoChargeMatrix, Glob_SqrtPi, Glob_PiRaised3n2, Hkl, Skl, Tkl, Vkl, &
+        Dk, Dl, grad_k, grad_l)
+  end subroutine MatrixElementsHS_RG_2D
+
 #ifdef USE_CUDA
   attributes(host,device) &
 #endif
-  subroutine MatrixElementsHS_RG_2D(n, np, m_k, mm_k, m_l, mm_l, Lk, Ll, Ak, Al, MAk, P, mass, chargeM, sqrtpi, pir3n2, &
+  subroutine MatrixElementsHSCore_RG_2D(n, np, m_k, mm_k, m_l, mm_l, Lk, Ll, Ak, Al, MAk, P, mass, chargeM, sqrtpi, pir3n2, &
                               Hkl, Skl, Tkl,Vkl, Dk, Dl, grad_k, grad_l)
 !This subroutine computes symmetry adapted matrix element with
 !two real L=1 correlated Gaussians:
@@ -775,7 +796,7 @@ contains
       enddo
     endif
 
-  end subroutine MatrixElementsHS_RG_2D
+  end subroutine MatrixElementsHSCore_RG_2D
 
   subroutine PrecomputeMatrices_L_A_MA(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
 !This subroutine precomputes the Lk, Ak, and MAk=M*Ak matrices for all basis functions, so that
