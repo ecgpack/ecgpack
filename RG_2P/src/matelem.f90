@@ -777,13 +777,13 @@ contains
 
   end subroutine MatrixElementsHS_RG_2P
 
-  subroutine PrecomputeMatrixElements(np, Nmax, NonlinParam, mass, Lh, Ah, MAh)
+  subroutine PrecomputeMatrixElements(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
 !Build cached per-function inputs for matrix-element evaluation.
     integer,parameter     :: nn=Glob_AllowedNumOfPseudoParticles
     integer, intent(in)   :: np, Nmax
-    real(wp),intent(in)   :: NonlinParam(np,Nmax), mass(nn,nn)
-    real(wp),intent(out)  :: Lh(nn,nn,Nmax), Ah(nn,nn,Nmax)
-    real(wp),intent(out),optional :: MAh(nn,nn,Nmax)
+    real(wp),intent(in)   :: NonlinParam(np,Nmax), MassMatrix(nn,nn)
+    real(wp),intent(out)  :: Lk(nn,nn,Nmax), Ak(nn,nn,Nmax)
+    real(wp),intent(out),optional :: MAk(nn,nn,Nmax)
     integer  :: f,i,j,k,indx
     real(wp) :: temp1
     do f=1,Nmax
@@ -791,28 +791,28 @@ contains
       do i=1,nn
         do j=i,nn
           indx=indx+1
-          Lh(i,j,f)=ZERO
-          Lh(j,i,f)=NonlinParam(indx,f)
+          Lk(i,j,f)=ZERO
+          Lk(j,i,f)=NonlinParam(indx,f)
         enddo
       enddo
       do i=1,nn
         do j=i,nn
           temp1=ZERO
           do k=1,i
-            temp1=temp1+Lh(i,k,f)*Lh(j,k,f)
+            temp1=temp1+Lk(i,k,f)*Lk(j,k,f)
           enddo
-          Ah(i,j,f)=temp1
-          Ah(j,i,f)=temp1
+          Ak(i,j,f)=temp1
+          Ak(j,i,f)=temp1
         enddo
       enddo
-      if (present(MAh)) then
+      if (present(MAk)) then
         do j=1,nn
           do i=1,nn
             temp1=ZERO
             do k=1,nn
-              temp1=temp1+mass(i,k)*Ah(k,j,f)
+              temp1=temp1+MassMatrix(i,k)*Ak(k,j,f)
             enddo
-            MAh(i,j,f)=temp1
+            MAk(i,j,f)=temp1
           enddo
         enddo
       endif
