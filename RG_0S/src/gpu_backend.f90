@@ -5,7 +5,7 @@ module gpu_backend
 !Physics constants are passed as kernel arguments because device code cannot read
 !host module globals.
   use globvars        !Glob_* state, MPI symbols, wp / MPI_WP (via wp_def)
-  use matelem,   only: MatrixElementsHS_RG_0S, PrecomputeMatrixElements
+  use matelem,   only: MatrixElementsHS_RG_0S, PrecomputeMatrices_L_A_MA
   use cudafor
   use cublas
   use cusolverDn
@@ -236,7 +236,7 @@ contains
       allocate(d_Lm(n,n,Kmax), d_Am(n,n,Kmax), d_MAm(n,n,Kmax))
       cap_basis = Kmax
     endif
-    call PrecomputeMatrixElements(np,Kmax,Glob_NonlinParam(1:np,1:Kmax), &
+    call PrecomputeMatrices_L_A_MA(np,Kmax,Glob_NonlinParam(1:np,1:Kmax), &
                          Glob_MassMatrix(1:n,1:n),Lh,Ah,MAh)
     call cuda_check(cudaMemcpy(d_Lm,  Lh,  n*n*Kmax), 'stage_basis: L')
     call cuda_check(cudaMemcpy(d_Am,  Ah,  n*n*Kmax), 'stage_basis: A')

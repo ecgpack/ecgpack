@@ -174,7 +174,7 @@ contains
 
 
     allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
-    call PrecomputeMatrixElements(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
+    call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
                                   Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
 
     Glob_HklBuff1(1:nb)=ZERO
@@ -300,7 +300,7 @@ contains
 
 
     allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
-    call PrecomputeMatrixElements(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
+    call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
                                   Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
 
     Glob_HklBuff1(1:nb)=ZERO

@@ -777,7 +777,7 @@ contains
 
   end subroutine MatrixElementsHS_RG_2P
 
-  subroutine PrecomputeMatrixElements(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
+  subroutine PrecomputeMatrices_L_A_MA(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
 !Build cached per-function inputs for matrix-element evaluation.
     integer,parameter     :: nn=Glob_AllowedNumOfPseudoParticles
     integer, intent(in)   :: np, Nmax
@@ -817,7 +817,7 @@ contains
         enddo
       endif
     enddo
-  end subroutine PrecomputeMatrixElements
+  end subroutine PrecomputeMatrices_L_A_MA
 
   subroutine MatrixElementsAll_RG_2P(m_k, m_l, mm_k, mm_l, Lk, Ll, Ak, Al, Pbra, Pket, &
                                           Hkl, Skl, Tkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &

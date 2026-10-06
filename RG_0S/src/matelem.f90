@@ -23,7 +23,7 @@ contains
 !   Lk, Ll :: The lower-triangular Cholesky-style parameter matrices (the
 !             unpacked vechLk/vechLl). They depend only on one basis
 !             function, so the caller precomputes them once per function per
-!             sweep (PrecomputeMatrixElements below) instead of this routine
+!             sweep (PrecomputeMatrices_L_A_MA below) instead of this routine
 !             unpacking
 !             them for every (pair x term) call.
 !   Ak, Al :: Ak=Lk*Lk', Al=Ll*Ll' -- precomputed for the same reason.
@@ -458,7 +458,7 @@ contains
 
   end subroutine MatrixElementsHS_RG_0S
 
-  subroutine PrecomputeMatrixElements(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
+  subroutine PrecomputeMatrices_L_A_MA(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
 !Build cached per-function inputs for matrix-element evaluation. New cached
 !matrices belong in this interface as the hot path evolves.
     integer,parameter     :: nn=Glob_AllowedNumOfPseudoParticles
@@ -499,7 +499,7 @@ contains
         enddo
       endif
     enddo
-  end subroutine PrecomputeMatrixElements
+  end subroutine PrecomputeMatrices_L_A_MA
 
   subroutine MatrixElementsAll_RG_0S(Lk, Ll, Ak, Al, Pbra, Pket, &
                                        Hkl, Skl, Tkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &

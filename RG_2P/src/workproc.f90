@@ -4522,7 +4522,7 @@ contains
       Glob_D=ZERO
     endif
     allocate(Lh(nn,nn,MatrixOrder),Ah(nn,nn,MatrixOrder),MAh(nn,nn,MatrixOrder))
-    call PrecomputeMatrixElements(Glob_npt,MatrixOrder, &
+    call PrecomputeMatrices_L_A_MA(Glob_npt,MatrixOrder, &
       Glob_NonlinParam(1:Glob_npt,1:MatrixOrder),Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
 
     !Each physical pair that touches the active set is evaluated exactly once.
@@ -12304,7 +12304,7 @@ contains
     Glob_HSBuffLen=max(min(Glob_CurrBasisSize*(Glob_CurrBasisSize+1)/2,1000),30*Glob_CurrBasisSize)
     cbs=Glob_CurrBasisSize
     allocate(Lh(nn,nn,cbs),Ah(nn,nn,cbs))
-    call PrecomputeMatrixElements(npt,cbs,Glob_NonlinParam(1:npt,1:cbs), &
+    call PrecomputeMatrices_L_A_MA(npt,cbs,Glob_NonlinParam(1:npt,1:cbs), &
                                   Glob_MassMatrix(1:nn,1:nn),Lh,Ah)
     if (GSEPsolMethod=='G') NumOfEigvecs=min(cbs,Glob_WhichEigenvalue+10)
     if (GSEPsolMethod=='I') NumOfEigvecs=1
