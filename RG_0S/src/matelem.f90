@@ -459,8 +459,17 @@ contains
   end subroutine MatrixElementsHS_RG_0S
 
   subroutine PrecomputeMatrices_L_A_MA(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
-!Build cached per-function inputs for matrix-element evaluation. New cached
-!matrices belong in this interface as the hot path evolves.
+!This subroutine precomputes the Lk, Ak, and MAk=M*Ak matrices for all basis functions, so that
+!the matrix elements can be computed faster without having to recompute these matrices each time.
+!Input:
+!  np: number of nonlinear parameters per basis function
+!  Nmax: number of basis functions
+!  NonlinParam: nonlinear parameters for all basis functions (np x Nmax)
+!  MassMatrix: mass matrix (nn x nn)
+!Output:
+!  Lk: Lk matrices for all basis functions (nn x nn x Nmax)
+!  Ak: Ak matrices for all basis functions (nn x nn x Nmax)
+!  MAk: M*Ak matrices for all basis functions (nn x nn x Nmax)
     integer,parameter     :: nn=Glob_AllowedNumOfPseudoParticles
     integer, intent(in)   :: np, Nmax
     real(wp),intent(in)   :: NonlinParam(np,Nmax), MassMatrix(nn,nn)
