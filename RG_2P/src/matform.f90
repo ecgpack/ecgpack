@@ -2,6 +2,9 @@ module matform
 !Module matform contains procedures that form Hamiltonian
 !and overlap matrices and related routines
   use matelem
+#ifdef USE_CUDA
+  use gpu_backend, only: gpu_active, gpu_build_HS, gpu_build_HS_deriv
+#endif
   implicit none
 
 contains
@@ -161,6 +164,12 @@ contains
     np=Glob_np
     np1=np+1
     nb=Glob_HSBuffLen
+#ifdef USE_CUDA
+    if (gpu_active()) then
+      call gpu_build_HS(Nmin,Nmax,StoreHS)
+      return
+    endif
+#endif
     allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
     call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
                                   Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
@@ -197,7 +206,12 @@ contains
 !                Dk=2*Dk1-2*Dk2!-Dk3+Dk4
 !                Dl=2*Dl1-2*Dl2!-Dl3+Dl4
             call MatrixElementsHS_RG_2P(mk,ml,mmk,mml,Lh(1,1,k),Lh(1,1,l), &
-                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1:n,1:n,j), &
+                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k), &
+#ifdef USE_CUDA
+                                        Glob_YHYMatr(1,1,j), &
+#else
+                                        Glob_YHYMatr(1:n,1:n,j), &
+#endif
                                   Hkl,Skl,Dk,Dl,.false.,.false.)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl
@@ -302,6 +316,12 @@ contains
     np=Glob_np
     npt2=np*2
     nb=Glob_HSBuffLen
+#ifdef USE_CUDA
+    if (gpu_active()) then
+      call gpu_build_HS_deriv(Nmin,Nmax,StoreHSD)
+      return
+    endif
+#endif
 
     allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
     call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
@@ -349,7 +369,12 @@ contains
 !                Dk=2*Dk1-2*Dk2!-Dk3+Dk4
 !                Dl=2*Dl1-2*Dl2!-Dl3+Dl4
             call MatrixElementsHS_RG_2P(mk,ml,mmk,mml,Lh(1,1,k),Lh(1,1,l), &
-                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k),Glob_YHYMatr(1:n,1:n,j), &
+                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k), &
+#ifdef USE_CUDA
+                                        Glob_YHYMatr(1,1,j), &
+#else
+                                        Glob_YHYMatr(1:n,1:n,j), &
+#endif
                                   Hkl,Skl,Dk,Dl,.true.,grad_l)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl

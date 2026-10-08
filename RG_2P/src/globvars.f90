@@ -117,6 +117,10 @@ module globvars
 !(they dffer only when the repulsion or attraction strengths are scaled)
   real(wp),allocatable,dimension(:,:),save ::  Glob_PseudoChargeMatrix
   real(wp),allocatable,dimension(:,:),save ::  Glob_ScaledPseudoChargeMatrix
+#ifdef USE_CUDA
+  !Shared by the original host/device matrix-element routine.
+  attributes(managed) :: Glob_MassMatrix, Glob_ScaledPseudoChargeMatrix
+#endif
 
 !Glob_PseudoCharge is the charges of pseudoparticles, qi
   real(wp),allocatable,dimension(:),save ::  Glob_PseudoCharge

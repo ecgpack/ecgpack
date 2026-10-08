@@ -6,6 +6,9 @@ module matelem
 
 contains
 
+#ifdef USE_CUDA
+  attributes(host,device) &
+#endif
   subroutine MatrixElementsHS_RG_1P(m_k, m_l, Lk, Ll, Ak, Al, MAk, P, &
                               Hkl, Skl, Dk, Dl, grad_k, grad_l)
 !This subroutine computes symmetry adapted matrix element with
@@ -51,7 +54,9 @@ contains
 !arrays makes the function call a little faster in comparison with
 !the case when arrays are dynamically allocated in stack)
 !Local variables
-    integer           n, np
+    !Keep the workaround bounds runtime even though Glob_n is a parameter.
+    integer,volatile :: n
+    integer           np
     integer           tvl(nn)
     real(wp)       tAl(nn,nn),tAkl(nn,nn)
     real(wp)       inv_tAkl(nn,nn)
@@ -264,7 +269,9 @@ contains
     tau2=ZERO
     do i=1,nn
       temp1=ZERO
-      do j=1,nn
+      !NVHPC miscompiles this constant-bound reduction at five particles.
+      !n equals nn; the runtime bound avoids incorrect Hkl.
+      do j=1,n
         temp1=temp1+vkinv_tAkltAlM(j)*Ak(j,i)
       enddo
       tau2=tau2+temp1*inv_tAkltvl(i)
@@ -367,7 +374,9 @@ contains
       enddo
       !Evaluating Fkl=inv_tAkltAlM*inv_tAkltAl'
       !(only the upper triangle, then mirrored)
-      do j=1,nn
+      !A runtime bound prevents NVHPC from fusing this producer with the
+      !following conditional gradient loop; n equals nn.
+      do j=1,n
         do i=1,j
           temp1=ZERO
           do k=1,nn
@@ -537,7 +546,9 @@ contains
         enddo
         u3(i)=temp1
       enddo
-      do i=1,nn
+      !NVHPC miscompiles this gradient path at seven or more particles when
+      !this and neighboring reductions all use constant bounds.
+      do i=1,n
         temp1=ZERO
         do j=1,nn
           temp1=temp1+inv_tAkltAlM(i,j)*u3(j)
@@ -667,7 +678,7 @@ contains
 !  MassMatrix: mass matrix (nn x nn)
 !Output:
 !  Lk: Lk matrices for all basis functions (nn x nn x Nmax)
-!  Ak: Ak matrices for all basis functions (nn x nn x Nmax) 
+!  Ak: Ak matrices for all basis functions (nn x nn x Nmax)
 !  MAk: M*Ak matrices for all basis functions (nn x nn x Nmax)
     integer,parameter     :: nn=Glob_n
     integer, intent(in)   :: np, Nmax

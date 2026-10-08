@@ -222,6 +222,8 @@ Because these sizes are known at compile time, the compiler checks explicit-shap
 
 ### Current Matrix-Element And Linear-Algebra Conventions
 
+In the four real-ECG energy codes, `MatrixElementsHS_<BASIS>` retains the original CPU name and argument list and is marked `attributes(host,device)` only in CUDA builds. CUDA-only `attributes(managed)` declarations let it read `Glob_MassMatrix` and `Glob_ScaledPseudoChargeMatrix` directly; ordinary CPU builds retain host allocations. Keep the seven NVHPC reduction/fusion loop workarounds in RG_1P/RG_2D/RG_2P: their local `n` is volatile so that `n=Glob_n` cannot become a constant bound; array extents stay `nn`. GPU launchers synchronize before returning to host code. CUDA-enabled binaries need a visible CUDA device even when GPU computation is disabled because these arrays use managed allocations. Do not duplicate the arithmetic between CPU and GPU routines.
+
 The primary energy-code entry points in `matelem.f90` use symmetry-qualified names:
 
 - Hamiltonian/overlap, optionally with nonlinear-parameter derivatives: `MatrixElementsHS_RG_0S`, `MatrixElementsHS_RG_1P`, `MatrixElementsHS_RG_2D`, `MatrixElementsHS_RG_2P`, and `MatrixElementsHS_CG_0S`

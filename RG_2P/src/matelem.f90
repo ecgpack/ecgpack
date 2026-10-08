@@ -5,6 +5,10 @@ module matelem
   implicit none
 
 contains
+
+#ifdef USE_CUDA
+  attributes(host,device) &
+#endif
   subroutine MatrixElementsHS_RG_2P(m_k, m_l, mm_k, mm_l, Lk, Ll, Ak, Al, MAk, P, &
                               Hkl, Skl, Dk, Dl, grad_k, grad_l)
 !This subroutine computes symmetry adapted matrix element with
@@ -50,7 +54,9 @@ contains
 !arrays makes the function call a little faster in comparison with
 !the case when arrays are dynamically allocated in stack)
 !Local variables
-    integer           n, np
+    !Keep the workaround bounds runtime even though Glob_n is a parameter.
+    integer,volatile :: n
+    integer           np
     integer           vl(nn),bl(nn)
     real(wp)       tAl(nn,nn),tAkl(nn,nn)
     real(wp)       inv_tAkl(nn,nn)
@@ -255,7 +261,9 @@ contains
     do i=1,nn
       temp1=ZERO
       temp2=ZERO
-      do j=1,nn
+      !NVHPC miscompiles this constant-bound reduction at five particles.
+      !n equals nn; the runtime bound avoids incorrect Hkl.
+      do j=1,n
         temp1=temp1+vkinv_tAkltAlM(j)*Ak(j,i)
         temp2=temp2+bkinv_tAkltAlM(j)*Ak(j,i)
       enddo
@@ -389,7 +397,9 @@ contains
       enddo
       !Evaluating Fkl=inv_tAkltAlM*inv_tAkltAl'
       !(only the upper triangle, then mirrored)
-      do j=1,nn
+      !A runtime bound prevents NVHPC from fusing this producer with the
+      !following conditional gradient loop; n equals nn.
+      do j=1,n
         do i=1,j
           temp1=ZERO
           do k=1,nn
@@ -780,7 +790,7 @@ contains
 !  MassMatrix: mass matrix (nn x nn)
 !Output:
 !  Lk: Lk matrices for all basis functions (nn x nn x Nmax)
-!  Ak: Ak matrices for all basis functions (nn x nn x Nmax) 
+!  Ak: Ak matrices for all basis functions (nn x nn x Nmax)
 !  MAk: M*Ak matrices for all basis functions (nn x nn x Nmax)
     integer,parameter     :: nn=Glob_n
     integer, intent(in)   :: np, Nmax
@@ -3151,12 +3161,12 @@ contains
           trXij*((VijY+VYij)*W+VY*Wij+V*(WijY+WYij)+Vij*WY - &
                  ((tVijY+tVYij)*tW+tVY*tWij+tV*(tWijY+tWYij)+tVij*tWY))+&
           trX*(VijYij*W+(VijY+VYij)*Wij+V*WijYij+Vij*(WijY+WYij)-&
-               (tVijYij*tW+(tVijY+tVYij)*tWij+tV*tWijYij+tVij*(tWijY+tWYij)))); 
+               (tVijYij*tW+(tVijY+tVYij)*tWij+tV*tWijYij+tVij*(tWijY+tWYij))));
     I34 = THREEHALF*(&
           trYij*((VijX+VXij)*W+VX*Wij+V*(WijX+WXij)+Vij*WX - &
                  ((tVijX+tVXij)*tW+tVX*tWij+tV*(tWijX+tWXij)+tVij*tWX))+&
           trY*(VijXij*W+(VijX+VXij)*Wij+V*WijXij+Vij*(WijX+WXij)-&
-               (tVijXij*tW+(tVijX+tVXij)*tWij+tV*tWijXij+tVij*(tWijX+tWXij)))); 
+               (tVijXij*tW+(tVijX+tVXij)*tWij+tV*tWijXij+tVij*(tWijX+tWXij))));
     I35 =  (VijYijX + VijYXij + VYijXij)*W + (VijYX + VYijX + VYXij)*Wij + &
           (VijXijY + VijXYij + VXijYij)*W + (VijXY + VXijY + VXYij)*Wij + &
           VijXij*WY + VX*WijYij + (VijX + VXij)*(WijY + WYij) + &
@@ -3173,7 +3183,7 @@ contains
 
     I41 = NINE/FOUR*(&
           trYij*trXij*(Vij*W + V*Wij - tVij*tW - tV*tWij) + &
-          (trYij*trX + trY*trXij)*(Vij*Wij - tVij*tWij)); 
+          (trYij*trX + trY*trXij)*(Vij*Wij - tVij*tWij));
     I42 = THREEHALF*(&
           trijYijX*(Vij*W + V*Wij - tVij*tW - tV*tWij) + &
           (trijYX + trYijX)*(Vij*Wij - tVij*tWij))
@@ -3985,12 +3995,12 @@ contains
           trXij*((VijY+VYij)*W+VY*Wij+V*(WijY+WYij)+Vij*WY - &
                  ((tVijY+tVYij)*tW+tVY*tWij+tV*(tWijY+tWYij)+tVij*tWY))+&
           trX*(VijYij*W+(VijY+VYij)*Wij+V*WijYij+Vij*(WijY+WYij)-&
-               (tVijYij*tW+(tVijY+tVYij)*tWij+tV*tWijYij+tVij*(tWijY+tWYij)))); 
+               (tVijYij*tW+(tVijY+tVYij)*tWij+tV*tWijYij+tVij*(tWijY+tWYij))));
     I34 = THREEHALF*(&
           trYij*((VijX+VXij)*W+VX*Wij+V*(WijX+WXij)+Vij*WX - &
                  ((tVijX+tVXij)*tW+tVX*tWij+tV*(tWijX+tWXij)+tVij*tWX))+&
           trY*(VijXij*W+(VijX+VXij)*Wij+V*WijXij+Vij*(WijX+WXij)-&
-               (tVijXij*tW+(tVijX+tVXij)*tWij+tV*tWijXij+tVij*(tWijX+tWXij)))); 
+               (tVijXij*tW+(tVijX+tVXij)*tWij+tV*tWijXij+tVij*(tWijX+tWXij))));
     I35 =  (VijYijX + VijYXij + VYijXij)*W + (VijYX + VYijX + VYXij)*Wij + &
           (VijXijY + VijXYij + VXijYij)*W + (VijXY + VXijY + VXYij)*Wij + &
           VijXij*WY + VX*WijYij + (VijX + VXij)*(WijY + WYij) + &
@@ -4007,7 +4017,7 @@ contains
 
     I41 = NINE/FOUR*(&
           trYij*trXij*(Vij*W + V*Wij - tVij*tW - tV*tWij) + &
-          (trYij*trX + trY*trXij)*(Vij*Wij - tVij*tWij)); 
+          (trYij*trX + trY*trXij)*(Vij*Wij - tVij*tWij));
     I42 = THREEHALF*(&
           trijYijX*(Vij*W + V*Wij - tVij*tW - tV*tWij) + &
           (trijYX + trYijX)*(Vij*Wij - tVij*tWij))

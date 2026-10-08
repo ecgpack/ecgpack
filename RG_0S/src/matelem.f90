@@ -6,6 +6,9 @@ module matelem
 
 contains
 
+#ifdef USE_CUDA
+  attributes(host,device) &
+#endif
   subroutine MatrixElementsHS_RG_0S(Lk, Ll, Ak, Al, MAk, P, &
                             Hkl, Skl, Dk, Dl, grad_k, grad_l)
 !This subroutine computes symmetry adapted matrix element with
@@ -465,7 +468,7 @@ contains
 !  MassMatrix: mass matrix (nn x nn)
 !Output:
 !  Lk: Lk matrices for all basis functions (nn x nn x Nmax)
-!  Ak: Ak matrices for all basis functions (nn x nn x Nmax) 
+!  Ak: Ak matrices for all basis functions (nn x nn x Nmax)
 !  MAk: M*Ak matrices for all basis functions (nn x nn x Nmax)
     integer,parameter     :: nn=Glob_n
     integer, intent(in)   :: np, Nmax
@@ -1456,7 +1459,7 @@ contains
           write(*,'(1x,a,1x,i0)') 'Non-positive momentum density width on MPI rank',Glob_ProcID
           call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
         endif
-        
+
         !prefactor: Skl * (1/(4*pi*eta))^(3/2)
         temp3 = temp1 / (temp2 * sqrt(temp2))
         !compute the matrix element value at all density grid points
