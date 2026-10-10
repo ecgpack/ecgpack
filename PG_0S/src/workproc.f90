@@ -15815,7 +15815,7 @@ CONTAINS
         WRITE(*, *) 'smaller than ', LinCoeffThreshold
         WRITE(*, *) 'No output file have been written. Program will now stop'
       ENDIF
-      CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)  ! stop
+      CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
     ENDIF
 
     ! An empty basis has no generalized eigenproblem and qrlinalg intentionally
@@ -15826,7 +15826,7 @@ CONTAINS
         WRITE(*, *) 'All basis functions are below the coefficient threshold'
         WRITE(*, *) 'No output file has been written. Program will now stop'
       ENDIF
-      CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)
+      CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)
     ENDIF
 
     IF (Glob_ProcID == 0) THEN
@@ -15919,9 +15919,7 @@ CONTAINS
       WRITE(*, *) 'Program will now stop'
     ENDIF
 
-    ! A normal end of the job: the abort code is 0 - it becomes the exit
-    ! status, and 1 would read as a crash to whatever launched the run.
-    CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)  ! stop
+    CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
 
   END SUBROUTINE EliminateLittleContribFunc
 
@@ -16098,7 +16096,7 @@ CONTAINS
         WRITE(*, *) 'No linearly dependent functions have been found'
         WRITE(*, *) 'No file have been written. Program will now stop'
       ENDIF
-      CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)  ! stop
+      CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
     ENDIF
 
     j = 0
@@ -16237,9 +16235,7 @@ CONTAINS
       WRITE(*, *) 'Program will now stop'
     ENDIF
 
-    ! A normal end of the job: the abort code is 0 - it becomes the exit
-    ! status, and 1 would read as a crash to whatever launched the run.
-    CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)  ! stop
+    CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
 
   END SUBROUTINE EliminateLinDepFunc
 
@@ -16407,7 +16403,7 @@ CONTAINS
         WRITE(*, *) 'No linearly dependent functions have been found'
         WRITE(*, *) 'No file have been written. Program will now stop'
       ENDIF
-      CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)  ! stop
+      CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
     ENDIF
 
     IF (Method == 'Q') THEN
@@ -16563,9 +16559,7 @@ CONTAINS
       WRITE(*, *) 'Program will now stop'
     ENDIF
 
-    ! A normal end of the job: the abort code is 0 - it becomes the exit
-    ! status, and 1 would read as a crash to whatever launched the run.
-    CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)  ! stop
+    CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
 
   END SUBROUTINE SeparateLinDepFunc
 
@@ -16717,7 +16711,7 @@ CONTAINS
         WRITE(*, *) 'There are no functions whose linear coefficients exceed threshold'
         WRITE(*, *) 'No file have been written. Program will now stop'
       ENDIF
-      CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)  ! stop
+      CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
     ENDIF
 
     IF (Method == 'Q') THEN
@@ -16888,9 +16882,7 @@ CONTAINS
       WRITE(*, *) 'Program will now stop'
     ENDIF
 
-    ! A normal end of the job: the abort code is 0 - it becomes the exit
-    ! status, and 1 would read as a crash to whatever launched the run.
-    CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)  ! stop
+    CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
 
   END SUBROUTINE SeparateFuncLargeCoeff
 
