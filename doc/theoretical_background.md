@@ -8,6 +8,7 @@ Basic theory, mathematical formalism, and evaluation of the most important matri
 * [S. Bubin and L. Adamowicz, Energy and energy gradient matrix elements with $N$-particle explicitly correlated complex Gaussian basis functions with $L$ = 1, J. Chem. Phys. 128, 114107 (2008)](https://doi.org/10.1063/1.2894866)
 * [S. Bubin and L. Adamowicz, Matrix elements of $N$-particle explicitly correlated Gaussian basis functions with complex exponential parameters, J. Chem. Phys. 124, 224317 (2006)](https://doi.org/10.1063/1.2204605)
 * [D. Kinghorn and L. Adamowicz, A correlated basis set for nonadiabatic energy calculations on diatomic molecules, J. Chem. Phys. 110, 7166 (1999)](https://doi.org/10.1063/1.478620)
+* [N. Kirnosov, K. L. Sharkey, and L. Adamowicz, Non-Born-Oppenheimer variational method for calculation of rotationally excited binuclear systems, J. Phys. B: At. Mol. Opt. Phys. 48,195101 (2015)](https://doi.org/10.1088/0953-4075/48/19/195101)
 
 Most formulas implementad in ECGPACK codes that generate basis sets are taken from the above references.
 
@@ -20,6 +21,7 @@ A number of publications cover the theoretical foundations of the ECG approach a
 * [Y. Suzuki and K. Varga, Stochastic Variational Approach to Quantum-Mechanical Few-Body Problems, Lecture Notes in Physics vol. 54 (Springer, Berlin, 1998)](https://doi.org/10.1007/3-540-49541-X)
 * [K. Varga and Y. Suzuki, Precise solution of few-body problems with the stochastic variational method on a correlated Gaussian basis, Phys. Rev. C 52, 2885 (1995)](https://doi.org/10.1103/PhysRevC.52.2885)
 * [D. Kinghorn, Integrals and derivatives for correlated Gaussian functions using matrix differential calculus, Int. J. Quantum Chem. 75, 141 (1996)](https://doi.org/10.1002/(SICI)1097-461X(1996)57:2%3C141::AID-QUA1%3E3.0.CO;2-Y)
+* [K. L. Sharkey, N. Kirnosov, and L. Adamowicz, Direct non-Born-Oppenheimer variational calculations of all bound vibrational states corresponding to the first rotational excitation of $\mathrm{D}_2$ performed with explicitly correlated all-particle Gaussian functions, J. Chem. Phys. 142, 174307 (2015)](http://dx.doi.org/10.1063/1.4919417)
 
 ## Additional references
 
