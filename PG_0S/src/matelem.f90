@@ -20,6 +20,9 @@ MODULE matelem
 CONTAINS
 
 
+#ifdef USE_CUDA
+  ATTRIBUTES(HOST,DEVICE) &
+#endif
   SUBROUTINE MatrixElementsOpt(mk, PreLk, PreAk, PreMAk, ml, vechLl, SymMatrixBuf, &
       SklBuf, HklBuf, dSkBuf, dSlBuf, dHkBuf, dHlBuf, &
       gradflag)
@@ -101,11 +104,15 @@ CONTAINS
     ! Ak, Al, invAkl, detLk, detLl, detAkl, invAk, invAl
     !***********************************************************
 
-    ! Per-pair tracing (Verbose >= 4 floods: one line per pair on every rank)
+    ! Per-pair tracing (Verbose >= 4 floods: one line per pair on every rank).
+    ! Not in CUDA builds: the routine is also device code there, which allows
+    ! no I/O (and Glob_ProcID is host data).
+#ifndef USE_CUDA
     IF (Verbose >= 4) THEN
       WRITE(*, '(1x,a,i0,a,i0,a,i0,a,i0)') 'MatrixElementsOpt: powers ', mk, ' ', ml, &
                                             '  gradflag ', gradflag, '  rank ', Glob_ProcID
     ENDIF
+#endif
 
     ! Bra side: Lk, Ak = Lk*Lk' and MAk = M*Ak are precomputed once per
     ! function; they are the same for every symmetry term
@@ -1021,6 +1028,9 @@ CONTAINS
 
 
 
+#ifdef USE_CUDA
+  ATTRIBUTES(HOST,DEVICE) &
+#endif
   SUBROUTINE compute_g3(p, coab, g3)
 
     IMPLICIT NONE
@@ -1183,6 +1193,9 @@ CONTAINS
   END SUBROUTINE compute_g3
 
 
+#ifdef USE_CUDA
+  ATTRIBUTES(HOST,DEVICE) &
+#endif
   SUBROUTINE compute_products_1(Lk, Ak, Al, invAkl, PLl, invAl, &
                                 ALk, ALl, AAk, AAl, AlLl)
     IMPLICIT NONE
@@ -1219,6 +1232,9 @@ CONTAINS
   END SUBROUTINE compute_products_1
 
 
+#ifdef USE_CUDA
+  ATTRIBUTES(HOST,DEVICE) &
+#endif
   SUBROUTINE compute_products_2(Al, MAl)
     ! MAl = M*Al for the ket; the bra's M*Ak is precomputed by
     ! PrecomputeMatrices_MA_L_A
@@ -1248,6 +1264,9 @@ CONTAINS
   END SUBROUTINE compute_products_2
 
 
+#ifdef USE_CUDA
+  ATTRIBUTES(HOST,DEVICE) &
+#endif
   SUBROUTINE compute_products_3(AAk, AAl, MAk, MAl, &
                                 AAlMAl, AAkMAk, AAkMAl, AAlMAk)
 
@@ -1282,6 +1301,9 @@ CONTAINS
   END SUBROUTINE compute_products_3
 
 
+#ifdef USE_CUDA
+  ATTRIBUTES(HOST,DEVICE) &
+#endif
   SUBROUTINE compute_products_4(ALk, ALl, AAlMAl, AAkMAk, AAkMAl, AAlMAk, &
                                 Tllk, Tkkl, Tklk, Tlkl)
 
@@ -1317,6 +1339,9 @@ CONTAINS
   END SUBROUTINE compute_products_4
 
 
+#ifdef USE_CUDA
+  ATTRIBUTES(HOST,DEVICE) &
+#endif
   SUBROUTINE compute_products_5(AAlMAl, AAkMAk, AAkMAl, AAlMAk, Jklk, Jkll, &
                                 TlMkJk, TkMlJl, TlMlJk, TkMkJl)
 
@@ -1352,6 +1377,9 @@ CONTAINS
   END SUBROUTINE compute_products_5
 
 
+#ifdef USE_CUDA
+  ATTRIBUTES(HOST,DEVICE) &
+#endif
   SUBROUTINE compute_dVk(SklBuf, invAkl, a, b, coab, p, R, ddSk_over_Skl, ALk, Jklk, dVk)
 
     IMPLICIT NONE
@@ -1547,6 +1575,9 @@ CONTAINS
   END SUBROUTINE compute_dVk
 
 
+#ifdef USE_CUDA
+  ATTRIBUTES(HOST,DEVICE) &
+#endif
   SUBROUTINE compute_series(p, coab, sum)
 
     IMPLICIT NONE

@@ -58,6 +58,18 @@ OPENMP ?= no
 ifneq ($(OPENMP),$(filter $(OPENMP),no yes))
   $(error OPENMP must be no or yes)
 endif
+
+# Native CUDA Fortran matrix assembly. Requires NVHPC nvfortran and PREC=8.
+USE_CUDA ?= no
+# CUDA_ARCH is the GPU compute capability (CC 8.0 -> sm_80 -> nvfortran -gpu=cc80).
+# Find the GPU model with nvidia-smi on a compute node, then look up its CC at
+# https://developer.nvidia.com/cuda/gpus (which links older GPU models).
+# MACHINE supplies a default; override with CUDA_ARCH=sm_XX if needed.
+CUDA_ARCH_shabyt = sm_70
+CUDA_ARCH_irgetas = sm_90
+CUDA_ARCH = $(or $(CUDA_ARCH_$(MACHINE)),sm_80)
+CUF_GPU = $(subst sm_,cc,$(CUDA_ARCH))
+CUF_MAXREG ?= 255
 OPENMP_SUFFIX := $(if $(filter yes,$(OPENMP)),-omp)
 BUILD_DIR := $(CONFIG)$(OPENMP_SUFFIX)
 
@@ -84,7 +96,7 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
     OPENMP_FLAG=-fopenmp
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
-    export FCFLAGS=-J$(BUILD_DIR)
+    export FCFLAGS=-J$(BUILD_DIR) -cpp
     export LINKFLAGS=-J$(BUILD_DIR)
     export DMNGFLAGS=-J$(BUILD_DIR) -ffixed-line-length-none
     ifeq ($(CONFIG), debug)
@@ -119,7 +131,7 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
     OPENMP_FLAG=-qopenmp
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
-    export FCFLAGS=-module $(BUILD_DIR)
+    export FCFLAGS=-module $(BUILD_DIR) -fpp
     export LINKFLAGS=-module $(BUILD_DIR)
     export DMNGFLAGS=-module $(BUILD_DIR) -extend-source 132
     ifeq ($(CONFIG), debug)
@@ -149,7 +161,7 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
     OPENMP_FLAG=-qopenmp
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
-    export FCFLAGS=-module $(BUILD_DIR)
+    export FCFLAGS=-module $(BUILD_DIR) -fpp
     export LINKFLAGS=-module $(BUILD_DIR)
     export DMNGFLAGS=-module $(BUILD_DIR) -extend-source 132
     ifeq ($(CONFIG), debug)
@@ -179,7 +191,7 @@ ifneq ($(filter $(MACHINE),linux-generic ubuntu-generic irgetas shabyt muon puma
     OPENMP_FLAG=-mp
     export MPICOMPFLAGS=
     export MPILINKFLAGS=
-    export FCFLAGS=-module $(BUILD_DIR)
+    export FCFLAGS=-module $(BUILD_DIR) -Mpreprocess
     export LINKFLAGS=-module $(BUILD_DIR)
     export DMNGFLAGS=-module $(BUILD_DIR) -Mextend
     ifeq ($(CONFIG), debug)
@@ -248,6 +260,7 @@ endif
 #
 # Module compile order (see the rules at the bottom):
 #   wp_def -> X1MACH, globvars -> spin, misc, linalg -> matelem -> matform -> workproc -> main
+#   (USE_CUDA=yes: matelem -> gpu_backend -> matform, workproc, main)
 #   wp_def -> qrupdate/qrupdate_linalg -> qrupdate_error -> qrupdate_real, qrupdate_complex
 #          -> qrupdate -> qrlinalg -> workproc   (the QR solution method)
 # dmng.f and the bundled BLAS.f and LAPACK.f also USE wp_def.
@@ -265,6 +278,21 @@ export BARE_OBJS=wp_def_$(PREC).o X1MACH.o dmng.o globvars.o misc.o linalg.o \
               workproc.o main.o spin.o
 export OBJS=$(addprefix $(BUILD_DIR)/,$(BARE_OBJS))
 export OBJS+=$(OBJS_LPKBLS)
+
+GPU_DEP=
+ifeq ($(USE_CUDA),yes)
+  ifneq ($(COMPILER),nvfortran)
+    $(error USE_CUDA=yes requires COMPILER=nvfortran)
+  endif
+  ifneq ($(PREC),8)
+    $(error USE_CUDA=yes requires PREC=8)
+  endif
+  export FCFLAGS+=-DUSE_CUDA -cuda -gpu=$(CUF_GPU),maxregcount:$(CUF_MAXREG),lto
+  export LINKFLAGS+=-cuda -gpu=$(CUF_GPU),maxregcount:$(CUF_MAXREG),lto -cudalib=cusolver,cublas
+  export BARE_OBJS+=gpu_backend.o
+  export OBJS=$(addprefix $(BUILD_DIR)/,$(BARE_OBJS)) $(OBJS_LPKBLS)
+  GPU_DEP=$(BUILD_DIR)/gpu_backend.o
+endif
 
 .PHONY: release debug all clean cleaner cleanest cleandebug cleanrelease ptarg
 
@@ -345,7 +373,10 @@ $(BUILD_DIR)/spin.o: $(SRC_DIR)/spin.f90 $(BUILD_DIR)/globvars.o
 $(BUILD_DIR)/matelem.o: $(SRC_DIR)/matelem.f90 $(BUILD_DIR)/globvars.o $(BUILD_DIR)/spin.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/matelem.f90 -o $(BUILD_DIR)/matelem.o
 
-$(BUILD_DIR)/matform.o: $(SRC_DIR)/matform.f90 $(BUILD_DIR)/matelem.o $(BUILD_DIR)/misc.o $(BUILD_DIR)/linalg.o
+$(BUILD_DIR)/gpu_backend.o: $(SRC_DIR)/gpu_backend.f90 $(BUILD_DIR)/globvars.o $(BUILD_DIR)/matelem.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/gpu_backend.f90 -o $(BUILD_DIR)/gpu_backend.o
+
+$(BUILD_DIR)/matform.o: $(SRC_DIR)/matform.f90 $(BUILD_DIR)/matelem.o $(BUILD_DIR)/misc.o $(BUILD_DIR)/linalg.o $(GPU_DEP)
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/matform.f90 -o $(BUILD_DIR)/matform.o
 
 $(BUILD_DIR)/qrupdate_linalg.o: $(SRC_DIR)/qrupdate/qrupdate_linalg.f90 $(BUILD_DIR)/wp_def_$(PREC).o
@@ -366,8 +397,8 @@ $(BUILD_DIR)/qrupdate.o: $(SRC_DIR)/qrupdate/qrupdate.f90 $(BUILD_DIR)/qrupdate_
 $(BUILD_DIR)/qrlinalg.o: $(SRC_DIR)/qrlinalg.f90 $(BUILD_DIR)/qrupdate.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_PREPROCESS_FLAGS) -c $(SRC_DIR)/qrlinalg.f90 -o $(BUILD_DIR)/qrlinalg.o
 
-$(BUILD_DIR)/workproc.o: $(SRC_DIR)/workproc.f90 $(BUILD_DIR)/misc.o $(BUILD_DIR)/linalg.o $(BUILD_DIR)/matform.o $(BUILD_DIR)/matelem.o $(BUILD_DIR)/dmng.o $(OBJS_LPKBLS) $(BUILD_DIR)/qrlinalg.o
+$(BUILD_DIR)/workproc.o: $(SRC_DIR)/workproc.f90 $(BUILD_DIR)/misc.o $(BUILD_DIR)/linalg.o $(BUILD_DIR)/matform.o $(BUILD_DIR)/matelem.o $(BUILD_DIR)/dmng.o $(OBJS_LPKBLS) $(BUILD_DIR)/qrlinalg.o $(GPU_DEP)
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/workproc.f90 -o $(BUILD_DIR)/workproc.o
 
-$(BUILD_DIR)/main.o: $(SRC_DIR)/main.f90 $(BUILD_DIR)/workproc.o
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.f90 $(BUILD_DIR)/workproc.o $(GPU_DEP)
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/main.f90 -o $(BUILD_DIR)/main.o

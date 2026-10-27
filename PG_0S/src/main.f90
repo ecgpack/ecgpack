@@ -14,6 +14,9 @@ PROGRAM main
   !==================================================================
 
   USE workproc
+#ifdef USE_CUDA
+  USE gpu_backend, ONLY: gpu_backend_init, gpu_finalize
+#endif
 
   IMPLICIT NONE
 
@@ -48,6 +51,11 @@ PROGRAM main
   CALL MPI_INIT(Glob_MPIErrCode)
   CALL MPI_COMM_RANK(MPI_COMM_WORLD, Glob_ProcID, Glob_MPIErrCode)
   CALL MPI_COMM_SIZE(MPI_COMM_WORLD, Glob_NumOfProcs, Glob_MPIErrCode)
+#ifdef USE_CUDA
+  ! Before ProgramDataInit: it allocates the managed globals, which need the
+  ! device selected first
+  CALL gpu_backend_init()
+#endif
 
   IF (Glob_ProcID == 0) THEN
     WRITE(*, '(1x,a,1x,a,1x,a)') 'Program', Glob_BasisType, 'started'
@@ -625,6 +633,9 @@ PROGRAM main
     WRITE(*, *) 'Program has stopped'
   ENDIF
 
+#ifdef USE_CUDA
+  CALL gpu_finalize()
+#endif
   CALL MPI_FINALIZE(Glob_MPIErrCode)
 
 END PROGRAM main

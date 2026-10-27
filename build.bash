@@ -22,7 +22,7 @@ usage_print() {
   echo "<precisions> is the kind parameter for real type. 8 corresponds to double precision (fp64), 10 corresponds to extended precision (fp80), 16 corresponds to quadruple precision. Different compilers/toolchain support different kinds. For example, Intel compilers supports only 8 and 16, while modern GNU compilers support 8, 10, and 16. The default value is 8."
   echo "<linalgnames> specifies which BLAS/LAPACK implementation to link against. Possible values are: netlib (default; non-optimized reference BLAS/LAPACK built from the bundled source), mkl (Intel Math Kernel Library), lblas (optimized BLAS/LAPACK exposed through the -lblas/-llapack symbolic links), openblas (OpenBLAS), and aocl (AMD AOCL-BLAS and AOCL-LAPACK). For precision=10 and precision=16 only netlib is available, so any other value is skipped because optimized BLAS/LAPACK is unavailable for these two precisions."
   echo "<openmpflags> selects serial (no) or OpenMP (yes) builds. The default is no. Multiple values may be requested as openmp=no,yes. OpenMP is currently supported by RG_0S, RG_1P, RG_2D, and RG_2P. OpenMP binaries are stored in the same debug or release output directory as the serial ones, but their file name carries an additional _omp suffix."
-  echo "<gpu> enables the CUDA Fortran backend for RG_0S, RG_1P, RG_2D, and RG_2P. The default is no. gpu=yes requires an nvhpc toolchain and precision=8. GPU binaries carry an additional _gpu suffix."
+  echo "<gpu> enables the CUDA Fortran backend for PG_0S, RG_0S, RG_1P, RG_2D, and RG_2P. The default is no. gpu=yes requires an nvhpc toolchain and precision=8. GPU binaries carry an additional _gpu suffix."
   echo "<cuda_arch> overrides the GPU compute capability target (CC 8.0 -> sm_80). With gpu=yes, the machine default is used when omitted. Find the GPU model with nvidia-smi on a compute node and its capability at https://developer.nvidia.com/cuda/gpus; choose a target supported by the loaded NVHPC version."
   echo "" 
   echo "Supported toolchains on different machines are listed below."
@@ -220,7 +220,7 @@ if [[ "$gpu" = "yes" ]]; then
     fi
   done
   for code_value in "${code_list[@]}"; do
-    if [[ " RG_0S RG_1P RG_2D RG_2P " != *" $code_value "* ]]; then
+    if [[ " PG_0S RG_0S RG_1P RG_2D RG_2P " != *" $code_value "* ]]; then
       echo "ERROR, gpu=yes is unsupported for code=$code_value"
       exit 1
     fi
