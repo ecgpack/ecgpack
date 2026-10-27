@@ -15,6 +15,9 @@ MODULE matform
   USE matelem
   USE misc
   USE linalg
+#ifdef USE_CUDA
+  USE gpu_backend, ONLY: gpu_active, gpu_build_HS, gpu_build_HS_deriv
+#endif
 
   IMPLICIT NONE
 
@@ -240,6 +243,12 @@ CONTAINS
       WRITE(*, '(1x,a,i0,a,i0,a,i0,a)') 'ComputeMatElem: functions ', Nmin, '..', Nmax, &
                                           ' (', Nmax*(Nmax+1)/2-(Nmin-1)*Nmin/2, ' pairs)'
     ENDIF
+#ifdef USE_CUDA
+    IF (gpu_active()) THEN
+      CALL gpu_build_HS(Nmin, Nmax, StoreHS)
+      RETURN
+    ENDIF
+#endif
     ! SymMatrixBuf is loop-invariant and MatrixElementsOpt does not modify
     ! it, so it is built once here rather than once per pair
     DO j = 1, Glob_NumYHYTerms
@@ -370,6 +379,12 @@ CONTAINS
       WRITE(*, '(1x,a,i0,a,i0,a,i0,a,i0)') 'ComputeMatElemAndDeriv: functions ', Nmin, '..', Nmax, &
                                             ', derivatives for ', Glob_nfo, ' function(s) after ', Glob_nfru
     ENDIF
+#ifdef USE_CUDA
+    IF (gpu_active()) THEN
+      CALL gpu_build_HS_deriv(Nmin, Nmax, StoreHSD)
+      RETURN
+    ENDIF
+#endif
     ! SymMatrixBuf is loop-invariant and MatrixElementsOpt does not modify
     ! it, so it is built once here rather than once per pair
     DO j = 1, Glob_NumYHYTerms

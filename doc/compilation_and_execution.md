@@ -145,6 +145,15 @@ mass and scaled-charge arrays use CUDA managed memory shared by the CPU and GPU
 matrix-element routines. Use a `gpu=no` build on machines without a CUDA device;
 gfortran builds retain ordinary host allocations.
 
+`PG_0S` accepts `gpu=yes` too, with the same switches. Its GPU matrix elements
+agree with the CPU (the HD sample inputs reproduce the CPU energies; with
+`ECG_GPU=1` alone the basis-generation output is byte-identical), but for small
+systems they are slower than the CPU: `MatrixElementsOpt` sizes its work arrays
+by the run-time number of symmetry terms, which on the GPU become per-thread
+device heap allocations. `ECG_GPU_HEAP` sets that heap in bytes (default 1 GiB;
+CUDA's own default of 8 MB is far too small). `ECG_GPU_EIG=1` (cuSOLVER) is
+independent of this.
+
 `CUDA_ARCH` is the target GPU's compute capability in `sm_XX` form: compute
 capability 8.0 becomes `sm_80`, passed to nvfortran as `-gpu=cc80`. Find the
 GPU model with `nvidia-smi` on a compute node, then look up its capability in

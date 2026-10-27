@@ -698,6 +698,13 @@ MODULE globvars
   ! fills it from Glob_ScaledPseudoChargeMatrix; the old workproc.f90 fills it
   ! from Glob_PseudoCharge directly.
   REAL(wp), ALLOCATABLE, DIMENSION(:, :), SAVE :: Glob_ChargeMatrix
+#ifdef USE_CUDA
+  ! Read by MatrixElementsOpt on the device as well as on the host (see
+  ! gpu_backend.f90), so these live in managed memory in CUDA builds. Without
+  ! it nvfortran 25.9 crashes (fort2 signal 11) on the host,device routine
+  ! instead of reporting the host-data error.
+  ATTRIBUTES(MANAGED) :: Glob_MassMatrix, Glob_ChargeMatrix, Glob_NumYHYTerms
+#endif
 
   ! Glob_PseudoChargeMatrix is the matrix of pseudocharge products, and
   ! Glob_ScaledPseudoChargeMatrix is its scaled version. The two differ only

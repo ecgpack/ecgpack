@@ -5,6 +5,9 @@ MODULE workproc
   USE linalg
   USE globvars
   USE iso_fortran_env, ONLY: int64
+#ifdef USE_CUDA
+  USE gpu_backend, ONLY: gpu_eig_active, gpu_dsygvx
+#endif
   USE qrlinalg, ONLY: qr_real_state, QR_SUCCESS, QR_ERR_INVALID_ARGUMENT, &
                       QR_ERR_ALLOCATION, QR_ERR_INVALID_STATE, &
                       QR_ERR_DIMENSION_MISMATCH, QR_ERR_NO_CONVERGENCE, &
@@ -3893,10 +3896,19 @@ CONTAINS
       !------------------------------------------------------------------
       IF (Glob_LocalWorkMode .OR. (Glob_ProcID == 0)) THEN
 
+#ifdef USE_CUDA
+        IF (gpu_eig_active()) THEN
+          CALL gpu_dsygvx(0, Nmax, Glob_H, Glob_HSLeadDim, Glob_S, Glob_HSLeadDim, &
+                          Glob_WhichEigenvalue, EVs(1), Z, ErrorCode)
+        ELSE
+#endif
         CALL DSYGVX(1, 'N', 'I', 'U', Nmax, Glob_H, Glob_HSLeadDim, Glob_S, Glob_HSLeadDim, &
                     ZERO, ZERO, Glob_WhichEigenvalue, Glob_WhichEigenvalue, Glob_AbsTolForDSYGVX, &
                     NumOfEigvalsFound, EVs, Z, Nmax, Glob_WorkForDSYGVX, &
                     Glob_LWorkForDSYGVX, Glob_IWorkForDSYGVX, IFAIL, ErrorCode)
+#ifdef USE_CUDA
+        ENDIF
+#endif
         ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
         !$      VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
         !$      LWORK, IWORK, IFAIL, INFO )
@@ -4041,10 +4053,19 @@ CONTAINS
       !------------------------------------------------------------------
       IF (Glob_LocalWorkMode .OR. (Glob_ProcID == 0)) THEN
 
+#ifdef USE_CUDA
+        IF (gpu_eig_active()) THEN
+          CALL gpu_dsygvx(1, Nmax, Glob_H, Glob_HSLeadDim, Glob_S, Glob_HSLeadDim, &
+                          Glob_WhichEigenvalue, EVs(1), Glob_c, ErrorCode)
+        ELSE
+#endif
         CALL DSYGVX(1, 'V', 'I', 'U', Nmax, Glob_H, Glob_HSLeadDim, Glob_S, Glob_HSLeadDim, &
                     ZERO, ZERO, Glob_WhichEigenvalue, Glob_WhichEigenvalue, Glob_AbsTolForDSYGVX, &
                     NumOfEigvalsFound, EVs, Glob_c, Nmax, Glob_WorkForDSYGVX, &
                     Glob_LWorkForDSYGVX, Glob_IWorkForDSYGVX, IFAIL, ErrorCode)
+#ifdef USE_CUDA
+        ENDIF
+#endif
         ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
         !$      VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
         !$      LWORK, IWORK, IFAIL, INFO )
@@ -4216,10 +4237,19 @@ CONTAINS
       !------------------------------------------------------------------
       IF (Glob_LocalWorkMode .OR. (Glob_ProcID == 0)) THEN
 
+#ifdef USE_CUDA
+        IF (gpu_eig_active()) THEN
+          CALL gpu_dsygvx(1, nfa, Glob_H, Glob_HSLeadDim, Glob_S, Glob_HSLeadDim, &
+                          Glob_WhichEigenvalue, EVs(1), Glob_c, ErrorCode)
+        ELSE
+#endif
         CALL DSYGVX(1, 'V', 'I', 'U', nfa, Glob_H, Glob_HSLeadDim, Glob_S, Glob_HSLeadDim, &
                     ZERO, ZERO, Glob_WhichEigenvalue, Glob_WhichEigenvalue, Glob_AbsTolForDSYGVX, &
                     NumOfEigvalsFound, EVs, Glob_c, nfa, Glob_WorkForDSYGVX, &
                     Glob_LWorkForDSYGVX, Glob_IWorkForDSYGVX, IFAIL, ErrorCode)
+#ifdef USE_CUDA
+        ENDIF
+#endif
         ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
         !$      VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
         !$      LWORK, IWORK, IFAIL, INFO )
@@ -18625,10 +18655,20 @@ CONTAINS
 
       IF (Glob_ProcID == 0) THEN
         IF (Verbose >= 2) WRITE(*, '(1x,a29)', ADVANCE='no') 'Solving eigenvalue problem...'
+#ifdef USE_CUDA
+        IF (gpu_eig_active()) THEN
+          CALL gpu_dsygvx(1, cbs, Glob_H, Glob_HSLeadDim, Glob_S, Glob_HSLeadDim, &
+                          Glob_WhichEigenvalue, Evalue, Glob_c, ErrorCode)
+          NumOfEigvalsFound = 0  ! only the selected eigenpair was requested
+        ELSE
+#endif
         CALL DSYGVX(1, 'V', 'I', 'U', cbs, Glob_H, Glob_HSLeadDim, Glob_S, Glob_HSLeadDim, &
                     ZERO, ZERO, 1, NumOfEigvecs, Glob_AbsTolForDSYGVX, &
                     NumOfEigvalsFound, Eigvals, Eigvecs, cbs, Glob_WorkForDSYGVX, Glob_LWorkForDSYGVX, &
                     Glob_IWorkForDSYGVX, IFAIL, ErrorCode)
+#ifdef USE_CUDA
+        ENDIF
+#endif
         ! SUBROUTINE DSYGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
                     !$      VL, VU, IL, IU, ABSTOL,
                     !$      M, W, Z, LDZ, WORK, LWORK,
@@ -18645,9 +18685,13 @@ CONTAINS
       ENDIF
 
       ! sending the eigenvalue and the eigenvector to all processes
+      ! (NumOfEigvalsFound==0 after the GPU solve, which already filled Evalue
+      ! and Glob_c with the selected eigenpair)
       IF (Glob_ProcID == 0) THEN
-        Evalue = Eigvals(Glob_WhichEigenvalue)
-        Glob_c(1:cbs) = Eigvecs(1:cbs, Glob_WhichEigenvalue)
+        IF (NumOfEigvalsFound > 0) THEN
+          Evalue = Eigvals(Glob_WhichEigenvalue)
+          Glob_c(1:cbs) = Eigvecs(1:cbs, Glob_WhichEigenvalue)
+        ENDIF
       ENDIF
       CALL MPI_BCAST(Evalue, 1, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
       CALL MPI_BCAST(Glob_c, cbs, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
@@ -18658,13 +18702,15 @@ CONTAINS
         IF (Verbose >= 2) WRITE(*, *) 'done'
         WRITE(*, *) 'Energy: ', Evalue
         WRITE(*, *)
-        WRITE(*, *) 'Lowest eigenvalues:'
-        WRITE(*, *) '------------------------------------------'
-        WRITE(fmte, '(a,i0,a)') '(1x,i6,1x,f', NumFieldWidth(Eigvals(1:NumOfEigvalsFound)), '.16)'
-        DO i = 1, NumOfEigvalsFound
-          WRITE(*, fmte) i, Eigvals(i)
-        ENDDO
-        WRITE(*, *)
+        IF (NumOfEigvalsFound > 0) THEN
+          WRITE(*, *) 'Lowest eigenvalues:'
+          WRITE(*, *) '------------------------------------------'
+          WRITE(fmte, '(a,i0,a)') '(1x,i6,1x,f', NumFieldWidth(Eigvals(1:NumOfEigvalsFound)), '.16)'
+          DO i = 1, NumOfEigvalsFound
+            WRITE(*, fmte) i, Eigvals(i)
+          ENDDO
+          WRITE(*, *)
+        ENDIF
       ENDIF
     ENDIF  ! IF (GSEPSolMethod=='G')
 
