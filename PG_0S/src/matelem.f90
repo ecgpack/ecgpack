@@ -15,14 +15,312 @@ MODULE matelem
   PRIVATE :: compute_g3, compute_products_1, compute_products_2, &
              compute_products_3, compute_products_4, compute_products_5, &
              compute_dVk, &
-             compute_series
+             compute_series, MatrixElementsOptBlk
+
+  !================================================================
+  ! Workspace of MatrixElementsOpt and its helpers
+  !================================================================
+  ! Every array below used to be an automatic (local) array of the kernel
+  ! or of a helper, sized by Glob_NumYHYTerms and so allocated on the heap
+  ! and freed again on EVERY call - tens of arrays of
+  ! Glob_NumYHYTerms*Glob_n**2 elements each, which for a large Young
+  ! operator is more than 10 MB per call. They are allocated here once, on
+  ! the first call (EnsureKernelWorkspace), and reused. Nothing else
+  ! changes: the same statements write and read the same elements. The
+  ! kernel is not reentrant (it never was, and MPI ranks are separate
+  ! processes).
+  !----------------------------------------------------------------
+  LOGICAL, SAVE, PRIVATE :: WkReady = .FALSE.
+  INTEGER, SAVE, PRIVATE :: WkTerms = 0
+  ! Term blocking: the per-term work is done on blocks of at most MBLK
+  ! symmetry terms so that the working set stays in the cache. ldw is
+  ! the leading extent of every per-term workspace array (the block
+  ! capacity), nbw the number of terms in the block being processed.
+  INTEGER, PARAMETER, PRIVATE :: MBLK = 64
+  INTEGER, SAVE, PRIVATE :: ldw = 0, nbw = 0
+  ! FirstBlk: the block being processed is the first of the call. The
+  ! term-independent inverses invLk, invLl, invAk are computed for the
+  ! first block only; the later blocks (never larger) reuse those rows.
+  LOGICAL, SAVE, PRIVATE :: FirstBlk = .TRUE.
+  ! block copies of the symmetry matrices and of the results
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: SymW
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:)       :: SklW, HklW
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :)    :: dSkW, dSlW, dHkW, dHlW
+  ! Signed-permutation structure of the symmetry matrices (see
+  ! MatrixElementsOpt). For the block being processed: pidxC(m,i),
+  ! psgnC(m,i) = row and sign of the only nonzero entry of column i of
+  ! matrix m; pidxR(m,i), psgnR(m,i) = column and sign of the only nonzero
+  ! entry of row i; BlkPerm says that every matrix of the block has this
+  ! structure. The T* tables hold the same for all Glob_NumYHYTerms
+  ! matrices, found once per distinct set of matrices; SymSaved is the
+  ! set they were found for, SymCached says they are valid.
+  LOGICAL, SAVE, PRIVATE :: BlkPerm = .FALSE., SymCached = .FALSE.
+  INTEGER, ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :)  :: pidxC, pidxR, TpidxC, TpidxR
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :) :: psgnC, psgnR, TpsgnC, TpsgnR
+  LOGICAL, ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:)     :: TermPerm
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: SymSaved
+  ! per-term scalars
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:) :: detAkl
+  ! term-independent quantities of the bra (k) and the ket (l): one copy
+  REAL(wp), SAVE, PRIVATE :: detLk, detLl
+  REAL(wp), SAVE, PRIVATE, DIMENSION(Glob_n, Glob_n) :: Ll
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:) :: SUM0, SUM1, SUM2, SUM3
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:) :: trT, tl, tk, Ttmp, a, Tkl, Vkl, g1, g2, g3
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:) :: factor1, factor2, cg1, cg2
+  ! per-term matrices
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: Al, invAkl, PLl, invL
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: Temp, R, b, c, coab
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: ddSk, ddSl, ddTk, ddTl
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: ddSk_over_Skl, ddSl_over_Skl
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: dRk, dRl, ddVk, ddVl
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: invLk, invLl, invAk, invAl, chAl
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: ALk, ALl, AAk, AAl, AlLl, MAl
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: Jkk, Jll, Jklk, Jkll
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: Tllk, Tkkl, Tklk, Tlkl
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: TlMkJk, TkMlJl, TlMlJk, TkMkJl
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: JkMlk, JlMkl, JlMlk, JkMkl
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: da, db, dc
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :, :) :: RLk, RLl, JRLk, JRLl, RJLk, RJLl
+  REAL(wp), ALLOCATABLE, SAVE, PRIVATE, DIMENSION(:, :)    :: dTk, dTl, dVk, dVl
 
 CONTAINS
+
+
+  SUBROUTINE EnsureKernelWorkspace()
+    ! Allocates the workspace above for blocks of MIN(Glob_NumYHYTerms, MBLK)
+    ! terms (once; again only if the number of symmetry terms changed).
+    IMPLICIT NONE
+    INTEGER :: t, n, npt
+
+    IF (WkReady .AND. (WkTerms == Glob_NumYHYTerms)) RETURN
+    IF (WkReady) THEN
+      DEALLOCATE(detAkl, SUM0, SUM1, SUM2, SUM3, trT, tl, tk, Ttmp, a, Tkl, Vkl, g1, g2, g3, &
+                 factor1, factor2, cg1, cg2, Al, invAkl, PLl, invL, Temp, R, b, c, coab, &
+                 ddSk, ddSl, ddTk, ddTl, ddSk_over_Skl, ddSl_over_Skl, dRk, dRl, ddVk, ddVl, &
+                 invLk, invLl, invAk, invAl, chAl, ALk, ALl, AAk, AAl, AlLl, MAl, Jkk, Jll, Jklk, Jkll, &
+                 AAlMAl, AAkMAk, AAkMAl, AAlMAk, Tllk, Tkkl, Tklk, Tlkl, TlMkJk, TkMlJl, TlMlJk, TkMkJl, &
+                 JkMlk, JlMkl, JlMlk, JkMkl, da, db, dc, RLk, RLl, JRLk, JRLl, RJLk, RJLl, dTk, dTl, dVk, dVl, &
+                 SymW, SklW, HklW, dSkW, dSlW, dHkW, dHlW, &
+                 pidxC, pidxR, psgnC, psgnR, TpidxC, TpidxR, TpsgnC, TpsgnR, TermPerm, SymSaved)
+    ENDIF
+    t = MIN(Glob_NumYHYTerms, MBLK)
+    ldw = t
+    n = Glob_n
+    npt = Glob_npt
+    ALLOCATE(detAkl(t), SUM0(t), SUM1(t), SUM2(t), SUM3(t), trT(t), tl(t), tk(t), &
+             Ttmp(t), a(t), Tkl(t), Vkl(t), g1(t), g2(t), g3(t), factor1(t), factor2(t), cg1(t), cg2(t))
+    ALLOCATE(Al(t, n, n), invAkl(t, n, n), PLl(t, n, n), invL(t, n, n), &
+             Temp(t, n, n), R(t, n, n), b(t, n, n), c(t, n, n), coab(t, n, n), &
+             ddSk(t, n, n), ddSl(t, n, n), ddTk(t, n, n), ddTl(t, n, n), &
+             ddSk_over_Skl(t, n, n), ddSl_over_Skl(t, n, n), dRk(t, n, n), dRl(t, n, n), ddVk(t, n, n), ddVl(t, n, n), &
+             invLk(t, n, n), invLl(t, n, n), invAk(t, n, n), invAl(t, n, n), chAl(t, n, n), &
+             ALk(t, n, n), ALl(t, n, n), AAk(t, n, n), AAl(t, n, n), AlLl(t, n, n), MAl(t, n, n), &
+             Jkk(t, n, n), Jll(t, n, n), Jklk(t, n, n), Jkll(t, n, n), &
+             AAlMAl(t, n, n), AAkMAk(t, n, n), AAkMAl(t, n, n), AAlMAk(t, n, n), &
+             Tllk(t, n, n), Tkkl(t, n, n), Tklk(t, n, n), Tlkl(t, n, n), &
+             TlMkJk(t, n, n), TkMlJl(t, n, n), TlMlJk(t, n, n), TkMkJl(t, n, n), &
+             JkMlk(t, n, n), JlMkl(t, n, n), JlMlk(t, n, n), JkMkl(t, n, n), &
+             da(t, n, n), db(t, n, n), dc(t, n, n), &
+             RLk(t, n, n), RLl(t, n, n), JRLk(t, n, n), JRLl(t, n, n), RJLk(t, n, n), RJLl(t, n, n))
+    ALLOCATE(dTk(t, npt), dTl(t, npt), dVk(t, npt), dVl(t, npt))
+    ALLOCATE(SymW(t, n, n), SklW(t), HklW(t), dSkW(t, npt), dSlW(t, npt), dHkW(t, npt), dHlW(t, npt))
+    ALLOCATE(pidxC(t, n), pidxR(t, n), psgnC(t, n), psgnR(t, n))
+    ALLOCATE(TpidxC(Glob_NumYHYTerms, n), TpidxR(Glob_NumYHYTerms, n), &
+             TpsgnC(Glob_NumYHYTerms, n), TpsgnR(Glob_NumYHYTerms, n), &
+             TermPerm(Glob_NumYHYTerms), SymSaved(Glob_NumYHYTerms, n, n))
+    SymCached = .FALSE.
+    WkTerms = Glob_NumYHYTerms
+    WkReady = .TRUE.
+
+  END SUBROUTINE EnsureKernelWorkspace
 
 
   SUBROUTINE MatrixElementsOpt(mk, PreLk, PreAk, PreMAk, ml, vechLl, SymMatrixBuf, &
       SklBuf, HklBuf, dSkBuf, dSlBuf, dHkBuf, dHlBuf, &
       gradflag)
+    ! Symmetry adapted matrix elements in a basis of correlated Gaussians
+    ! with r1 premultipliers,  fk = r1^mk * exp[-r'(Lk*Lk' (x) I3) r].
+    ! The symmetry adaption is applied to the ket:
+    ! Al --> SymMatrix'*Ll*Ll'*SymMatrix.
+    ! Input:
+    !   PreLk, PreAk, PreMAk :: bra side, precomputed by PrecomputeMatrices_MA_L_A:
+    !                           Lk, Ak = Lk*Lk' and M*Ak (no permutation needed)
+    !   vechLl         :: n(n+1)/2 exponent parameters of the ket (Ll lower triangular)
+    !   mk, ml         :: premultiplier powers
+    !   SymMatrixBuf   :: the symmetry permutation matrices
+    !   gradflag       :: 0 no gradient; 1 dSk, dHk only; 2 also dSl, dHl
+    ! Output (normalized), one entry per symmetry term:
+    !   Skl, Hkl       :: overlap and Hamiltonian matrix elements
+    !   dSk, dHk       :: derivatives with respect to vech[Lk]
+    !   dSl, dHl       :: derivatives with respect to vech[Ll]
+    !
+    ! The terms are processed in blocks of at most MBLK (see the workspace
+    ! declarations): the symmetry matrices of a block are copied to SymW,
+    ! MatrixElementsOptBlk computes the block, and its results are copied
+    ! to the output arrays. Derivative buffers that gradflag does not ask
+    ! for are set to zero, as before.
+    IMPLICIT NONE
+
+    INTEGER, INTENT(IN) :: mk, ml, gradflag
+    REAL(wp), INTENT(IN) :: PreLk(Glob_n, Glob_n), PreAk(Glob_n, Glob_n), PreMAk(Glob_n, Glob_n)
+    REAL(wp), INTENT(IN) :: vechLl(Glob_npt)
+    REAL(wp), INTENT(IN) :: SymMatrixBuf(Glob_NumYHYTerms, Glob_n, Glob_n)
+    REAL(wp), INTENT(OUT) :: SklBuf(Glob_NumYHYTerms), HklBuf(Glob_NumYHYTerms)
+    REAL(wp), INTENT(OUT) :: dSkBuf(Glob_NumYHYTerms, Glob_npt), &
+                                dSlBuf(Glob_NumYHYTerms, Glob_npt), &
+                                dHkBuf(Glob_NumYHYTerms, Glob_npt), &
+                                dHlBuf(Glob_NumYHYTerms, Glob_npt)
+
+    INTEGER :: m0, m, i, j, k, t, nb
+
+    CALL EnsureKernelWorkspace()
+
+    ! Per-pair tracing (Verbose >= 4 floods: one line per pair on every rank)
+    IF (Verbose >= 4) THEN
+      WRITE(*, '(1x,a,i0,a,i0,a,i0,a,i0)') 'MatrixElementsOpt: powers ', mk, ' ', ml, &
+                                            '  gradflag ', gradflag, '  rank ', Glob_ProcID
+    ENDIF
+
+    ! Signed-permutation structure of the symmetry matrices: exactly one
+    ! entry +1 or -1 in every row and every column, all others exactly 0,
+    ! which is what a permutation of identical particles gives in these
+    ! coordinates. Every product with such a matrix in the block kernel
+    ! then has a single nonzero term and is done as a signed gather,
+    ! ZERO + (+-1)*x, the value the original accumulation produced (its
+    ! other terms are exact zeros, which leave a running sum unchanged).
+    ! A block with any other matrix takes the dense products. The structure
+    ! is found once per set of matrices (the set is compared with the saved
+    ! copy on every call).
+    IF (SymCached) THEN
+      ! (explicit loops: the workspace array ALl shadows the intrinsic ALL)
+      cmpsym: DO j = 1, Glob_n
+        DO i = 1, Glob_n
+          DO t = 1, Glob_NumYHYTerms
+            IF (SymMatrixBuf(t, i, j) /= SymSaved(t, i, j)) THEN
+              SymCached = .FALSE.
+              EXIT cmpsym
+            ENDIF
+          ENDDO
+        ENDDO
+      ENDDO cmpsym
+    ENDIF
+    IF (.NOT. SymCached) THEN
+      SymSaved = SymMatrixBuf
+      DO t = 1, Glob_NumYHYTerms
+        TermPerm(t) = .TRUE.
+        DO i = 1, Glob_n
+          TpidxR(t, i) = 0
+        ENDDO
+        DO j = 1, Glob_n
+          k = 0
+          DO i = 1, Glob_n
+            IF (SymMatrixBuf(t, i, j) == ZERO) CYCLE
+            IF ((k /= 0) .OR. ((SymMatrixBuf(t, i, j) /= ONE) .AND. (SymMatrixBuf(t, i, j) /= -ONE))) THEN
+              TermPerm(t) = .FALSE.
+            ELSE
+              k = i
+            ENDIF
+          ENDDO
+          IF (k == 0) TermPerm(t) = .FALSE.
+          IF (.NOT. TermPerm(t)) EXIT
+          IF (TpidxR(t, k) /= 0) THEN
+            TermPerm(t) = .FALSE.
+            EXIT
+          ENDIF
+          TpidxC(t, j) = k
+          TpsgnC(t, j) = SymMatrixBuf(t, k, j)
+          TpidxR(t, k) = j
+          TpsgnR(t, k) = SymMatrixBuf(t, k, j)
+        ENDDO
+      ENDDO
+      SymCached = .TRUE.
+    ENDIF
+
+    DO m0 = 1, Glob_NumYHYTerms, ldw
+      nb = MIN(ldw, Glob_NumYHYTerms-m0+1)
+      nbw = nb
+      FirstBlk = (m0 == 1)
+
+      BlkPerm = .TRUE.
+      DO m = 1, nb
+        IF (.NOT. TermPerm(m0+m-1)) BlkPerm = .FALSE.
+      ENDDO
+      IF (BlkPerm) THEN
+        ! the block kernel reads only the structure tables
+        DO i = 1, Glob_n
+          DO m = 1, nb
+            pidxC(m, i) = TpidxC(m0+m-1, i)
+            psgnC(m, i) = TpsgnC(m0+m-1, i)
+            pidxR(m, i) = TpidxR(m0+m-1, i)
+            psgnR(m, i) = TpsgnR(m0+m-1, i)
+          ENDDO
+        ENDDO
+      ELSE
+        ! dense products: the block kernel reads the matrices
+        DO j = 1, Glob_n
+          DO i = 1, Glob_n
+            DO m = 1, nb
+              SymW(m, i, j) = SymMatrixBuf(m0+m-1, i, j)
+            ENDDO
+          ENDDO
+        ENDDO
+      ENDIF
+
+      CALL MatrixElementsOptBlk(mk, PreLk, PreAk, PreMAk, ml, vechLl, SymW, &
+                                SklW, HklW, dSkW, dSlW, dHkW, dHlW, gradflag)
+
+      DO m = 1, nb
+        SklBuf(m0+m-1) = SklW(m)
+        HklBuf(m0+m-1) = HklW(m)
+      ENDDO
+      IF (gradflag >= 1) THEN
+        DO i = 1, Glob_npt
+          DO m = 1, nb
+            dSkBuf(m0+m-1, i) = dSkW(m, i)
+            dHkBuf(m0+m-1, i) = dHkW(m, i)
+          ENDDO
+        ENDDO
+      ENDIF
+      IF (gradflag >= 2) THEN
+        DO i = 1, Glob_npt
+          DO m = 1, nb
+            dSlBuf(m0+m-1, i) = dSlW(m, i)
+            dHlBuf(m0+m-1, i) = dHlW(m, i)
+          ENDDO
+        ENDDO
+      ENDIF
+    ENDDO
+
+    ! derivative buffers not requested: zero, as before
+    IF (gradflag < 1) THEN
+      DO i = 1, Glob_npt
+        DO m = 1, Glob_NumYHYTerms
+          dSkBuf(m, i) = ZERO
+          dHkBuf(m, i) = ZERO
+        ENDDO
+      ENDDO
+    ENDIF
+    IF (gradflag < 2) THEN
+      DO i = 1, Glob_npt
+        DO m = 1, Glob_NumYHYTerms
+          dSlBuf(m, i) = ZERO
+          dHlBuf(m, i) = ZERO
+        ENDDO
+      ENDDO
+    ENDIF
+
+  END SUBROUTINE MatrixElementsOpt
+
+
+
+
+  SUBROUTINE MatrixElementsOptBlk(mk, PreLk, PreAk, PreMAk, ml, vechLl, SymMatrixBuf, &
+      SklBuf, HklBuf, dSkBuf, dSlBuf, dHkBuf, dHlBuf, &
+      gradflag)
+    ! Block kernel: the body of the former MatrixElementsOpt, run on the
+    ! nbw symmetry terms of the current block (SymMatrixBuf, the results
+    ! and the workspace all have the leading extent ldw >= nbw)
     ! Symmetry adapted matrix elements in a basis of correlated Gaussians
     ! with r1 premultipliers,  fk = r1^mk * exp[-r'(Lk*Lk' (x) I3) r].
     ! The symmetry adaption is applied to the ket:
@@ -49,13 +347,13 @@ CONTAINS
 
     REAL(wp), INTENT(IN) :: PreLk(Glob_n, Glob_n), PreAk(Glob_n, Glob_n), PreMAk(Glob_n, Glob_n)
     REAL(wp), INTENT(IN) :: vechLl(Glob_npt)
-    REAL(wp), INTENT(IN) :: SymMatrixBuf(Glob_NumYHYTerms, Glob_n, Glob_n)
+    REAL(wp), INTENT(IN) :: SymMatrixBuf(ldw, Glob_n, Glob_n)
 
-    REAL(wp), INTENT(OUT) :: SklBuf(Glob_NumYHYTerms), HklBuf(Glob_NumYHYTerms)
-    REAL(wp), INTENT(OUT) :: dSkBuf(Glob_NumYHYTerms, Glob_npt), &
-                                dSlBuf(Glob_NumYHYTerms, Glob_npt), &
-                                dHkBuf(Glob_NumYHYTerms, Glob_npt), &
-                                dHlBuf(Glob_NumYHYTerms, Glob_npt)
+    REAL(wp), INTENT(OUT) :: SklBuf(ldw), HklBuf(ldw)
+    REAL(wp), INTENT(OUT) :: dSkBuf(ldw, Glob_npt), &
+                                dSlBuf(ldw, Glob_npt), &
+                                dHkBuf(ldw, Glob_npt), &
+                                dHlBuf(ldw, Glob_npt)
 
     ! Local variables
 
@@ -67,88 +365,63 @@ CONTAINS
     INTEGER :: i, j, k, indx, info, jj, ii, kk, mko2, mlo2
     INTEGER :: p, q, t
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: detLk, detLl, detAkl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: SUM0, SUM1, SUM2, SUM3
-    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: trT, tl, tk
-    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: Ttmp
-    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: a
-    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: Tkl, Vkl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: g1, g2, g3
-
     REAL(wp) :: mkml, mkpml
     REAL(wp) :: coabij
     REAL(wp) :: Vtmp(Glob_n, Glob_n)
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Lk, Ll, Ak, Al, invAkl, PLl, invL
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Temp
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: R, b, c, coab
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ddSk, ddSl, ddTk, ddTl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ddSk_over_Skl, ddSl_over_Skl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: dRk, dRl, ddVk, ddVl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: invLk, invLl, invAk, invAl, chAl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ALk, ALl, AAk, AAl, AlLl, MAk, MAl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Jkk, Jll, Jklk, Jkll
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Tllk, Tkkl, Tklk, Tlkl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: TlMkJk, TkMlJl, TlMlJk, TkMkJl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: JkMlk, JlMkl, JlMlk, JkMkl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: da, db, dc
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: RLk, RLl, JRLk, JRLl, RJLk, RJLl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_npt)       :: dTk, dTl, dVk, dVl
+    ! All per-term vectors and matrices are module workspace (see the
+    ! declarations before CONTAINS), allocated by the wrapper
 
     !***********************************************************
     ! Build intermediate results for Overlap matrix element
     ! Ak, Al, invAkl, detLk, detLl, detAkl, invAk, invAl
     !***********************************************************
 
-    ! Per-pair tracing (Verbose >= 4 floods: one line per pair on every rank)
-    IF (Verbose >= 4) THEN
-      WRITE(*, '(1x,a,i0,a,i0,a,i0,a,i0)') 'MatrixElementsOpt: powers ', mk, ' ', ml, &
-                                            '  gradflag ', gradflag, '  rank ', Glob_ProcID
-    ENDIF
-
     ! Bra side: Lk, Ak = Lk*Lk' and MAk = M*Ak are precomputed once per
-    ! function; they are the same for every symmetry term
-    DO j = 1, Glob_n
-      DO i = 1, Glob_n
-        DO m = 1, Glob_NumYHYTerms
-          Lk(m, i, j) = PreLk(i, j)
-          Ak(m, i, j) = PreAk(i, j)
-          MAk(m, i, j) = PreMAk(i, j)
-        ENDDO
-      ENDDO
-    ENDDO
+    ! function (PreLk, PreAk, PreMAk); they are the same for every symmetry
+    ! term and are read directly, not replicated per term.
 
     ! Build the lower triangular matrix Ll from the elements in vechLl
+    ! (the same for every symmetry term: the permutation acts on PLl below)
     Ll = ZERO
     indx = 0
     DO j = 1, Glob_n
       DO i = j, Glob_n
         indx = indx + 1
-        DO m = 1, Glob_NumYHYTerms
-          Ll(m, i, j) = vechLl(indx)
-        ENDDO
+        Ll(i, j) = vechLl(indx)
       ENDDO
     ENDDO
 
     ! Apply the symmetry transformation SymMatrix to Ll  PLl=SymMatrix'*Ll
-    PLl = ZERO
-    DO j = 1, Glob_n
-      DO k = j, Glob_n
+    ! (a signed gather when the block's matrices are signed permutations,
+    ! see MatrixElementsOpt; Ll(k,j) is zero for k < j, as in the sum)
+    IF (BlkPerm) THEN
+      DO j = 1, Glob_n
         DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
-            PLl(m, i, j) = PLl(m, i, j) + SymMatrixBuf(m, k, i) * Ll(m, k, j)
+          DO m = 1, nbw
+            PLl(m, i, j) = ZERO + psgnC(m, i) * Ll(pidxC(m, i), j)
           ENDDO
         ENDDO
       ENDDO
-    ENDDO
+    ELSE
+      PLl = ZERO
+      DO j = 1, Glob_n
+        DO k = j, Glob_n
+          DO i = 1, Glob_n
+            DO m = 1, nbw
+              PLl(m, i, j) = PLl(m, i, j) + SymMatrixBuf(m, k, i) * Ll(k, j)
+            ENDDO
+          ENDDO
+        ENDDO
+      ENDDO
+    ENDIF
 
     ! Build AL=P'*LL*LL'*P (Ak is precomputed)
     Al = ZERO
     DO j = 1, Glob_n
       DO k = 1, Glob_n
         DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             Al(m, i, j) = Al(m, i, j) + PLl(m, i, k) * PLl(m, j, k)
           ENDDO
         ENDDO
@@ -160,25 +433,23 @@ CONTAINS
     ! Cholesky decomposition code below)
     DO j = 1, Glob_n
       DO i = 1, j - 1
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           invL(m, j, i) = ZERO
         ENDDO
       ENDDO
       DO i = j, Glob_n
-        DO m = 1, Glob_NumYHYTerms
-          invL(m, j, i) = Ak(m, i, j) + Al(m, i, j)
+        DO m = 1, nbw
+          invL(m, j, i) = PreAk(i, j) + Al(m, i, j)
         ENDDO
       ENDDO
     ENDDO
 
-    ! compute det(LK) and det(LL)
+    ! compute det(LK) and det(LL) (term-independent)
     detLk = ONE
     detLl = ONE
     DO i = 1, Glob_n
-      DO m = 1, Glob_NumYHYTerms
-        detLk(m) = detLk(m) * Lk(m, i, i)
-        detLl(m) = detLl(m) * Ll(m, i, i)
-      ENDDO
+      detLk = detLk * PreLk(i, i)
+      detLl = detLl * Ll(i, i)
     ENDDO
 
     ! Compute the Cholesky decomposition of Akl (invL)
@@ -193,24 +464,24 @@ CONTAINS
     detAkl = ONE
     DO i = 1, Glob_n
       DO j = i, Glob_n
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           SUM0(m) = invL(m, i, j)
           SUM1(m) = chAl(m, i, j)
         ENDDO
         DO k = i - 1, 1, -1
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             SUM0(m) = SUM0(m) - invL(m, i, k) * invL(m, j, k)
             SUM1(m) = SUM1(m) - chAl(m, i, k) * chAl(m, j, k)
           ENDDO
         ENDDO
         IF (i == j) THEN
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             invL(m, i, i) = SQRT(SUM0(m))
             chAl(m, i, i) = SQRT(SUM1(m))  ! don't need the det for Al
             detAkl(m) = detAkl(m) * SUM0(m)
           ENDDO
         ELSE
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             invL(m, j, i) = SUM0(m) / invL(m, i, i)
             chAl(m, j, i) = SUM1(m) / chAl(m, i, i)
           ENDDO
@@ -224,63 +495,193 @@ CONTAINS
     ! Compute the inverse of Akl, Ak, Al, Lk, Ll
     !
     ! Start with invL, invLk, invLl, chAl
-    invLk = Lk
-    invLl = Ll
-    ! [invert the lower triangle matrices]
-    DO i = 1, Glob_n
-      DO m = 1, Glob_NumYHYTerms
-        invL(m, i, i) = ONE / invL(m, i, i)
-        invLk(m, i, i) = ONE / invLk(m, i, i)
-        invLl(m, i, i) = ONE / invLl(m, i, i)
-        chAl(m, i, i) = ONE / chAl(m, i, i)
-      ENDDO
-      DO j = i + 1, Glob_n
-        DO m = 1, Glob_NumYHYTerms
-          SUM0(m) = ZERO
-          SUM1(m) = ZERO
-          SUM2(m) = ZERO
-          SUM3(m) = ZERO
-        ENDDO
-        DO k = i, j - 1
-          DO m = 1, Glob_NumYHYTerms
-            SUM0(m) = SUM0(m) - invL(m, j, k) * invL(m, k, i)
-            SUM1(m) = SUM1(m) - invLk(m, j, k) * invLk(m, k, i)
-            SUM2(m) = SUM2(m) - invLl(m, j, k) * invLl(m, k, i)
-            SUM3(m) = SUM3(m) - chAl(m, j, k) * chAl(m, k, i)
+    ! invLk, invLl and (below) invAk are the same for every term: they are
+    ! formed in the first block of the call only, the later blocks reuse
+    ! the rows left in the workspace (see FirstBlk)
+    IF (FirstBlk) THEN
+      DO j = 1, Glob_n
+        DO i = 1, Glob_n
+          DO m = 1, nbw
+            invLk(m, i, j) = PreLk(i, j)
+            invLl(m, i, j) = Ll(i, j)
           ENDDO
         ENDDO
-        DO m = 1, Glob_NumYHYTerms
-          invL(m, j, i) = SUM0(m) / invL(m, j, j)
-          invL(m, i, j) = ZERO  ! zero out the upper triangle for convenience
-          invLk(m, j, i) = SUM1(m) / invLk(m, j, j)
-          invLk(m, i, j) = ZERO
-          invLl(m, j, i) = SUM2(m) / invLl(m, j, j)
-          invLl(m, i, j) = ZERO
-          chAl(m, j, i) = SUM3(m) / chAl(m, j, j)
-          chAl(m, i, j) = ZERO
+      ENDDO
+    ENDIF
+    ! [invert the lower triangle matrices]
+    ! With gradflag < 2 the inverse of Al is needed only through
+    ! invAl(m,1,1) (the overlap), so the inverse of its Cholesky factor
+    ! chAl is formed for column 1 only: the i = 1 pass of the loop below,
+    ! exactly as in the full inversion, and nothing else.
+    IF (FirstBlk) THEN
+      DO i = 1, Glob_n
+        DO m = 1, nbw
+          invL(m, i, i) = ONE / invL(m, i, i)
+          invLk(m, i, i) = ONE / invLk(m, i, i)
+          invLl(m, i, i) = ONE / invLl(m, i, i)
+        ENDDO
+        IF ((i == 1) .OR. (gradflag >= 2)) THEN
+          DO m = 1, nbw
+            chAl(m, i, i) = ONE / chAl(m, i, i)
+          ENDDO
+        ENDIF
+        DO j = i + 1, Glob_n
+          DO m = 1, nbw
+            SUM0(m) = ZERO
+            SUM1(m) = ZERO
+            SUM2(m) = ZERO
+            SUM3(m) = ZERO
+          ENDDO
+          DO k = i, j - 1
+            DO m = 1, nbw
+              SUM0(m) = SUM0(m) - invL(m, j, k) * invL(m, k, i)
+              SUM1(m) = SUM1(m) - invLk(m, j, k) * invLk(m, k, i)
+              SUM2(m) = SUM2(m) - invLl(m, j, k) * invLl(m, k, i)
+            ENDDO
+          ENDDO
+          IF ((i == 1) .OR. (gradflag >= 2)) THEN
+            DO k = i, j - 1
+              DO m = 1, nbw
+                SUM3(m) = SUM3(m) - chAl(m, j, k) * chAl(m, k, i)
+              ENDDO
+            ENDDO
+          ENDIF
+          DO m = 1, nbw
+            invL(m, j, i) = SUM0(m) / invL(m, j, j)
+            invL(m, i, j) = ZERO  ! zero out the upper triangle for convenience
+            invLk(m, j, i) = SUM1(m) / invLk(m, j, j)
+            invLk(m, i, j) = ZERO
+            invLl(m, j, i) = SUM2(m) / invLl(m, j, j)
+            invLl(m, i, j) = ZERO
+          ENDDO
+          IF ((i == 1) .OR. (gradflag >= 2)) THEN
+            DO m = 1, nbw
+              chAl(m, j, i) = SUM3(m) / chAl(m, j, j)
+              chAl(m, i, j) = ZERO
+            ENDDO
+          ENDIF
         ENDDO
       ENDDO
-    ENDDO
+    ELSE
+      ! later blocks: invL and chAl only, by the same statements
+      DO i = 1, Glob_n
+        DO m = 1, nbw
+          invL(m, i, i) = ONE / invL(m, i, i)
+        ENDDO
+        IF ((i == 1) .OR. (gradflag >= 2)) THEN
+          DO m = 1, nbw
+            chAl(m, i, i) = ONE / chAl(m, i, i)
+          ENDDO
+        ENDIF
+        DO j = i + 1, Glob_n
+          DO m = 1, nbw
+            SUM0(m) = ZERO
+            SUM3(m) = ZERO
+          ENDDO
+          DO k = i, j - 1
+            DO m = 1, nbw
+              SUM0(m) = SUM0(m) - invL(m, j, k) * invL(m, k, i)
+            ENDDO
+          ENDDO
+          IF ((i == 1) .OR. (gradflag >= 2)) THEN
+            DO k = i, j - 1
+              DO m = 1, nbw
+                SUM3(m) = SUM3(m) - chAl(m, j, k) * chAl(m, k, i)
+              ENDDO
+            ENDDO
+          ENDIF
+          DO m = 1, nbw
+            invL(m, j, i) = SUM0(m) / invL(m, j, j)
+            invL(m, i, j) = ZERO  ! zero out the upper triangle for convenience
+          ENDDO
+          IF ((i == 1) .OR. (gradflag >= 2)) THEN
+            DO m = 1, nbw
+              chAl(m, j, i) = SUM3(m) / chAl(m, j, j)
+              chAl(m, i, j) = ZERO
+            ENDDO
+          ENDIF
+        ENDDO
+      ENDDO
+    ENDIF
 
     ! We now have invLk, invLl (this is not invP'Ll), inv(chAl) invL
     !
     ! Now do invAkl=invL'*invL
     !       invAk=invLk'*invLk
     !       invAl=chAl'*chAl    NOTE that this has the SymMatrix term in it
-    invAkl = ZERO
-    invAk = ZERO
-    invAl = ZERO
-    DO j = 1, Glob_n
-      DO k = 1, Glob_n
-        DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
-            invAkl(m, i, j) = invAkl(m, i, j)+ invL(m, k, i) * invL(m, k, j)
-            invAk(m, i, j) = invAk(m, i, j) + invLk(m, k, i) * invLk(m, k, j)
-            invAl(m, i, j) = invAl(m, i, j) + chAl(m, k, i) * chAl(m, k, j)
+    IF (FirstBlk) THEN
+      invAkl = ZERO
+      invAk = ZERO
+      IF (gradflag >= 2) THEN
+        invAl = ZERO
+        DO j = 1, Glob_n
+          DO k = 1, Glob_n
+            DO i = 1, Glob_n
+              DO m = 1, nbw
+                invAkl(m, i, j) = invAkl(m, i, j)+ invL(m, k, i) * invL(m, k, j)
+                invAk(m, i, j) = invAk(m, i, j) + invLk(m, k, i) * invLk(m, k, j)
+                invAl(m, i, j) = invAl(m, i, j) + chAl(m, k, i) * chAl(m, k, j)
+              ENDDO
+            ENDDO
           ENDDO
         ENDDO
-      ENDDO
-    ENDDO
+      ELSE
+        ! only invAl(m,1,1) is used: accumulated over k as in the full product
+        DO m = 1, nbw
+          invAl(m, 1, 1) = ZERO
+        ENDDO
+        DO j = 1, Glob_n
+          DO k = 1, Glob_n
+            DO i = 1, Glob_n
+              DO m = 1, nbw
+                invAkl(m, i, j) = invAkl(m, i, j)+ invL(m, k, i) * invL(m, k, j)
+                invAk(m, i, j) = invAk(m, i, j) + invLk(m, k, i) * invLk(m, k, j)
+              ENDDO
+            ENDDO
+          ENDDO
+        ENDDO
+        DO k = 1, Glob_n
+          DO m = 1, nbw
+            invAl(m, 1, 1) = invAl(m, 1, 1) + chAl(m, k, 1) * chAl(m, k, 1)
+          ENDDO
+        ENDDO
+      ENDIF
+    ELSE
+      ! later blocks: invAk is reused from the first block (see FirstBlk)
+      invAkl = ZERO
+      IF (gradflag >= 2) THEN
+        invAl = ZERO
+        DO j = 1, Glob_n
+          DO k = 1, Glob_n
+            DO i = 1, Glob_n
+              DO m = 1, nbw
+                invAkl(m, i, j) = invAkl(m, i, j)+ invL(m, k, i) * invL(m, k, j)
+                invAl(m, i, j) = invAl(m, i, j) + chAl(m, k, i) * chAl(m, k, j)
+              ENDDO
+            ENDDO
+          ENDDO
+        ENDDO
+      ELSE
+        ! only invAl(m,1,1) is used: accumulated over k as in the full product
+        DO m = 1, nbw
+          invAl(m, 1, 1) = ZERO
+        ENDDO
+        DO j = 1, Glob_n
+          DO k = 1, Glob_n
+            DO i = 1, Glob_n
+              DO m = 1, nbw
+                invAkl(m, i, j) = invAkl(m, i, j)+ invL(m, k, i) * invL(m, k, j)
+              ENDDO
+            ENDDO
+          ENDDO
+        ENDDO
+        DO k = 1, Glob_n
+          DO m = 1, nbw
+            invAl(m, 1, 1) = invAl(m, 1, 1) + chAl(m, k, 1) * chAl(m, k, 1)
+          ENDDO
+        ENDDO
+      ENDIF
+    ENDIF
 
     ! OK looks like we got most of the important terms
     ! Lk, Ll, PLl, Ak, Al=P'Ll(P'Ll)', invAkl, invAk, invAl
@@ -297,7 +698,7 @@ CONTAINS
     ! AAk=invAkl*Ak
     ! AAl=invAkl*Al
 
-    CALL compute_products_1(Lk, Ak, Al, invAkl, PLl, invAl, ALk, ALl, AAk, AAl, AlLl)
+    CALL compute_products_1(PreLk, PreAk, Al, invAkl, PLl, invAl, ALk, ALl, AAk, AAl, AlLl, gradflag)
 
 
     ! Now a bunch of rank one mats and do it a column at a time!
@@ -305,16 +706,34 @@ CONTAINS
     ! Jll = invAl*J11*invAl*Ll
     ! Jklk = invAkl*J11*invAkl*Lk
     ! Jkll = invAkl*J11*invAkl*Ll
-    DO j = 1, Glob_n
-      DO i = 1, Glob_n
-        DO m = 1, Glob_NumYHYTerms
-          Jkk(m, i, j) = invAk(m, i, 1) * invLk(m, j, 1)
-          Jll(m, i, j) = invAl(m, i, 1) * AlLl(m, 1, j)  ! using AlLl to get sym right
-          Jklk(m, i, j) = invAkl(m, i, 1) * ALk(m, 1, j)
-          Jkll(m, i, j) = invAkl(m, i, 1) * ALl(m, 1, j)
+    ! Jkk and Jklk enter the bra derivatives (gradflag >= 1), Jll and Jkll
+    ! the ket derivatives (gradflag >= 2); none enters the energy.
+    ! (Jkk enters ddSk only, whose lower triangle alone is used: lower
+    ! triangle only. Jklk is needed in full.)
+    IF (gradflag >= 1) THEN
+      DO j = 1, Glob_n
+        DO i = 1, Glob_n
+          DO m = 1, nbw
+            Jklk(m, i, j) = invAkl(m, i, 1) * ALk(m, 1, j)
+          ENDDO
+        ENDDO
+        DO i = j, Glob_n
+          DO m = 1, nbw
+            Jkk(m, i, j) = invAk(m, i, 1) * invLk(m, j, 1)
+          ENDDO
         ENDDO
       ENDDO
-    ENDDO
+    ENDIF
+    IF (gradflag >= 2) THEN
+      DO j = 1, Glob_n
+        DO i = 1, Glob_n
+          DO m = 1, nbw
+            Jll(m, i, j) = invAl(m, i, 1) * AlLl(m, 1, j)  ! using AlLl to get sym right
+            Jkll(m, i, j) = invAkl(m, i, 1) * ALl(m, 1, j)
+          ENDDO
+        ENDDO
+      ENDDO
+    ENDIF
 
     ! MAl=M*Al (MAk=M*Ak is precomputed)
 
@@ -325,7 +744,7 @@ CONTAINS
     ! AAkMAl=invAkl*Ak*M*Al
     ! AAlMAk=invAkl*Al*M*Ak
 
-    CALL compute_products_3(AAk, AAl, MAk, MAl, AAlMAl, AAkMAk, AAkMAl, AAlMAk)
+    CALL compute_products_3(AAk, AAl, PreMAk, MAl, AAlMAl, AAkMAk, AAkMAl, AAlMAk, gradflag)
 
 
     ! A few kinetic energy terms (scalers)
@@ -336,7 +755,7 @@ CONTAINS
     tl = ZERO
     tk = ZERO
     DO i = 1, Glob_n
-      DO m = 1, Glob_NumYHYTerms
+      DO m = 1, nbw
         trT(m) = trT(m) + AAkMAl(m, i, i)
         tl(m) = tl(m) + AAlMAl(m, 1, i) * invAkl(m, i, 1)
         tk(m) = tk(m) + AAkMAk(m, 1, i) * invAkl(m, i, 1)
@@ -351,7 +770,7 @@ CONTAINS
       ! Tlkl=invAkl*Al*M*Ak*invAkl*Ll
 
       CALL compute_products_4(ALk, ALl, AAlMAl, AAkMAk, AAkMAl, AAlMAk, &
-          Tllk, Tkkl, Tklk, Tlkl)
+          Tllk, Tkkl, Tklk, Tlkl, gradflag)
 
       ! Still more kinetic energy (gradient) matrix terms
       ! TlMkJk = invAkl*Al*M*Al*invAkl*Lk
@@ -360,23 +779,34 @@ CONTAINS
       ! TkMkJl = invAkl*Al*M*Ak*invAkl*Ll
 
       CALL compute_products_5(AAlMAl, AAkMAk, AAkMAl, AAlMAk, Jklk, Jkll, &
-          TlMkJk, TkMlJl, TlMlJk, TkMkJl)
+          TlMkJk, TkMlJl, TlMlJk, TkMkJl, gradflag)
 
       ! yet more kinetic terms ... nice rank 1 ones
       ! JkMlk = invAkl*J11*invAkl*Ak*M*Al*invAkl*Lk
       ! JlMkl = invAkl*J11*invAkl*Al*M*Ak*invAkl*Ll
       ! JlMlk = invAkl*J11*invAkl*Al*M*Al*invAkl*Lk
       ! JkMkl = invAkl*J11*invAkl*Ak*M*Ak*invAkl*Ll
+      ! JkMlk and JlMlk enter the bra derivatives, JlMkl and JkMkl the ket
+      ! derivatives (gradflag >= 2) only
+      ! (lower triangle only: they enter ddTk, whose lower triangle alone is used)
       DO j = 1, Glob_n
-        DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+        DO i = j, Glob_n
+          DO m = 1, nbw
             JkMlk(m, i, j) = invAkl(m, i, 1) * Tklk(m, 1, j)
-            JlMkl(m, i, j) = invAkl(m, i, 1) * Tlkl(m, 1, j)
             JlMlk(m, i, j) = invAkl(m, i, 1) * Tllk(m, 1, j)
-            JkMkl(m, i, j) = invAkl(m, i, 1) * Tkkl(m, 1, j)
           ENDDO
         ENDDO
       ENDDO
+      IF (gradflag >= 2) THEN
+        DO j = 1, Glob_n
+          DO i = 1, Glob_n
+            DO m = 1, nbw
+              JlMkl(m, i, j) = invAkl(m, i, 1) * Tlkl(m, 1, j)
+              JkMkl(m, i, j) = invAkl(m, i, 1) * Tkkl(m, 1, j)
+            ENDDO
+          ENDDO
+        ENDDO
+      ENDIF
 
     ENDIF
 
@@ -393,10 +823,10 @@ CONTAINS
     !********************************************************
     mko2 = mk / 2
     mlo2 = ml / 2
-    DO m = 1, Glob_NumYHYTerms
+    DO m = 1, nbw
       SklBuf(m) = (invAkl(m, 1, 1) / invAk(m, 1, 1))**(mko2) * Glob_gm1(mko2, mlo2) &
           *((invAkl(m, 1, 1) / invAl(m, 1, 1))**(mlo2) * Glob_gm1(mko2, mlo2)) &
-          *SQRT((ONE * (2**(3 * Glob_n))) * (ABS(detLk(m) * detLl(m) / detAkl(m))**3))
+          *SQRT((ONE * (2**(3 * Glob_n))) * (ABS(detLk * detLl / detAkl(m))**3))
     ENDDO
 
 
@@ -415,14 +845,16 @@ CONTAINS
       ! dSk
       DO j = 1, Glob_n
         DO i = j, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             ddSk(m, i, j) = (ONE + ONEHALF) * invLk(m, j, i) - THREE * ALk(m, i, j)
           ENDDO
         ENDDO
       ENDDO
+      ! lower triangle only: dSk is vech(ddSk), and ddSk_over_Skl enters
+      ! only lower-triangle elements of ddTk and ddVk
       DO j = 1, Glob_n
-        DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+        DO i = j, Glob_n
+          DO m = 1, nbw
             ddSk(m, i, j) = ddSk(m, i, j) + mk / invAk(m, 1, 1) * Jkk(m, i, j)
             ddSk(m, i, j) = ddSk(m, i, j) - mkpml / invAkl(m, 1, 1) * Jklk(m, i, j)
             ddSk_over_Skl(m, i, j) = ddSk(m, i, j)
@@ -435,7 +867,7 @@ CONTAINS
       DO j = 1, Glob_n
         DO i = j, Glob_n
           indx = indx + 1
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             dSkBuf(m, indx) = ddSk(m, i, j)
           ENDDO
         ENDDO
@@ -447,7 +879,7 @@ CONTAINS
       ! dSl
       DO j = 1, Glob_n
         DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             Temp(m, i, j) = ml / invAl(m, 1, 1) * Jll(m, i, j)
             Temp(m, i, j) = Temp(m, i, j) - mkpml / invAkl(m, 1, 1) * Jkll(m, i, j)
             Temp(m, i, j) = Temp(m, i, j) - THREE * ALl(m, i, j)
@@ -455,29 +887,48 @@ CONTAINS
         ENDDO
       ENDDO
 
-      ! Multiply by SymMatrix
-      ddSl = ZERO
-      DO k = 1, Glob_n
+      ! Multiply by SymMatrix (a signed gather when the block's matrices
+      ! are signed permutations, see MatrixElementsOpt). From here on only
+      ! the lower triangle is used: dSl is vech(ddSl), and ddSl_over_Skl
+      ! enters only lower-triangle elements of ddTl and ddVl.
+      IF (BlkPerm) THEN
         DO j = 1, Glob_n
-          DO i = 1, Glob_n
-            DO m = 1, Glob_NumYHYTerms
-              ddSl(m, i, j) = ddSl(m, i, j) + SymMatrixBuf(m, i, k) * Temp(m, k, j)
+          DO i = j, Glob_n
+            DO m = 1, nbw
+              ddSl(m, i, j) = ZERO + psgnR(m, i) * Temp(m, pidxR(m, i), j)
             ENDDO
           ENDDO
         ENDDO
-      ENDDO
+      ELSE
+        DO j = 1, Glob_n
+          DO i = j, Glob_n
+            DO m = 1, nbw
+              ddSl(m, i, j) = ZERO
+            ENDDO
+          ENDDO
+        ENDDO
+        DO k = 1, Glob_n
+          DO j = 1, Glob_n
+            DO i = j, Glob_n
+              DO m = 1, nbw
+                ddSl(m, i, j) = ddSl(m, i, j) + SymMatrixBuf(m, i, k) * Temp(m, k, j)
+              ENDDO
+            ENDDO
+          ENDDO
+        ENDDO
+      ENDIF
 
       DO j = 1, Glob_n
         DO i = j, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             ddSl(m, i, j) = ddSl(m, i, j) + (ONE + ONEHALF) * invLl(m, j, i)
           ENDDO
         ENDDO
       ENDDO
 
       DO j = 1, Glob_n
-        DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+        DO i = j, Glob_n
+          DO m = 1, nbw
             ddSl_over_Skl(m, i, j) = ddSl(m, i, j)
             ddSl(m, i, j) = SklBuf(m) * ddSl(m, i, j)
           ENDDO
@@ -489,7 +940,7 @@ CONTAINS
       DO j = 1, Glob_n
         DO i = j, Glob_n
           indx = indx + 1
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             dSlBuf(m, indx) = ddSl(m, i, j)
           ENDDO
         ENDDO
@@ -507,7 +958,7 @@ CONTAINS
     !********************************************************
     mkml = ONE * mk * ml
 
-    DO m = 1, Glob_NumYHYTerms
+    DO m = 1, nbw
       Tkl(m) = mkml * Glob_MassMatrix(1, 1) / (mkpml + ONE)
       Tkl(m) = Tkl(m) - mk * tl(m)
       Tkl(m) = Tkl(m) - ml * tk(m)
@@ -521,12 +972,13 @@ CONTAINS
     ! gradient terms dTk dTl
     !********************************************************
     IF (gradflag > 0) THEN
-      DO m = 1, Glob_NumYHYTerms
+      DO m = 1, nbw
         tk(m) = invAkl(m, 1, 1)  ! drop this here since we don't need tk anymore
       ENDDO
+      ! lower triangle only: dTk is vech(ddTk)
       DO j = 1, Glob_n
-        DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+        DO i = j, Glob_n
+          DO m = 1, nbw
             ddTk(m, i, j) = mk * (JlMlk(m, i, j) + TlMlJk(m, i, j)) &
                 - ml * (JkMlk(m, i, j) + TlMkJk(m, i, j))
             ddTk(m, i, j) = TWO * ddTk(m, i, j) / tk(m)
@@ -543,7 +995,7 @@ CONTAINS
       DO j = 1, Glob_n
         DO i = j, Glob_n
           indx = indx + 1
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             dTk(m, indx) = ddTk(m, i, j)
           ENDDO
         ENDDO
@@ -554,7 +1006,7 @@ CONTAINS
       ! dTl
       DO j = 1, Glob_n
         DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             Temp(m, i, j) = ml * (JkMkl(m, i, j) + TkMkJl(m, i, j)) &
                 - mk * (JlMkl(m, i, j) + TkMlJl(m, i, j))
             Temp(m, i, j) = TWO * (Temp(m, i, j) / tk(m) + Ttmp(m) / (tk(m) * tk(m)) * Jkll(m, i, j))
@@ -564,20 +1016,38 @@ CONTAINS
           ENDDO
         ENDDO
       ENDDO
-      ! Multiply by SymMatrix
-      ddTl = ZERO
-      DO k = 1, Glob_n
+      ! Multiply by SymMatrix (a signed gather when the block's matrices
+      ! are signed permutations, see MatrixElementsOpt); lower triangle
+      ! only, dTl is vech(ddTl)
+      IF (BlkPerm) THEN
         DO j = 1, Glob_n
-          DO i = 1, Glob_n
-            DO m = 1, Glob_NumYHYTerms
-              ddTl(m, i, j) = ddTl(m, i, j) + SymMatrixBuf(m, i, k) * Temp(m, k, j)
+          DO i = j, Glob_n
+            DO m = 1, nbw
+              ddTl(m, i, j) = ZERO + psgnR(m, i) * Temp(m, pidxR(m, i), j)
             ENDDO
           ENDDO
         ENDDO
-      ENDDO
+      ELSE
+        DO j = 1, Glob_n
+          DO i = j, Glob_n
+            DO m = 1, nbw
+              ddTl(m, i, j) = ZERO
+            ENDDO
+          ENDDO
+        ENDDO
+        DO k = 1, Glob_n
+          DO j = 1, Glob_n
+            DO i = j, Glob_n
+              DO m = 1, nbw
+                ddTl(m, i, j) = ddTl(m, i, j) + SymMatrixBuf(m, i, k) * Temp(m, k, j)
+              ENDDO
+            ENDDO
+          ENDDO
+        ENDDO
+      ENDIF
       DO j = 1, Glob_n
-        DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+        DO i = j, Glob_n
+          DO m = 1, nbw
             ddTl(m, i, j) = ddTl(m, i, j) + Tkl(m) * ddSl_over_Skl(m, i, j)
           ENDDO
         ENDDO
@@ -587,7 +1057,7 @@ CONTAINS
       DO j = 1, Glob_n
         DO i = j, Glob_n
           indx = indx + 1
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             dTl(m, indx) = ddTl(m, i, j)
           ENDDO
         ENDDO
@@ -605,20 +1075,20 @@ CONTAINS
     !********************************************************************
 
     ! a
-    DO m = 1, Glob_NumYHYTerms
+    DO m = 1, nbw
       a(m) = invAkl(m, 1, 1)
     ENDDO
 
     ! b
     b = ONE
     DO i = 1, Glob_n
-      DO m = 1, Glob_NumYHYTerms
+      DO m = 1, nbw
         b(m, i, i) = invAkl(m, i, i)
       ENDDO
     ENDDO
     DO j = 1, Glob_n - 1
       DO i = j + 1, Glob_n
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           b(m, i, j) = invAkl(m, i, i) + invAkl(m, j, j) - TWO * invAkl(m, i, j)
         ENDDO
       ENDDO
@@ -627,13 +1097,13 @@ CONTAINS
     ! c
     c = ONE
     DO i = 1, Glob_n
-      DO m = 1, Glob_NumYHYTerms
+      DO m = 1, nbw
         c(m, i, i) = invAkl(m, 1, i) * invAkl(m, 1, i)
       ENDDO
     ENDDO
     DO j = 1, Glob_n - 1
       DO i = j + 1, Glob_n
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           c(m, i, j) = (invAkl(m, i, 1) - invAkl(m, j, 1)) * (invAkl(m, i, 1) - invAkl(m, j, 1))
         ENDDO
       ENDDO
@@ -651,7 +1121,7 @@ CONTAINS
     ! compute only lower triangle -SGI
     DO j = 1, Glob_n
       DO i = j, Glob_n
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           coab(m, i, j) = c(m, i, j) / (a(m) * b(m, i, j))
         ENDDO
       ENDDO
@@ -666,12 +1136,12 @@ CONTAINS
       ENDDO
     ENDDO
 
-    DO m = 1, Glob_NumYHYTerms
+    DO m = 1, nbw
       g1(m) = SklBuf(m) * Glob_gm2(p)
     ENDDO
     DO j = 1, Glob_n
       DO k = j, Glob_n
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           R(m, k, j) = (R(m, k, j) + ONE) * g1(m) / SQRT(b(m, k, j))
         ENDDO
       ENDDO
@@ -681,13 +1151,13 @@ CONTAINS
     Vkl = ZERO
     DO j = 1, Glob_n
       DO i = j, Glob_n
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           Vkl(m) = Vkl(m) + R(m, i, j) * Glob_ChargeMatrix(i, j)
         ENDDO
       ENDDO
     ENDDO
 
-    DO m = 1, Glob_NumYHYTerms
+    DO m = 1, nbw
       Hkl = Tkl(m) + Vkl(m)
       HklBuf(m) = Hkl
     ENDDO
@@ -716,7 +1186,7 @@ CONTAINS
       ! da is independent of i and j
       DO jj = 1, Glob_n
         DO ii = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             da(m, ii, jj) = -TWO * Jkll(m, ii, jj)
           ENDDO
         ENDDO
@@ -730,7 +1200,7 @@ CONTAINS
         ! RJLl = invAkl*Jij*invAklJ11*invAkl*Ll
         DO jj = 1, Glob_n
           DO ii = 1, Glob_n
-            DO m = 1, Glob_NumYHYTerms
+            DO m = 1, nbw
               RLl(m, ii, jj) = invAkl(m, ii, i) * ALl(m, i, jj)
               RJLl(m, ii, jj) = invAkl(m, ii, i) * Jkll(m, i, jj)
             ENDDO
@@ -740,7 +1210,7 @@ CONTAINS
         ! JRLl=invAkl*J11*invAkl*Jij*invAkl*Ll
         DO jj = 1, Glob_n
           DO ii = 1, Glob_n
-            DO m = 1, Glob_NumYHYTerms
+            DO m = 1, nbw
               JRLl(m, ii, jj) = invAkl(m, ii, 1) * RLl(m, 1, jj)
             ENDDO
           ENDDO
@@ -748,7 +1218,7 @@ CONTAINS
 
         DO jj = 1, Glob_n
           DO ii = 1, Glob_n
-            DO m = 1, Glob_NumYHYTerms
+            DO m = 1, nbw
               db(m, ii, jj) = -TWO * RLl(m, ii, jj)
               dc(m, ii, jj) = -TWO * (JRLl(m, ii, jj) + RJLl(m, ii, jj))
             ENDDO
@@ -756,56 +1226,69 @@ CONTAINS
         ENDDO
 
         ! now we have the pices to build dRl
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           coabij = coab(m, i, i)
           SUM0(m) = ZERO
           g1(m) = ONE - coabij
           g2(m) = ONE
         ENDDO
         DO ii = 1, p
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             SUM0(m) = SUM0(m) + Glob_gm3(ii) * ii * g2(m)
             g2(m) = g2(m) * g1(m)
           ENDDO
         ENDDO
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           SUM0(m) = SUM0(m) / SQRT(b(m, i, i))
         ENDDO
+        ! (written to Temp, which the symmetry product below reads)
         DO jj = 1, Glob_n
           DO ii = 1, Glob_n
-            DO m = 1, Glob_NumYHYTerms
+            DO m = 1, nbw
               coabij = coab(m, i, i)
-              dRl(m, ii, jj) = SUM0(m) &
+              Temp(m, ii, jj) = SUM0(m) &
                   * (coabij * (da(m, ii, jj) * b(m, i, i) &
                   + a(m) * db(m, ii, jj)) - dc(m, ii, jj)) &
                   / (a(m) * b(m, i, i))
-              dRl(m, ii, jj) = dRl(m, ii, jj) * SklBuf(m) * Glob_gm2(p) &
+              Temp(m, ii, jj) = Temp(m, ii, jj) * SklBuf(m) * Glob_gm2(p) &
                   - R(m, i, i) / (TWO * b(m, i, i)) * db(m, ii, jj)
             ENDDO
           ENDDO
         ENDDO
 
-        ! Multiply by SymMatrix
-        DO jj = 1, Glob_n
-          DO ii = 1, Glob_n
-            DO m = 1, Glob_NumYHYTerms
-              Temp(m, ii, jj) = dRl(m, ii, jj)
-              dRl(m, ii, jj) = ZERO
-            ENDDO
-          ENDDO
-        ENDDO
-        DO kk = 1, Glob_n
+        ! Multiply by SymMatrix (a signed gather when the block's matrices
+        ! are signed permutations, see MatrixElementsOpt). Only the lower
+        ! triangle of the result is used (dVl is vech(ddVl)), so only that
+        ! triangle is formed.
+        IF (BlkPerm) THEN
           DO jj = 1, Glob_n
-            DO ii = 1, Glob_n
-              DO m = 1, Glob_NumYHYTerms
-                dRl(m, ii, jj) = dRl(m, ii, jj) + SymMatrixBuf(m, ii, kk) * Temp(m, kk, jj)
+            DO ii = jj, Glob_n
+              DO m = 1, nbw
+                dRl(m, ii, jj) = ZERO + psgnR(m, ii) * Temp(m, pidxR(m, ii), jj)
               ENDDO
             ENDDO
           ENDDO
-        ENDDO
+        ELSE
+          DO jj = 1, Glob_n
+            DO ii = jj, Glob_n
+              DO m = 1, nbw
+                dRl(m, ii, jj) = ZERO
+              ENDDO
+            ENDDO
+          ENDDO
+          DO kk = 1, Glob_n
+            DO jj = 1, Glob_n
+              DO ii = jj, Glob_n
+                DO m = 1, nbw
+                  dRl(m, ii, jj) = dRl(m, ii, jj) + SymMatrixBuf(m, ii, kk) * Temp(m, kk, jj)
+                ENDDO
+              ENDDO
+            ENDDO
+          ENDDO
+        ENDIF
         DO jj = 1, Glob_n
-          DO ii = 1, Glob_n
-            DO m = 1, Glob_NumYHYTerms
+          DO ii = jj, Glob_n
+            DO m = 1, nbw
               dRl(m, ii, jj) = dRl(m, ii, jj) + R(m, i, i) * ddSl_over_Skl(m, ii, jj)
               ddVl(m, ii, jj) = ddVl(m, ii, jj) + dRl(m, ii, jj) * Glob_ChargeMatrix(i, i)
             ENDDO
@@ -822,7 +1305,7 @@ CONTAINS
           ! RJLl = invAkl*Jij*invAklJ11*invAkl*Ll
           DO jj = 1, Glob_n
             DO ii = 1, Glob_n
-              DO m = 1, Glob_NumYHYTerms
+              DO m = 1, nbw
                 RLl(m, ii, jj) = (invAkl(m, ii, i) - invAkl(m, ii, j)) &
                     * (ALl(m, i, jj) - ALl(m, j, jj))
                 RJLl(m, ii, jj) = (invAkl(m, ii, i) - invAkl(m, ii, j)) &
@@ -833,14 +1316,14 @@ CONTAINS
           ! JRLl=invAkl*J11*invAkl*Jij*invAkl*Ll
           DO jj = 1, Glob_n
             DO ii = 1, Glob_n
-              DO m = 1, Glob_NumYHYTerms
+              DO m = 1, nbw
                 JRLl(m, ii, jj) = invAkl(m, ii, 1) * RLl(m, 1, jj)
               ENDDO
             ENDDO
           ENDDO
           DO jj = 1, Glob_n
             DO ii = 1, Glob_n
-              DO m = 1, Glob_NumYHYTerms
+              DO m = 1, nbw
                 db(m, ii, jj) = -TWO * RLl(m, ii, jj)
                 dc(m, ii, jj) = -TWO * (JRLl(m, ii, jj) + RJLl(m, ii, jj))
               ENDDO
@@ -848,56 +1331,69 @@ CONTAINS
           ENDDO
 
           ! Now we have the pices to build dRl
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             coabij = coab(m, i, j)
             SUM0(m) = ZERO
             g1(m) = ONE - coabij
             g2(m) = ONE
           ENDDO
           DO ii = 1, p
-            DO m = 1, Glob_NumYHYTerms
+            DO m = 1, nbw
               SUM0(m) = SUM0(m) + Glob_gm3(ii) * ii * g2(m)
               g2(m) = g2(m) * g1(m)
             ENDDO
           ENDDO
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             SUM0(m) = SUM0(m) / SQRT(b(m, i, j))
           ENDDO
+          ! (written to Temp, which the symmetry product below reads)
           DO jj = 1, Glob_n
             DO ii = 1, Glob_n
-              DO m = 1, Glob_NumYHYTerms
+              DO m = 1, nbw
                 coabij = coab(m, i, j)
-                dRl(m, ii, jj) = SUM0(m) &
+                Temp(m, ii, jj) = SUM0(m) &
                     * (coabij * (da(m, ii, jj) * b(m, i, j) &
                     + a(m) * db(m, ii, jj)) - dc(m, ii, jj)) &
                     / (a(m) * b(m, i, j))
-                dRl(m, ii, jj) = dRl(m, ii, jj) * SklBuf(m) * Glob_gm2(p) &
+                Temp(m, ii, jj) = Temp(m, ii, jj) * SklBuf(m) * Glob_gm2(p) &
                     - R(m, i, j) / (TWO * b(m, i, j)) * db(m, ii, jj)
               ENDDO
             ENDDO
           ENDDO
 
-          ! Multiply by SymMatrix
-          DO jj = 1, Glob_n
-            DO ii = 1, Glob_n
-              DO m = 1, Glob_NumYHYTerms
-                Temp(m, ii, jj) = dRl(m, ii, jj)
-                dRl(m, ii, jj) = ZERO
-              ENDDO
-            ENDDO
-          ENDDO
-          DO kk = 1, Glob_n
+          ! Multiply by SymMatrix (a signed gather when the block's matrices
+          ! are signed permutations, see MatrixElementsOpt). Only the lower
+          ! triangle of the result is used (dVl is vech(ddVl)), so only that
+          ! triangle is formed.
+          IF (BlkPerm) THEN
             DO jj = 1, Glob_n
-              DO ii = 1, Glob_n
-                DO m = 1, Glob_NumYHYTerms
-                  dRl(m, ii, jj) = dRl(m, ii, jj) + SymMatrixBuf(m, ii, kk) * Temp(m, kk, jj)
+              DO ii = jj, Glob_n
+                DO m = 1, nbw
+                  dRl(m, ii, jj) = ZERO + psgnR(m, ii) * Temp(m, pidxR(m, ii), jj)
                 ENDDO
               ENDDO
             ENDDO
-          ENDDO
+          ELSE
+            DO jj = 1, Glob_n
+              DO ii = jj, Glob_n
+                DO m = 1, nbw
+                  dRl(m, ii, jj) = ZERO
+                ENDDO
+              ENDDO
+            ENDDO
+            DO kk = 1, Glob_n
+              DO jj = 1, Glob_n
+                DO ii = jj, Glob_n
+                  DO m = 1, nbw
+                    dRl(m, ii, jj) = dRl(m, ii, jj) + SymMatrixBuf(m, ii, kk) * Temp(m, kk, jj)
+                  ENDDO
+                ENDDO
+              ENDDO
+            ENDDO
+          ENDIF
           DO jj = 1, Glob_n
-            DO ii = 1, Glob_n
-              DO m = 1, Glob_NumYHYTerms
+            DO ii = jj, Glob_n
+              DO m = 1, nbw
                 dRl(m, ii, jj) = dRl(m, ii, jj) + R(m, i, j) * ddSl_over_Skl(m, ii, jj)
                 ddVl(m, ii, jj) = ddVl(m, ii, jj) + dRl(m, ii, jj) * Glob_ChargeMatrix(i, j)
               ENDDO
@@ -911,7 +1407,7 @@ CONTAINS
       DO j = 1, Glob_n
         DO i = j, Glob_n
           indx = indx + 1
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             dVl(m, indx) = ddVl(m, i, j)
           ENDDO
         ENDDO
@@ -922,7 +1418,7 @@ CONTAINS
     SELECT CASE (gradflag)
     CASE (0)
       DO i = 1, Glob_npt
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           dHkBuf(m, i) = ZERO
           dHlBuf(m, i) = ZERO
           dSkBuf(m, i) = ZERO
@@ -931,7 +1427,7 @@ CONTAINS
       ENDDO
     CASE (1)
       DO i = 1, Glob_npt
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           dHkBuf(m, i) = dTk(m, i) + dVk(m, i)
           dHlBuf(m, i) = ZERO
           dSlBuf(m, i) = ZERO
@@ -939,14 +1435,14 @@ CONTAINS
       ENDDO
     CASE (2)
       DO i = 1, Glob_npt
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           dHkBuf(m, i) = dTk(m, i) + dVk(m, i)
           dHlBuf(m, i) = dTl(m, i) + dVl(m, i)
         ENDDO
       ENDDO
     END SELECT
 
-  END SUBROUTINE MatrixElementsOpt
+  END SUBROUTINE MatrixElementsOptBlk
 
 
   SUBROUTINE PrecomputeMatrices_MA_L_A(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
@@ -1027,10 +1523,10 @@ CONTAINS
 
     INTEGER, INTENT(IN) :: p
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms), INTENT(IN)  :: coab
-    REAL(wp), DIMENSION(Glob_NumYHYTerms), INTENT(OUT) :: g3
+    REAL(wp), DIMENSION(ldw), INTENT(IN)  :: coab
+    REAL(wp), DIMENSION(ldw), INTENT(OUT) :: g3
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: g1, g2
+    ! cg1, cg2 of the module workspace replace the automatic arrays g1, g2
 
     INTEGER :: m, i
 
@@ -1048,7 +1544,7 @@ CONTAINS
       ! above the compute_g3 loop), but relying on that leaves g3
       ! (INTENT(OUT)) unassigned - the same trap that bit compute_series.
 
-      DO m = 1, Glob_NumYHYTerms
+      DO m = 1, nbw
         g3(m) = ZERO
       ENDDO
 
@@ -1057,9 +1553,9 @@ CONTAINS
 
       ! Unwind
 
-      DO m = 1, Glob_NumYHYTerms
-        g1(m) = ONE - coab(m)
-        g3(m) = Glob_gm3(1) * g1(m)
+      DO m = 1, nbw
+        cg1(m) = ONE - coab(m)
+        g3(m) = Glob_gm3(1) * cg1(m)
       ENDDO
 
 
@@ -1067,9 +1563,9 @@ CONTAINS
 
       ! Unwind + Horner's Rule
 
-      DO m = 1, Glob_NumYHYTerms
-        g1(m) = ONE - coab(m)
-        g3(m) = (Glob_gm3(1) + Glob_gm3(2) * g1(m)) * g1(m)
+      DO m = 1, nbw
+        cg1(m) = ONE - coab(m)
+        g3(m) = (Glob_gm3(1) + Glob_gm3(2) * cg1(m)) * cg1(m)
       ENDDO
 
 
@@ -1077,9 +1573,9 @@ CONTAINS
 
       ! Unwind + Horner's Rule
 
-      DO m = 1, Glob_NumYHYTerms
-        g1(m) = ONE - coab(m)
-        g3(m) = (Glob_gm3(1) + (Glob_gm3(2) + Glob_gm3(3) * g1(m)) * g1(m)) * g1(m)
+      DO m = 1, nbw
+        cg1(m) = ONE - coab(m)
+        g3(m) = (Glob_gm3(1) + (Glob_gm3(2) + Glob_gm3(3) * cg1(m)) * cg1(m)) * cg1(m)
       ENDDO
 
 
@@ -1087,28 +1583,28 @@ CONTAINS
 
       ! Unroll 2X
 
-      DO m = 1, Glob_NumYHYTerms
-        g1(m) = ONE - coab(m)
-        g2(m) = ONE
+      DO m = 1, nbw
+        cg1(m) = ONE - coab(m)
+        cg2(m) = ONE
         g3(m) = ZERO
       ENDDO
 
       DO i = 1, p-1, 2
-        DO m = 1, Glob_NumYHYTerms
-          g2(m) = g2(m) * g1(m)
-          g3(m) = g3(m) + Glob_gm3(i) * g2(m)
+        DO m = 1, nbw
+          cg2(m) = cg2(m) * cg1(m)
+          g3(m) = g3(m) + Glob_gm3(i) * cg2(m)
 
-          g2(m) = g2(m) * g1(m)
-          g3(m) = g3(m) + Glob_gm3(i+1) * g2(m)
+          cg2(m) = cg2(m) * cg1(m)
+          g3(m) = g3(m) + Glob_gm3(i+1) * cg2(m)
         ENDDO
       ENDDO
 
       IF (IAND(p, 1) == 1) THEN
         i = p
 
-        DO m = 1, Glob_NumYHYTerms
-          g2(m) = g2(m) * g1(m)
-          g3(m) = g3(m) + Glob_gm3(i) * g2(m)
+        DO m = 1, nbw
+          cg2(m) = cg2(m) * cg1(m)
+          g3(m) = g3(m) + Glob_gm3(i) * cg2(m)
         ENDDO
       ENDIF
 
@@ -1117,29 +1613,29 @@ CONTAINS
 
       ! Unroll 3X
 
-      DO m = 1, Glob_NumYHYTerms
-        g1(m) = ONE - coab(m)
-        g2(m) = ONE
+      DO m = 1, nbw
+        cg1(m) = ONE - coab(m)
+        cg2(m) = ONE
         g3(m) = ZERO
       ENDDO
 
       DO i = 1, p-2, 3
-        DO m = 1, Glob_NumYHYTerms
-          g2(m) = g2(m) * g1(m)
-          g3(m) = g3(m) + Glob_gm3(i) * g2(m)
+        DO m = 1, nbw
+          cg2(m) = cg2(m) * cg1(m)
+          g3(m) = g3(m) + Glob_gm3(i) * cg2(m)
 
-          g2(m) = g2(m) * g1(m)
-          g3(m) = g3(m) + Glob_gm3(i+1) * g2(m)
+          cg2(m) = cg2(m) * cg1(m)
+          g3(m) = g3(m) + Glob_gm3(i+1) * cg2(m)
 
-          g2(m) = g2(m) * g1(m)
-          g3(m) = g3(m) + Glob_gm3(i+2) * g2(m)
+          cg2(m) = cg2(m) * cg1(m)
+          g3(m) = g3(m) + Glob_gm3(i+2) * cg2(m)
         ENDDO
       ENDDO
 
       DO i = p - MOD(p, 3) + 1, p  ! Let p = 3*q + r, 0 <= r < 3; then p-mod(p,3) = 3*q
-        DO m = 1, Glob_NumYHYTerms
-          g2(m) = g2(m) * g1(m)
-          g3(m) = g3(m) + Glob_gm3(i) * g2(m)
+        DO m = 1, nbw
+          cg2(m) = cg2(m) * cg1(m)
+          g3(m) = g3(m) + Glob_gm3(i) * cg2(m)
         ENDDO
       ENDDO
 
@@ -1148,33 +1644,33 @@ CONTAINS
 
       ! Unroll 4X
 
-      DO m = 1, Glob_NumYHYTerms
-        g1(m) = ONE - coab(m)
-        g2(m) = ONE
+      DO m = 1, nbw
+        cg1(m) = ONE - coab(m)
+        cg2(m) = ONE
         g3(m) = ZERO
       ENDDO
 
       DO i = 1, p-3, 4
-        DO m = 1, Glob_NumYHYTerms
-          g2(m) = g2(m) * g1(m)
-          g3(m) = g3(m) + Glob_gm3(i) * g2(m)
+        DO m = 1, nbw
+          cg2(m) = cg2(m) * cg1(m)
+          g3(m) = g3(m) + Glob_gm3(i) * cg2(m)
 
-          g2(m) = g2(m) * g1(m)
-          g3(m) = g3(m) + Glob_gm3(i+1) * g2(m)
+          cg2(m) = cg2(m) * cg1(m)
+          g3(m) = g3(m) + Glob_gm3(i+1) * cg2(m)
 
-          g2(m) = g2(m) * g1(m)
-          g3(m) = g3(m) + Glob_gm3(i+2) * g2(m)
+          cg2(m) = cg2(m) * cg1(m)
+          g3(m) = g3(m) + Glob_gm3(i+2) * cg2(m)
 
-          g2(m) = g2(m) * g1(m)
-          g3(m) = g3(m) + Glob_gm3(i+3) * g2(m)
+          cg2(m) = cg2(m) * cg1(m)
+          g3(m) = g3(m) + Glob_gm3(i+3) * cg2(m)
         ENDDO
       ENDDO
 
       ! do i=p-mod(p,4)+1,p
       DO i = p - IAND(p, 3) + 1, p
-        DO m = 1, Glob_NumYHYTerms
-          g2(m) = g2(m) * g1(m)
-          g3(m) = g3(m) + Glob_gm3(i) * g2(m)
+        DO m = 1, nbw
+          cg2(m) = cg2(m) * cg1(m)
+          g3(m) = g3(m) + Glob_gm3(i) * cg2(m)
         ENDDO
       ENDDO
 
@@ -1184,37 +1680,84 @@ CONTAINS
 
 
   SUBROUTINE compute_products_1(Lk, Ak, Al, invAkl, PLl, invAl, &
-                                ALk, ALl, AAk, AAl, AlLl)
+                                ALk, ALl, AAk, AAl, AlLl, gradflag)
+    ! Lk and Ak are the bra matrices (term-independent, 2D).
+    ! Only the products the caller's gradflag needs are formed: AAk and AAl
+    ! always (energy), ALk for gradflag >= 1 (bra derivatives), ALl and AlLl
+    ! for gradflag >= 2 (ket derivatives). Each product is accumulated over k
+    ! exactly as before (k outermost, from zero).
     IMPLICIT NONE
 
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Lk, Ak, Al, invAkl, PLl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: invAl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ALk, ALl, AAk, AAl, AlLl
+    REAL(wp), DIMENSION(Glob_n, Glob_n) :: Lk, Ak
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: Al, invAkl, PLl
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: invAl
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: ALk, ALl, AAk, AAl, AlLl
+    INTEGER, INTENT(IN) :: gradflag
 
     INTEGER :: m, i, j, k
 
 
-    ALk = ZERO
-    ALl = ZERO
     AAk = ZERO
     AAl = ZERO
-    AlLl = ZERO
 
-    ! CDIR$ UNROLL (2)
-    DO k = 1, Glob_n
-      DO j = 1, Glob_n
-        DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
-            ALk(m, i, j) = ALk(m, i, j) + invAkl(m, i, k) * Lk(m, k, j)
-            ALl(m, i, j) = ALl(m, i, j) + invAkl(m, i, k) * PLl(m, k, j)
-            AlLl(m, i, j) = AlLl(m, i, j) + invAl(m, i, k) * PLl(m, k, j)
-            AAk(m, i, j) = AAk(m, i, j) + invAkl(m, i, k) * Ak(m, k, j)
-            AAl(m, i, j) = AAl(m, i, j) + invAkl(m, i, k) * Al(m, k, j)  ! could do I-invAkl*Ak
+    IF (gradflag == 0) THEN
+      ! the energy needs AAk in full (the diagonal of AAk*M*Al) but only
+      ! the first row of AAl (the first row of AAl*M*Al): row 1 only,
+      ! accumulated over k as before
+      DO k = 1, Glob_n
+        DO j = 1, Glob_n
+          DO i = 1, Glob_n
+            DO m = 1, nbw
+              AAk(m, i, j) = AAk(m, i, j) + invAkl(m, i, k) * Ak(k, j)
+            ENDDO
+          ENDDO
+          DO m = 1, nbw
+            AAl(m, 1, j) = AAl(m, 1, j) + invAkl(m, 1, k) * Al(m, k, j)
           ENDDO
         ENDDO
       ENDDO
-    ENDDO
+    ELSE
+      ! CDIR$ UNROLL (2)
+      DO k = 1, Glob_n
+        DO j = 1, Glob_n
+          DO i = 1, Glob_n
+            DO m = 1, nbw
+              AAk(m, i, j) = AAk(m, i, j) + invAkl(m, i, k) * Ak(k, j)
+              AAl(m, i, j) = AAl(m, i, j) + invAkl(m, i, k) * Al(m, k, j)  ! could do I-invAkl*Ak
+            ENDDO
+          ENDDO
+        ENDDO
+      ENDDO
+    ENDIF
+
+    IF (gradflag >= 1) THEN
+      ALk = ZERO
+      DO k = 1, Glob_n
+        DO j = 1, Glob_n
+          DO i = 1, Glob_n
+            DO m = 1, nbw
+              ALk(m, i, j) = ALk(m, i, j) + invAkl(m, i, k) * Lk(k, j)
+            ENDDO
+          ENDDO
+        ENDDO
+      ENDDO
+    ENDIF
+
+    IF (gradflag >= 2) THEN
+      ALl = ZERO
+      AlLl = ZERO
+      DO k = 1, Glob_n
+        DO j = 1, Glob_n
+          DO i = 1, Glob_n
+            DO m = 1, nbw
+              ALl(m, i, j) = ALl(m, i, j) + invAkl(m, i, k) * PLl(m, k, j)
+              AlLl(m, i, j) = AlLl(m, i, j) + invAl(m, i, k) * PLl(m, k, j)
+            ENDDO
+          ENDDO
+        ENDDO
+      ENDDO
+    ENDIF
 
   END SUBROUTINE compute_products_1
 
@@ -1226,8 +1769,8 @@ CONTAINS
     IMPLICIT NONE
 
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Al
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: MAl
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: Al
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: MAl
 
     INTEGER :: m, i, j, k
 
@@ -1238,7 +1781,7 @@ CONTAINS
     DO k = 1, Glob_n
       DO j = 1, Glob_n
         DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             MAl(m, i, j) = MAl(m, i, j) + Glob_MassMatrix(i, k) * Al(m, k, j)
           ENDDO
         ENDDO
@@ -1249,16 +1792,42 @@ CONTAINS
 
 
   SUBROUTINE compute_products_3(AAk, AAl, MAk, MAl, &
-                                AAlMAl, AAkMAk, AAkMAl, AAlMAk)
-
+                                AAlMAl, AAkMAk, AAkMAl, AAlMAk, gradflag)
+    ! MAk is the bra matrix M*Ak (term-independent, 2D).
+    ! The energy needs only the diagonal of AAkMAl (trT), the first row of
+    ! AAlMAl (tl) and the first row of AAkMAk (tk): with gradflag 0 just
+    ! those elements are accumulated, over k in the same order as the full
+    ! products; the derivatives need the full matrices.
     IMPLICIT NONE
 
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAk, AAl, MAk, MAl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
+    REAL(wp), DIMENSION(Glob_n, Glob_n) :: MAk
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: AAk, AAl, MAl
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
+    INTEGER, INTENT(IN) :: gradflag
 
     INTEGER :: m, i, j, k
 
+
+    IF (gradflag == 0) THEN
+      DO i = 1, Glob_n
+        DO m = 1, nbw
+          AAkMAl(m, i, i) = ZERO
+          AAlMAl(m, 1, i) = ZERO
+          AAkMAk(m, 1, i) = ZERO
+        ENDDO
+      ENDDO
+      DO k = 1, Glob_n
+        DO i = 1, Glob_n
+          DO m = 1, nbw
+            AAkMAl(m, i, i) = AAkMAl(m, i, i) + AAk(m, i, k) * MAl(m, k, i)
+            AAlMAl(m, 1, i) = AAlMAl(m, 1, i) + AAl(m, 1, k) * MAl(m, k, i)
+            AAkMAk(m, 1, i) = AAkMAk(m, 1, i) + AAk(m, 1, k) * MAk(k, i)
+          ENDDO
+        ENDDO
+      ENDDO
+      RETURN
+    ENDIF
 
     AAlMAl = ZERO
     AAkMAk = ZERO
@@ -1269,11 +1838,11 @@ CONTAINS
     DO k = 1, Glob_n
       DO j = 1, Glob_n
         DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+          DO m = 1, nbw
             AAlMAl(m, i, j) = AAlMAl(m, i, j) + AAl(m, i, k) * MAl(m, k, j)
-            AAkMAk(m, i, j) = AAkMAk(m, i, j) + AAk(m, i, k) * MAk(m, k, j)
+            AAkMAk(m, i, j) = AAkMAk(m, i, j) + AAk(m, i, k) * MAk(k, j)
             AAkMAl(m, i, j) = AAkMAl(m, i, j) + AAk(m, i, k) * MAl(m, k, j)
-            AAlMAk(m, i, j) = AAlMAk(m, i, j) + AAl(m, i, k) * MAk(m, k, j)  ! MAk-invAkl*Ak...
+            AAlMAk(m, i, j) = AAlMAk(m, i, j) + AAl(m, i, k) * MAk(k, j)  ! MAk-invAkl*Ak...
           ENDDO
         ENDDO
       ENDDO
@@ -1283,113 +1852,154 @@ CONTAINS
 
 
   SUBROUTINE compute_products_4(ALk, ALl, AAlMAl, AAkMAk, AAkMAl, AAlMAk, &
-                                Tllk, Tkkl, Tklk, Tlkl)
+                                Tllk, Tkkl, Tklk, Tlkl, gradflag)
+    ! Tllk and Tklk enter the bra derivatives (gradflag >= 1), Tkkl and
+    ! Tlkl the ket derivatives (gradflag >= 2) only.
+    ! Only the elements that are used are formed, each accumulated over k
+    ! exactly as before: Tllk enters ddTk (lower triangle) and JlMlk (row
+    ! 1); Tklk enters JkMlk only (row 1); Tkkl enters ddTl (all elements);
+    ! Tlkl enters JlMkl only (row 1).
 
     IMPLICIT NONE
 
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ALk, ALl
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Tllk, Tkkl, Tklk, Tlkl
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: ALk, ALl
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: Tllk, Tkkl, Tklk, Tlkl
+    INTEGER, INTENT(IN) :: gradflag
 
     INTEGER :: m, i, j, k
 
 
     Tllk = ZERO
-    Tkkl = ZERO
     Tklk = ZERO
-    Tlkl = ZERO
 
-    ! CDIR$ UNROLL (2)
     DO k = 1, Glob_n
       DO j = 1, Glob_n
-        DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+        DO i = j, Glob_n
+          DO m = 1, nbw
             Tllk(m, i, j) = Tllk(m, i, j) + AAlMAl(m, i, k) * ALk(m, k, j)
-            Tkkl(m, i, j) = Tkkl(m, i, j) + AAkMAk(m, i, k) * ALl(m, k, j)
-            Tklk(m, i, j) = Tklk(m, i, j) + AAkMAl(m, i, k) * ALk(m, k, j)
-            Tlkl(m, i, j) = Tlkl(m, i, j) + AAlMAk(m, i, k) * ALl(m, k, j)
           ENDDO
+        ENDDO
+        IF (j > 1) THEN
+          DO m = 1, nbw
+            Tllk(m, 1, j) = Tllk(m, 1, j) + AAlMAl(m, 1, k) * ALk(m, k, j)
+          ENDDO
+        ENDIF
+        DO m = 1, nbw
+          Tklk(m, 1, j) = Tklk(m, 1, j) + AAkMAl(m, 1, k) * ALk(m, k, j)
         ENDDO
       ENDDO
     ENDDO
+
+    IF (gradflag >= 2) THEN
+      Tkkl = ZERO
+      Tlkl = ZERO
+      DO k = 1, Glob_n
+        DO j = 1, Glob_n
+          DO i = 1, Glob_n
+            DO m = 1, nbw
+              Tkkl(m, i, j) = Tkkl(m, i, j) + AAkMAk(m, i, k) * ALl(m, k, j)
+            ENDDO
+          ENDDO
+          DO m = 1, nbw
+            Tlkl(m, 1, j) = Tlkl(m, 1, j) + AAlMAk(m, 1, k) * ALl(m, k, j)
+          ENDDO
+        ENDDO
+      ENDDO
+    ENDIF
 
   END SUBROUTINE compute_products_4
 
 
   SUBROUTINE compute_products_5(AAlMAl, AAkMAk, AAkMAl, AAlMAk, Jklk, Jkll, &
-                                TlMkJk, TkMlJl, TlMlJk, TkMkJl)
+                                TlMkJk, TkMlJl, TlMlJk, TkMkJl, gradflag)
+    ! TlMkJk and TlMlJk enter the bra derivatives (gradflag >= 1), TkMlJl
+    ! and TkMkJl the ket derivatives (gradflag >= 2) only
 
     IMPLICIT NONE
 
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Jklk, Jkll
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: TlMkJk, TkMlJl, TlMlJk, TkMkJl
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: Jklk, Jkll
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: AAlMAl, AAkMAk, AAkMAl, AAlMAk
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: TlMkJk, TkMlJl, TlMlJk, TkMkJl
+    INTEGER, INTENT(IN) :: gradflag
 
     INTEGER :: m, i, j, k
 
 
     TlMkJk = ZERO
-    TkMlJl = ZERO
     TlMlJk = ZERO
-    TkMkJl = ZERO
 
-    ! DIR$ UNROLL(2)
+    ! (they enter ddTk only, whose lower triangle alone is used: lower
+    ! triangle only, each element accumulated over k as before)
     DO k = 1, Glob_n
       DO j = 1, Glob_n
-        DO i = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+        DO i = j, Glob_n
+          DO m = 1, nbw
             TlMkJk(m, i, j) = TlMkJk(m, i, j) + AAlMAk(m, i, k) * Jklk(m, k, j)
-            TkMlJl(m, i, j) = TkMlJl(m, i, j) + AAkMAl(m, i, k) * Jkll(m, k, j)
             TlMlJk(m, i, j) = TlMlJk(m, i, j) + AAlMAl(m, i, k) * Jklk(m, k, j)
-            TkMkJl(m, i, j) = TkMkJl(m, i, j) + AAkMAk(m, i, k) * Jkll(m, k, j)
           ENDDO
         ENDDO
       ENDDO
     ENDDO
 
+    IF (gradflag >= 2) THEN
+      TkMlJl = ZERO
+      TkMkJl = ZERO
+      DO k = 1, Glob_n
+        DO j = 1, Glob_n
+          DO i = 1, Glob_n
+            DO m = 1, nbw
+              TkMlJl(m, i, j) = TkMlJl(m, i, j) + AAkMAl(m, i, k) * Jkll(m, k, j)
+              TkMkJl(m, i, j) = TkMkJl(m, i, j) + AAkMAk(m, i, k) * Jkll(m, k, j)
+            ENDDO
+          ENDDO
+        ENDDO
+      ENDDO
+    ENDIF
+
   END SUBROUTINE compute_products_5
 
 
   SUBROUTINE compute_dVk(SklBuf, invAkl, a, b, coab, p, R, ddSk_over_Skl, ALk, Jklk, dVk)
+    ! dVk is vech(ddVk), i.e. the lower triangle (ii >= jj) of ddVk, and
+    ! every (ii,jj) matrix formed here enters ddVk element by element. So
+    ! only the lower triangles are computed, by the same statements as
+    ! before. The one exception is RLk, whose first row enters JRLk for
+    ! every jj: RLk is computed for the lower triangle and for row 1.
 
     IMPLICIT NONE
 
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: SklBuf  ! input
+    REAL(wp), DIMENSION(ldw) :: SklBuf  ! input
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms)                 :: SUM0    ! local
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: invAkl  ! input
-    REAL(wp), DIMENSION(Glob_NumYHYTerms)                 :: a       ! input
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: invAkl  ! input
+    REAL(wp), DIMENSION(ldw)                 :: a       ! input
 
     REAL(wp)                                              :: coabij      ! local
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: R, b, coab  ! input
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: R, b, coab  ! input
 
     INTEGER :: p  ! input
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_npt)       :: dVk            ! output
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ddSk_over_Skl  ! input
+    REAL(wp), DIMENSION(ldw, Glob_npt)       :: dVk            ! output
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: ddSk_over_Skl  ! input
 
     REAL(wp)                                              :: dRk   ! local
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ddVk  ! local
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: ALk   ! input
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: Jklk  ! input
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: ALk   ! input
+    REAL(wp), DIMENSION(ldw, Glob_n, Glob_n) :: Jklk  ! input
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: da, db, dc       ! local
-    REAL(wp), DIMENSION(Glob_NumYHYTerms, Glob_n, Glob_n) :: RLk, JRLk, RJLk  ! local
-
-    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: g1, g2            ! local
-    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: factor1, factor2
+    ! SUM0, ddVk, da, db, dc, RLk, JRLk, RJLk, g1, g2, factor1, factor2 are
+    ! the module workspace (they were automatic arrays, allocated per call)
 
     INTEGER :: m, i, j, ii, jj, indx
 
 
     ! da is independent of i and j
     DO jj = 1, Glob_n
-      DO ii = 1, Glob_n
-        DO m = 1, Glob_NumYHYTerms
+      DO ii = jj, Glob_n
+        DO m = 1, nbw
           da(m, ii, jj) = -TWO * Jklk(m, ii, jj)
         ENDDO
       ENDDO
@@ -1405,19 +2015,24 @@ CONTAINS
       ! RLk= nvAkl*Jij*invAkl*Lk
       ! RJLk=invAkl*Jij*invAklJ11*invAkl*Lk
       DO jj = 1, Glob_n
-        DO ii = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+        DO ii = jj, Glob_n
+          DO m = 1, nbw
             RLk(m, ii, jj) = invAkl(m, ii, i) * ALk(m, i, jj)
             RJLk(m, ii, jj) = invAkl(m, ii, i) * Jklk(m, i, jj)
           ENDDO
         ENDDO
+        IF (jj > 1) THEN
+          DO m = 1, nbw
+            RLk(m, 1, jj) = invAkl(m, 1, i) * ALk(m, i, jj)
+          ENDDO
+        ENDIF
       ENDDO
 
 
       ! JRLk=invAkl*J11*invAkl*Jij*invAkl*Lk
       DO jj = 1, Glob_n
-        DO ii = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+        DO ii = jj, Glob_n
+          DO m = 1, nbw
             JRLk(m, ii, jj) = invAkl(m, ii, 1) * RLk(m, 1, jj)
           ENDDO
         ENDDO
@@ -1425,8 +2040,8 @@ CONTAINS
 
 
       DO jj = 1, Glob_n
-        DO ii = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+        DO ii = jj, Glob_n
+          DO m = 1, nbw
             db(m, ii, jj) = -TWO * RLk(m, ii, jj)
             dc(m, ii, jj) = -TWO * (JRLk(m, ii, jj) + RJLk(m, ii, jj))
           ENDDO
@@ -1437,18 +2052,18 @@ CONTAINS
       ! Now we have the pices to build dRk
       CALL compute_series(p, coab(1, i, i), SUM0)
 
-      DO m = 1, Glob_NumYHYTerms
+      DO m = 1, nbw
         SUM0(m) = SUM0(m) / SQRT(b(m, i, i))
       ENDDO
 
-      DO m = 1, Glob_NumYHYTerms
+      DO m = 1, nbw
         factor1(m) = SUM0(m) / (a(m) * b(m, i, i)) * SklBuf(m) * Glob_gm2(p)
         factor2(m) = R(m, i, i) / (TWO * b(m, i, i))
       ENDDO
 
       DO jj = 1, Glob_n
-        DO ii = 1, Glob_n
-          DO m = 1, Glob_NumYHYTerms
+        DO ii = jj, Glob_n
+          DO m = 1, nbw
             coabij = coab(m, i, i)
 
             dRk = coabij * (da(m, ii, jj) * b(m, i, i) + a(m) * db(m, ii, jj)) - dc(m, ii, jj)
@@ -1470,8 +2085,8 @@ CONTAINS
         ! RLk=invAkl*Jij*invAkl*Lk
         ! RJLk=invAkl*Jij*invAklJ11*invAkl*Lk
         DO jj = 1, Glob_n
-          DO ii = 1, Glob_n
-            DO m = 1, Glob_NumYHYTerms
+          DO ii = jj, Glob_n
+            DO m = 1, nbw
               RLk(m, ii, jj) = (invAkl(m, ii, i) - invAkl(m, ii, j)) * &
                                (ALk(m, i, jj) - ALk(m, j, jj))
 
@@ -1479,13 +2094,19 @@ CONTAINS
                                (Jklk(m, i, jj) - Jklk(m, j, jj))
             ENDDO
           ENDDO
+          IF (jj > 1) THEN
+            DO m = 1, nbw
+              RLk(m, 1, jj) = (invAkl(m, 1, i) - invAkl(m, 1, j)) * &
+                               (ALk(m, i, jj) - ALk(m, j, jj))
+            ENDDO
+          ENDIF
         ENDDO
 
 
         ! JRLk=invAkl*J11*invAkl*Jij*invAkl*Lk
         DO jj = 1, Glob_n
-          DO ii = 1, Glob_n
-            DO m = 1, Glob_NumYHYTerms
+          DO ii = jj, Glob_n
+            DO m = 1, nbw
               JRLk(m, ii, jj) = invAkl(m, ii, 1) * RLk(m, 1, jj)
             ENDDO
           ENDDO
@@ -1493,8 +2114,8 @@ CONTAINS
 
 
         DO jj = 1, Glob_n
-          DO ii = 1, Glob_n
-            DO m = 1, Glob_NumYHYTerms
+          DO ii = jj, Glob_n
+            DO m = 1, nbw
               db(m, ii, jj) = -TWO * RLk(m, ii, jj)
               dc(m, ii, jj) = -TWO * (JRLk(m, ii, jj) + RJLk(m, ii, jj))
             ENDDO
@@ -1505,18 +2126,18 @@ CONTAINS
         ! Now we have the pices to build dRk
         CALL compute_series(p, coab(1, i, j), SUM0)
 
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           SUM0(m) = SUM0(m) / SQRT(b(m, i, j))
         ENDDO
 
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           factor1(m) = SUM0(m) / (a(m) * b(m, i, j)) * SklBuf(m) * Glob_gm2(p)
           factor2(m) = R(m, i, j) / (TWO * b(m, i, j))
         ENDDO
 
         DO jj = 1, Glob_n
-          DO ii = 1, Glob_n
-            DO m = 1, Glob_NumYHYTerms
+          DO ii = jj, Glob_n
+            DO m = 1, nbw
               coabij = coab(m, i, j)
 
               dRk = coabij * (da(m, ii, jj) * b(m, i, j) + a(m) * db(m, ii, jj)) - dc(m, ii, jj)
@@ -1538,7 +2159,7 @@ CONTAINS
       DO i = j, Glob_n
         indx = indx + 1
 
-        DO m = 1, Glob_NumYHYTerms
+        DO m = 1, nbw
           dVk(m, indx) = ddVk(m, i, j)
         ENDDO
       ENDDO
@@ -1552,10 +2173,10 @@ CONTAINS
     IMPLICIT NONE
 
     INTEGER, INTENT(IN)                                   :: p
-    REAL(wp), DIMENSION(Glob_NumYHYTerms), INTENT(IN)  :: coab
-    REAL(wp), DIMENSION(Glob_NumYHYTerms), INTENT(OUT) :: sum
+    REAL(wp), DIMENSION(ldw), INTENT(IN)  :: coab
+    REAL(wp), DIMENSION(ldw), INTENT(OUT) :: sum
 
-    REAL(wp), DIMENSION(Glob_NumYHYTerms) :: g1, g2
+    ! cg1, cg2 of the module workspace replace the automatic arrays g1, g2
 
     INTEGER :: m, i
 
@@ -1568,51 +2189,51 @@ CONTAINS
       ! whatever its actual argument held on entry - in compute_dVk that
       ! is the local SUM0, which a debug build fills with NaN. The NaN
       ! then reaches DMNG and trips -ffpe-trap=invalid inside DV2NRM.
-      DO m = 1, Glob_NumYHYTerms
+      DO m = 1, nbw
         sum(m) = ZERO
       ENDDO
 
     CASE (1)
 
-      DO m = 1, Glob_NumYHYTerms
+      DO m = 1, nbw
         sum(m) = Glob_gm3(1)
       ENDDO
 
     CASE (2)
 
-      DO m = 1, Glob_NumYHYTerms
-        g1(m) = ONE-coab(m)
-        sum(m) = Glob_gm3(1)+Glob_gm3(2)*2*g1(m)
+      DO m = 1, nbw
+        cg1(m) = ONE-coab(m)
+        sum(m) = Glob_gm3(1)+Glob_gm3(2)*2*cg1(m)
       ENDDO
 
     CASE (3)
 
-      DO m = 1, Glob_NumYHYTerms
-        g1(m) = ONE-coab(m)
-        sum(m) = Glob_gm3(1)+(Glob_gm3(2)*2+Glob_gm3(3)*3*g1(m))*g1(m)
+      DO m = 1, nbw
+        cg1(m) = ONE-coab(m)
+        sum(m) = Glob_gm3(1)+(Glob_gm3(2)*2+Glob_gm3(3)*3*cg1(m))*cg1(m)
       ENDDO
 
     CASE (4:)
 
-      DO m = 1, Glob_NumYHYTerms
+      DO m = 1, nbw
         sum(m) = ZERO
-        g1(m) = ONE-coab(m)
-        g2(m) = ONE
+        cg1(m) = ONE-coab(m)
+        cg2(m) = ONE
       ENDDO
 
       DO i = 1, p-1, 2
-        DO m = 1, Glob_NumYHYTerms
-          sum(m) = sum(m)+Glob_gm3(i)*(i)*g2(m)
-          g2(m) = g2(m)*g1(m)
-          sum(m) = sum(m)+Glob_gm3(i+1)*(i+1)*g2(m)
-          g2(m) = g2(m)*g1(m)
+        DO m = 1, nbw
+          sum(m) = sum(m)+Glob_gm3(i)*(i)*cg2(m)
+          cg2(m) = cg2(m)*cg1(m)
+          sum(m) = sum(m)+Glob_gm3(i+1)*(i+1)*cg2(m)
+          cg2(m) = cg2(m)*cg1(m)
         ENDDO
       ENDDO
 
       IF (IAND(p, 1) == 1) THEN
         i = p
-        DO m = 1, Glob_NumYHYTerms
-          sum(m) = sum(m)+Glob_gm3(i)*i*g2(m)
+        DO m = 1, nbw
+          sum(m) = sum(m)+Glob_gm3(i)*i*cg2(m)
         ENDDO
       ENDIF
 
