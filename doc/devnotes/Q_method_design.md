@@ -191,8 +191,12 @@ The qrlinalg state is private in production. Do not define
 The qrlinalg wrappers validate indices, dimensions, state, and capacity before
 calling the underlying QR-update kernels. The kernels themselves do not
 return a numerical status. A structurally successful update can still leave a
-singular or ill-conditioned shifted problem; `solve` and the independent
-residual checks detect that condition later.
+singular or ill-conditioned shifted problem. `solve` rejects only an R factor
+whose diagonal is zero, subnormal, or non-finite. A diagonal that is merely
+small relative to max(abs(R)) is accepted, because shifted inverse iteration is
+designed to work with a nearly singular H-shift*S, and a large ECG basis
+leaves such diagonals through near-linear dependence alone. Whether the
+resulting eigenpair is usable is decided by the independent residual checks.
 
 `QR_ERR_NO_CONVERGENCE` may carry an approximate eigenpair. ECGPACK accepts it
 only when the independently computed physical residual meets the Q tolerance.

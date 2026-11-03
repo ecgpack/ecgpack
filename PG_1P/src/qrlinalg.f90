@@ -1599,8 +1599,9 @@ contains
   !                zero in the working precision;
   !                QR_ERR_NONPOSITIVE_OVERLAP when the final x^T*S*x is not
   !                greater than the precision-scaled zero threshold;
-  !                QR_ERR_SINGULAR when R cannot be used safely or an
-  !                iteration produces a numerically zero vector;
+  !                QR_ERR_SINGULAR when a diagonal element of R is zero,
+  !                subnormal, or not finite, or when an iteration produces a
+  !                numerically zero or non-finite vector;
   !                QR_ERR_NO_CONVERGENCE when max_iter is reached. In this
   !                case x, lambda, rel_acc, and num_iter describe the best
   !                approximation reached.
@@ -1648,8 +1649,10 @@ contains
       return
     end if
 
-    !DGEQRF can complete for a rank-deficient matrix. Test the diagonal of R
-    !explicitly before DTRSV performs divisions during inverse iteration.
+    !DGEQRF can complete for an exactly rank-deficient matrix. Test the
+    !diagonal of R explicitly before DTRSV performs divisions during inverse
+    !iteration. A small but representable diagonal is accepted; see
+    !real_upper_factor_is_singular.
     if (real_upper_factor_is_singular(self%r, matrix_n)) then
       info = QR_ERR_SINGULAR
       return
@@ -1679,7 +1682,9 @@ contains
       !Scale the solution so its largest absolute component is one. Scaling
       !does not change the eigendirection and limits growth in repeated solves.
       max_component = maxval(abs(x))
-      if (max_component <= tiny(1.0_wp)) then
+      if (.not. (max_component > tiny(1.0_wp) .and. &
+                 max_component <= huge(1.0_wp))) then
+        x = 0.0_wp
         info = QR_ERR_SINGULAR
         return
       end if
@@ -1700,6 +1705,13 @@ contains
                        matrix_n, x, coefficient, &
                        self%solve_work(1:matrix_n), &
                        eigenvector_norm_squared)
+      !MAXVAL may ignore NaN elements when a finite element is present, so a
+      !partially non-finite iterate is detected through its direction error.
+      if (.not. (norm_of_diff <= huge(1.0_wp))) then
+        x = 0.0_wp
+        info = QR_ERR_SINGULAR
+        return
+      end if
 
       if (tol > 0.0_wp) then
         if (norm_of_diff <= tol) not_converged = .false.
@@ -1857,7 +1869,8 @@ contains
   !                zero in the working precision;
   !                QR_ERR_NONPOSITIVE_OVERLAP when the final x^H*S*x is not
   !                greater than the precision-scaled zero threshold;
-  !                QR_ERR_SINGULAR for an unusable R or zero iterate;
+  !                QR_ERR_SINGULAR for a zero, subnormal, or non-finite
+  !                diagonal of R, or a zero or non-finite iterate;
   !                QR_ERR_NO_CONVERGENCE when max_iter is reached. The latter
   !                status still returns the final eigenpair approximation.
   !
@@ -1908,7 +1921,9 @@ contains
     end if
 
     !ZGEQRF does not use a positive INFO value to report rank deficiency. The
-    !diagonal of R is therefore tested explicitly before ZTRSV is called.
+    !diagonal of R is therefore tested explicitly before ZTRSV is called. A
+    !small but representable diagonal is accepted; see
+    !complex_upper_factor_is_singular.
     if (complex_upper_factor_is_singular(self%r, matrix_n)) then
       info = QR_ERR_SINGULAR
       return
@@ -1937,7 +1952,9 @@ contains
       !Scale with the largest real or imaginary component. This bounds both
       !parts of every element without changing the complex eigendirection.
       max_component = complex_max_abs_real_or_imag(matrix_n, x)
-      if (max_component <= tiny(1.0_wp)) then
+      if (.not. (max_component > tiny(1.0_wp) .and. &
+                 max_component <= huge(1.0_wp))) then
+        x = complex_zero
         info = QR_ERR_SINGULAR
         return
       end if
@@ -1960,6 +1977,12 @@ contains
                        matrix_n, x, coefficient, &
                        self%solve_work(1:matrix_n), &
                        eigenvector_norm_squared)
+      !A partially non-finite iterate is detected through its direction error.
+      if (.not. (norm_of_diff <= huge(1.0_wp))) then
+        x = complex_zero
+        info = QR_ERR_SINGULAR
+        return
+      end if
 
       if (tol > 0.0_wp) then
         if (norm_of_diff <= tol) not_converged = .false.
@@ -2709,17 +2732,19 @@ contains
   function real_upper_factor_is_singular(r, n) result(is_singular)
   !Function real_upper_factor_is_singular tests whether a real
   !upper-triangular factor can be used safely by an unguarded triangular solve.
-  !The active factor scale is
+  !A diagonal element is considered unusable when it is zero, subnormal, or
+  !not finite, that is, unless
   !
-  !                     scale = max(abs(R(1:n,1:n)))
+  !        tiny(1.0_wp) < abs(R(i,i)) <= huge(1.0_wp).
   !
-  !and a diagonal element is considered unusable when
-  !
-  !        abs(R(i,i)) <= max(tiny(1.0_wp),epsilon(1.0_wp)*scale).
-  !
-  !This test detects exact rank deficiency as well as a diagonal that is lost
-  !at the relative resolution of the stored factor. xGEQRF does not report
-  !rank deficiency through INFO, so the test is required before DTRSV.
+  !A small diagonal relative to the factor scale is deliberately accepted.
+  !Shifted inverse iteration is designed to work with a nearly singular
+  !H-shift*S, and a large ECG basis contains near-linear dependences that
+  !leave diagonals many orders of magnitude below max(abs(R)) while still
+  !giving correct inverse iterates. The accuracy of the resulting eigenpair
+  !is judged by the caller from its residual, not by this test. xGEQRF does
+  !not report exact rank deficiency through INFO, so the test is required
+  !before DTRSV.
   !
   !  Input parameters:
   !    r - Real array containing the active upper-triangular factor.
@@ -2727,18 +2752,17 @@ contains
   !
   !  Result:
   !    is_singular - True when at least one active diagonal element satisfies
-  !                  the threshold above; false otherwise.
+  !                  the rejection condition above; false otherwise.
     real(wp), intent(in) :: r(:,:)
     integer, intent(in) :: n
     logical :: is_singular
-    real(wp) :: factor_scale, threshold
     integer :: i
 
-    factor_scale = maxval(abs(r(1:n,1:n)))
-    threshold = max(tiny(1.0_wp), epsilon(1.0_wp) * factor_scale)
     is_singular = .false.
     do i = 1, n
-      if (abs(r(i,i)) <= threshold) then
+      !The negated form also rejects NaN, for which every comparison is false.
+      if (.not. (abs(r(i,i)) > tiny(1.0_wp) .and. &
+                 abs(r(i,i)) <= huge(1.0_wp))) then
         is_singular = .true.
         return
       end if
@@ -2751,29 +2775,30 @@ contains
 
   function complex_upper_factor_is_singular(r, n) result(is_singular)
   !Function complex_upper_factor_is_singular tests whether a complex
-  !upper-triangular factor can be used safely by ZTRSV. The factor scale is the
-  !largest complex modulus in R(1:n,1:n), and the diagonal threshold is
+  !upper-triangular factor can be used safely by ZTRSV. A diagonal element is
+  !considered unusable unless
   !
-  !        max(tiny(1.0_wp),epsilon(1.0_wp)*factor_scale).
+  !        tiny(1.0_wp) < abs(R(i,i)) <= huge(1.0_wp).
+  !
+  !As in real_upper_factor_is_singular, a diagonal that is small relative to
+  !the factor scale is accepted; the caller judges the eigenpair residual.
   !
   !  Input parameters:
   !    r - Complex array containing the active upper-triangular factor.
   !    n - Active order of the factor.
   !
   !  Result:
-  !    is_singular - True when a diagonal modulus is not greater than the
-  !                  threshold; false otherwise.
+  !    is_singular - True when a diagonal modulus is zero, subnormal, or not
+  !                  finite; false otherwise.
     complex(wp), intent(in) :: r(:,:)
     integer, intent(in) :: n
     logical :: is_singular
-    real(wp) :: factor_scale, threshold
     integer :: i
 
-    factor_scale = maxval(abs(r(1:n,1:n)))
-    threshold = max(tiny(1.0_wp), epsilon(1.0_wp) * factor_scale)
     is_singular = .false.
     do i = 1, n
-      if (abs(r(i,i)) <= threshold) then
+      if (.not. (abs(r(i,i)) > tiny(1.0_wp) .and. &
+                 abs(r(i,i)) <= huge(1.0_wp))) then
         is_singular = .true.
         return
       end if
