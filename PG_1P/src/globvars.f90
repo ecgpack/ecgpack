@@ -16,15 +16,24 @@ MODULE globvars
   ! Screen output is gated as (Verbose >= n). Verbose is a PARAMETER, so
   ! the compiler removes the suppressed WRITE statements entirely. Errors
   ! and fatal diagnostics are never gated. Levels (cumulative):
-  !   0 : errors, results (energies, expectation values, saved files)
+  !   0 : errors, results (energies, expectation values, saved files),
+  !         the echo of the data file header (BASIS_TYPE ... GENERATOR_PARAM
+  !         and the three separator/status lines); for each optimization
+  !         step (BASIS_ENL, OPT_CYCLE, FULL_OPT1) only the energy and
+  !         whether the parameters were optimized (WriteStepEnergy)
   !   1 : + warnings, the explanations that accompany error and warning
-  !         messages, routine start/finish lines, summaries and statistics
+  !         messages, routine start/finish lines, summaries and statistics,
+  !         the nonlinear parameters before and after each optimization
+  !         step, the iteration table of FULL_OPT1; EXPC_VALS: the setup,
+  !         the eigenpair checks, coefficient statistics and timings
   !   2 : + progress messages (matrix elements, eigenproblem, swap file,
-  !         reallocations), per-candidate lines of the stochastic search,
-  !         the echo of the data file
+  !         reallocations, eigenvalue-index targeting), per-candidate lines
+  !         of the stochastic search; EXPC_VALS: the ten largest c_k
   !   3 : + tracing of the inverse-iteration solver (GSEPIIS) and of the
-  !         matrix-element assembly (matform): one block per solve/call
-  !   4 : + one line per basis-function pair inside matelem (floods)
+  !         matrix-element assembly (matform): one block per solve/call;
+  !         EXPC_VALS: every c_k and the terms of Y'Y
+  !   4 : + one line per basis-function pair inside matelem (floods);
+  !         EXPC_VALS: one line per basis-function pair and term of Y'Y
 
 
   !===============================================================
@@ -310,6 +319,17 @@ MODULE globvars
   ! algebra switch is linalg_setlocal.
   LOGICAL :: Glob_LocalWorkMode = .FALSE.
 
+  ! .TRUE.: the results do not depend on the number of MPI processes. The
+  ! inverse-iteration solver runs the single-process code on rank 0, which
+  ! broadcasts its results, and the gradient, overlap-penalty and
+  ! expectation-value sums are added in the single-process order, so any
+  ! process count gives the np = 1 result bit for bit. Only the matrix
+  ! elements are computed in parallel. .FALSE.: the parallel branches of
+  ! the linear algebra and per-rank partial sums combined by MPI_SUM; the
+  ! results then depend on the process count at the rounding level, and
+  ! the stochastic optimization amplifies that.
+  LOGICAL :: Glob_NpIndependent = .TRUE.
+
 
   !================================================================
   ! File names
@@ -480,7 +500,7 @@ MODULE globvars
   REAL(wp), ALLOCATABLE, DIMENSION(:), SAVE :: Glob_LastEigvector
 
   ! Maximum number of iterations allowed in GSEPIIS
-  INTEGER :: Glob_MaxIterForGSEPIIS = 30
+  INTEGER :: Glob_MaxIterForGSEPIIS = 60
 
   ! Largest GSEPIIS residual still accepted as a usable eigenpair. This is
   ! a safety net, not an accuracy target: the attainable residual is set
@@ -489,6 +509,14 @@ MODULE globvars
   ! error (1e-6 did). 1e-3 rejects only genuine garbage; set it huge for
   ! the reference behaviour without the test.
   REAL(wp) :: Glob_EigvalTolUsable = 1.0E-3_wp
+
+  ! .TRUE. right after RefreshINVITShift or RetargetShiftToEigenvalue when the
+  ! last factorization they made is the one of the matrix they leave in Glob_H
+  ! (upper triangle: L^T, lower triangle: H - Glob_ApproxEnergy*S) with its
+  ! diagonal in Glob_invD. The solve that follows then starts from row N+1
+  ! (nothing to factorize) instead of refactorizing all N rows. Set by the two
+  ! helpers, read by the I drivers immediately after calling them.
+  LOGICAL :: Glob_ShiftFactorKept = .FALSE.
 
   ! Maximum number of energy-evaluation failures allowed during
   ! optimization of nonlinear parameters
@@ -751,7 +779,10 @@ MODULE globvars
   LOGICAL  :: Glob_AttrScalParamSupplied = .FALSE.
 
 
-REAL(wp),PARAMETER :: Glob_gm1(0:125,0:125)= RESHAPE((/  &
+! Glob_gm1 is given in four parts: the Intel compiler (ifx) rejects the table
+! as one statement of 15876 constants (token limit). The parts hold the same
+! constants in the same order and RESHAPE joins them.
+REAL(wp),PARAMETER :: Glob_gm1_part1(3969) = (/  &
 1.0000000000000000000000000000000000000E0_wp ,&
 1.2446659545769566658118886594403418831E0_wp ,&
 1.3970684113160193984261880974912940620E0_wp ,&
@@ -4720,7 +4751,10 @@ REAL(wp),PARAMETER :: Glob_gm1(0:125,0:125)= RESHAPE((/  &
 3941012362387.5042902877841836466016352E0_wp ,&
 4866812378661.0762004814100448211864406E0_wp ,&
 5993111760247.0363481900058631070537198E0_wp ,&
-7359767629772.8393499587097972486008829E0_wp ,&
+7359767629772.8393499587097972486008829E0_wp &
+/)
+
+REAL(wp),PARAMETER :: Glob_gm1_part2(3969) = (/  &
 9013873144861.9072871020555031176768002E0_wp ,&
 11010950172078.856302516584703309718344E0_wp ,&
 13416319181054.695644511379698281336051E0_wp ,&
@@ -8689,7 +8723,10 @@ REAL(wp),PARAMETER :: Glob_gm1(0:125,0:125)= RESHAPE((/  &
 34937325295230411392954362.540611265967E0_wp ,&
 42905157773723301453007822.530994544939E0_wp ,&
 52618506868503655774339148.109829966187E0_wp ,&
-64444310871890493506356166.826095653590E0_wp ,&
+64444310871890493506356166.826095653590E0_wp &
+/)
+
+REAL(wp),PARAMETER :: Glob_gm1_part3(3969) = (/  &
 3.0806529069628261846315364439388623386E0_wp ,&
 25.143735989145593996757276529005273847E0_wp ,&
 144.45923684087894302147860800617246217E0_wp ,&
@@ -12658,7 +12695,10 @@ REAL(wp),PARAMETER :: Glob_gm1(0:125,0:125)= RESHAPE((/  &
 14373119091641982833401.436369629389736E0_wp ,&
 23064366244483966902296.213806512530359E0_wp ,&
 36825074027398752717172.818809973596748E0_wp ,&
-58506850495673229568848.802140635071264E0_wp ,&
+58506850495673229568848.802140635071264E0_wp &
+/)
+
+REAL(wp),PARAMETER :: Glob_gm1_part4(3969) = (/  &
 92507817327854610597217.866817295049678E0_wp ,&
 145581013038702613309199.42151285080560E0_wp ,&
 228049964324837405002922.07944988522735E0_wp ,&
@@ -16627,8 +16667,11 @@ REAL(wp),PARAMETER :: Glob_gm1(0:125,0:125)= RESHAPE((/  &
 14902674026805960661039764462306997342.E0_wp ,&
 21182406172627504154348200520840148686.E0_wp ,&
 30046934143278381611163855919962280010.E0_wp ,&
-42535295865117307932921825928971026432.E0_wp	       &
-/), (/ 126, 126 /))
+42535295865117307932921825928971026432.E0_wp &
+/)
+
+REAL(wp),PARAMETER :: Glob_gm1(0:125,0:125) = RESHAPE((/ Glob_gm1_part1, Glob_gm1_part2, &
+                                                         Glob_gm1_part3, Glob_gm1_part4 /), (/ 126, 126 /))
 
 
 REAL(wp),PARAMETER :: Glob_gm2(0:250) = RESHAPE((/       &

@@ -88,9 +88,10 @@ PROGRAM main
   !==================================================================
   ! Seeded from the clock unless the environment variable ECG_RND_SEED
   ! holds an integer, which makes runs reproducible for a given process
-  ! count. The seed is offset by the rank so that processes drawing their
-  ! own candidates do not test identical functions. DRNOR_START needs a
-  ! nonzero seed, hence the two substitutions.
+  ! count. The seed is offset by the rank; every random choice the ranks
+  ! share (trial functions, the order of the premultiplier scan) is drawn
+  ! on rank 0 and broadcast. DRNOR_START needs a nonzero seed, hence the
+  ! two substitutions.
   !------------------------------------------------------------------
   CALL GET_ENVIRONMENT_VARIABLE('ECG_RND_SEED', SeedEnv, STATUS=SeedStat)
   SeedErr = 1

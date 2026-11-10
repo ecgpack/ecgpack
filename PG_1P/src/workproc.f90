@@ -216,7 +216,7 @@ CONTAINS
 
     IF (Glob_ProcID == 0) THEN
 
-      IF (Verbose >= 2) WRITE(*, *) 'Reading initial conditions from data file ', TRIM(ADJUSTL(Glob_DataFileName))
+      IF (Verbose >= 0) WRITE(*, *) 'Reading initial conditions from data file ', TRIM(ADJUSTL(Glob_DataFileName))
 
       ! -- optional BASIS_TYPE ---------------------------------------
       READ(1, '(A)', IOSTAT=ReadLineErr) ReadLine
@@ -229,7 +229,7 @@ CONTAINS
             '" does not match the basis type of this code "', Glob_BasisType, '"'
           ErrorInDataFile = .TRUE.
         ELSE
-          IF (Verbose >= 2) WRITE(*, '(1x,a10,1x,a5)') ReadChar(1:10), ReadBasisType
+          IF (Verbose >= 0) WRITE(*, '(1x,a10,1x,a5)') ReadChar(1:10), ReadBasisType
           Glob_BasisTypeSupplied = .TRUE.
           Line = Line + 1
         ENDIF
@@ -241,7 +241,7 @@ CONTAINS
 
       ! -- mandatory PARTICLES ---------------------------------------
       READ(1, *) ReadChar(1:9), ReadInt
-      IF (Verbose >= 2) WRITE(*, '(1x,a9,1x,i6)') ReadChar(1:9), ReadInt
+      IF (Verbose >= 0) WRITE(*, '(1x,a9,1x,i6)') ReadChar(1:9), ReadInt
       Line = Line + 1
 
       IF ((ReadInt < 2) .OR. (ReadChar(1:9) /= 'PARTICLES')) THEN
@@ -287,7 +287,7 @@ CONTAINS
         Glob_IsIndexFixed = .TRUE.
         Glob_IndexFixedValue = ReadInt
 
-        IF (Verbose >= 2) WRITE(*, '(1x,a11,1x,i6)') ReadChar(1:11), Glob_IndexFixedValue
+        IF (Verbose >= 0) WRITE(*, '(1x,a11,1x,i6)') ReadChar(1:11), Glob_IndexFixedValue
         Line = Line + 1
 
         IF ((Glob_IndexFixedValue < 1) .OR. (Glob_IndexFixedValue > Glob_n)) THEN
@@ -347,8 +347,8 @@ CONTAINS
           ENDIF
         ENDDO
 
-        IF (Verbose >= 2) WRITE(*, '(1x,a6)', ADVANCE='no') ReadChar(1:6)
-        IF (Verbose >= 2) CALL writerealarradv(6, Glob_Mass, Glob_n+1)
+        IF (Verbose >= 0) WRITE(*, '(1x,a6)', ADVANCE='no') ReadChar(1:6)
+        IF (Verbose >= 0) CALL writerealarradv(6, Glob_Mass, Glob_n+1)
 
       ENDIF
 
@@ -391,9 +391,9 @@ CONTAINS
           NumOfWarnings = NumOfWarnings + 1
         ENDIF
 
-        IF (Verbose >= 2) WRITE(*, '(1x,a7)', ADVANCE='no') ReadChar(1:7)
-        IF (Verbose >= 2) CALL writereal(6, Glob_PseudoCharge0)
-        IF (Verbose >= 2) CALL writerealarradv(6, Glob_PseudoCharge, Glob_n)
+        IF (Verbose >= 0) WRITE(*, '(1x,a7)', ADVANCE='no') ReadChar(1:7)
+        IF (Verbose >= 0) CALL writereal(6, Glob_PseudoCharge0)
+        IF (Verbose >= 0) CALL writerealarradv(6, Glob_PseudoCharge, Glob_n)
 
       ENDIF
 
@@ -438,8 +438,8 @@ CONTAINS
 
             Glob_RepulsionScalingParamPlus = ReadRealA
             Glob_RepScalParamPlusSupplied = .TRUE.
-            IF (Verbose >= 2) WRITE(*, '(1x,a28)', ADVANCE='no') ReadChar(1:28)
-            IF (Verbose >= 2) CALL writerealadv(6, Glob_RepulsionScalingParamPlus)
+            IF (Verbose >= 0) WRITE(*, '(1x,a28)', ADVANCE='no') ReadChar(1:28)
+            IF (Verbose >= 0) CALL writerealadv(6, Glob_RepulsionScalingParamPlus)
 
           ELSEIF (ReadChar(1:29) == 'REPULSION_SCALING_PARAM_MINUS') THEN
 
@@ -448,15 +448,15 @@ CONTAINS
             ! NOTE: a28 against a 29-character argument, so the echoed
             ! label loses its trailing 'S'. Screen output only - the
             ! value that is read and stored is unaffected.
-            IF (Verbose >= 2) WRITE(*, '(1x,a28)', ADVANCE='no') ReadChar(1:29)
-            IF (Verbose >= 2) CALL writerealadv(6, Glob_RepulsionScalingParamMinus)
+            IF (Verbose >= 0) WRITE(*, '(1x,a28)', ADVANCE='no') ReadChar(1:29)
+            IF (Verbose >= 0) CALL writerealadv(6, Glob_RepulsionScalingParamMinus)
 
           ELSE
 
             Glob_RepulsionScalingParam = ReadRealA
             Glob_RepScalParamSupplied = .TRUE.
-            IF (Verbose >= 2) WRITE(*, '(1x,a23)', ADVANCE='no') ReadChar(1:23)
-            IF (Verbose >= 2) CALL writerealadv(6, Glob_RepulsionScalingParam)
+            IF (Verbose >= 0) WRITE(*, '(1x,a23)', ADVANCE='no') ReadChar(1:23)
+            IF (Verbose >= 0) CALL writerealadv(6, Glob_RepulsionScalingParam)
 
           ENDIF
 
@@ -496,8 +496,8 @@ CONTAINS
       ELSE
 
         Glob_AttrScalParamSupplied = .TRUE.
-        IF (Verbose >= 2) WRITE(*, '(1x,a24)', ADVANCE='no') ReadChar(1:24)
-        IF (Verbose >= 2) CALL writerealadv(6, Glob_AttractionScalingParam)
+        IF (Verbose >= 0) WRITE(*, '(1x,a24)', ADVANCE='no') ReadChar(1:24)
+        IF (Verbose >= 0) CALL writerealadv(6, Glob_AttractionScalingParam)
         Line = Line + 1
 
       ENDIF
@@ -521,8 +521,8 @@ CONTAINS
     IF (Glob_ProcID == 0) THEN
       READ(1, *) ReadChar(1:8), Glob_YOperatorString
       j = LEN_TRIM(Glob_YOperatorString)
-      IF (Verbose >= 2) WRITE(*, '(1x,a8)', ADVANCE='no') ReadChar(1:8)
-      IF (Verbose >= 2) CALL writestringadv(6, Glob_YOperatorString, j)
+      IF (Verbose >= 0) WRITE(*, '(1x,a8)', ADVANCE='no') ReadChar(1:8)
+      IF (Verbose >= 0) CALL writestringadv(6, Glob_YOperatorString, j)
       Line = Line + 1
 
       IF (ReadChar(1:8) /= 'SYMMETRY') THEN
@@ -557,7 +557,7 @@ CONTAINS
     !==================================================================
     IF (Glob_ProcID == 0) THEN
       READ(1, *) ReadChar(1:10), Glob_CurrBasisSize
-      IF (Verbose >= 2) WRITE(*, '(1x,a10,1x,i6)') ReadChar(1:10), Glob_CurrBasisSize
+      IF (Verbose >= 0) WRITE(*, '(1x,a10,1x,i6)') ReadChar(1:10), Glob_CurrBasisSize
       Line = Line + 1
 
       IF (ReadChar(1:10) /= 'BASIS_SIZE') THEN
@@ -582,8 +582,8 @@ CONTAINS
     !==================================================================
     IF (Glob_ProcID == 0) THEN
       READ(1, *) ReadChar(1:14), Glob_CurrEnergy
-      IF (Verbose >= 2) WRITE(*, '(1x,a14)', ADVANCE='no') ReadChar(1:14)
-      IF (Verbose >= 2) CALL writerealadv(6, Glob_CurrEnergy)
+      IF (Verbose >= 0) WRITE(*, '(1x,a14)', ADVANCE='no') ReadChar(1:14)
+      IF (Verbose >= 0) CALL writerealadv(6, Glob_CurrEnergy)
       Line = Line + 1
 
       IF (ReadChar(1:14) /= 'CURRENT_ENERGY') THEN
@@ -613,7 +613,7 @@ CONTAINS
     !------------------------------------------------------------------
     IF (Glob_ProcID == 0) THEN
       READ(1, *) ReadChar(1:16), Glob_WhichEigenvalue
-      IF (Verbose >= 2) WRITE(*, '(1x,a16,1x,i6)') ReadChar(1:16), Glob_WhichEigenvalue
+      IF (Verbose >= 0) WRITE(*, '(1x,a16,1x,i6)') ReadChar(1:16), Glob_WhichEigenvalue
       Line = Line + 1
 
       IF (ReadChar(1:16) /= 'WHICH_EIGENVALUE') THEN
@@ -646,8 +646,8 @@ CONTAINS
     !==================================================================
     IF (Glob_ProcID == 0) THEN
       READ(1, *) ReadChar(1:16), Glob_EigvalTol
-      IF (Verbose >= 2) WRITE(*, '(1x,a16)', ADVANCE='no') ReadChar(1:16)
-      IF (Verbose >= 2) CALL writerealadv(6, Glob_EigvalTol)
+      IF (Verbose >= 0) WRITE(*, '(1x,a16)', ADVANCE='no') ReadChar(1:16)
+      IF (Verbose >= 0) CALL writerealadv(6, Glob_EigvalTol)
       Line = Line + 1
 
       IF (ReadChar(1:16) /= 'EIGVAL_TOLERANCE') THEN
@@ -675,8 +675,8 @@ CONTAINS
     !------------------------------------------------------------------
     IF (Glob_ProcID == 0) THEN
       READ(1, *) ReadChar(1:14), Glob_InvItParameter
-      IF (Verbose >= 2) WRITE(*, '(1x,a14)', ADVANCE='no') ReadChar(1:14)
-      IF (Verbose >= 2) CALL writerealadv(6, Glob_InvItParameter)
+      IF (Verbose >= 0) WRITE(*, '(1x,a14)', ADVANCE='no') ReadChar(1:14)
+      IF (Verbose >= 0) CALL writerealadv(6, Glob_InvItParameter)
       Line = Line + 1
 
       IF (ReadChar(1:14) /= 'INVITPARAMETER') THEN
@@ -699,8 +699,8 @@ CONTAINS
     !------------------------------------------------------------------
     IF (Glob_ProcID == 0) THEN
       READ(1, *) ReadChar(1:15), Glob_LastEigvalTol
-      IF (Verbose >= 2) WRITE(*, '(1x,a15)', ADVANCE='no') ReadChar(1:15)
-      IF (Verbose >= 2) CALL writerealadv(6, Glob_LastEigvalTol)
+      IF (Verbose >= 0) WRITE(*, '(1x,a15)', ADVANCE='no') ReadChar(1:15)
+      IF (Verbose >= 0) CALL writerealadv(6, Glob_LastEigvalTol)
       Line = Line + 1
 
       IF (ReadChar(1:15) /= 'LAST_EIGVAL_TOL') THEN
@@ -715,8 +715,8 @@ CONTAINS
 
     IF (Glob_ProcID == 0) THEN
       READ(1, *) ReadChar(1:15), Glob_BestEigvalTol
-      IF (Verbose >= 2) WRITE(*, '(1x,a15)', ADVANCE='no') ReadChar(1:15)
-      IF (Verbose >= 2) CALL writerealadv(6, Glob_BestEigvalTol)
+      IF (Verbose >= 0) WRITE(*, '(1x,a15)', ADVANCE='no') ReadChar(1:15)
+      IF (Verbose >= 0) CALL writerealadv(6, Glob_BestEigvalTol)
       Line = Line + 1
 
       IF (ReadChar(1:15) /= 'BEST_EIGVAL_TOL') THEN
@@ -731,8 +731,8 @@ CONTAINS
 
     IF (Glob_ProcID == 0) THEN
       READ(1, *) ReadChar(1:16), Glob_WorstEigvalTol
-      IF (Verbose >= 2) WRITE(*, '(1x,a16)', ADVANCE='no') ReadChar(1:16)
-      IF (Verbose >= 2) CALL writerealadv(6, Glob_WorstEigvalTol)
+      IF (Verbose >= 0) WRITE(*, '(1x,a16)', ADVANCE='no') ReadChar(1:16)
+      IF (Verbose >= 0) CALL writerealadv(6, Glob_WorstEigvalTol)
       Line = Line + 1
 
       IF (ReadChar(1:16) /= 'WORST_EIGVAL_TOL') THEN
@@ -756,10 +756,10 @@ CONTAINS
     !------------------------------------------------------------------
     IF (Glob_ProcID == 0) THEN
       READ(1, *) ReadChar(1:15), Glob_RG_p1, Glob_RG_s1, Glob_RG_s2
-      IF (Verbose >= 2) WRITE(*, '(1x,a15)', ADVANCE='no') ReadChar(1:15)
-      IF (Verbose >= 2) CALL writereal(6, Glob_RG_p1)
-      IF (Verbose >= 2) CALL writereal(6, Glob_RG_s1)
-      IF (Verbose >= 2) CALL writerealadv(6, Glob_RG_s2)
+      IF (Verbose >= 0) WRITE(*, '(1x,a15)', ADVANCE='no') ReadChar(1:15)
+      IF (Verbose >= 0) CALL writereal(6, Glob_RG_p1)
+      IF (Verbose >= 0) CALL writereal(6, Glob_RG_s1)
+      IF (Verbose >= 0) CALL writerealadv(6, Glob_RG_s2)
       Line = Line + 1
 
       IF (ReadChar(1:15) /= 'GENERATOR_PARAM') THEN
@@ -805,11 +805,11 @@ CONTAINS
     !------------------------------------------------------------------
     IF (Glob_ProcID == 0) THEN
       READ(1, '(a70)') ReadChar(1:70)
-      IF (Verbose >= 2) WRITE(*, '(a70)') ReadChar(1:70)
+      IF (Verbose >= 0) WRITE(*, '(a70)') ReadChar(1:70)
       READ(1, '(a70)') ReadChar(1:70)
-      IF (Verbose >= 2) WRITE(*, '(a70)') ReadChar(1:70)
+      IF (Verbose >= 0) WRITE(*, '(a70)') ReadChar(1:70)
       READ(1, '(a70)') ReadChar(1:70)
-      IF (Verbose >= 2) WRITE(*, '(a70)') ReadChar(1:70)
+      IF (Verbose >= 0) WRITE(*, '(a70)') ReadChar(1:70)
       Line = Line + 3
     ENDIF
 
@@ -3486,7 +3486,8 @@ CONTAINS
     ! violates the threshold. Only pairs with at least one optimized function
     ! (Glob_nfru+1..Glob_nfa) are summed. The pair loops are split across
     ! ranks and combined with one MPI_ALLREDUCE; TotalPenalty is identical
-    ! on every rank.
+    ! on every rank. With Glob_NpIndependent every rank sums all pairs in
+    ! the single-process order instead.
     !==================================================================
 
     !------------------------------------------------------------------
@@ -3531,8 +3532,9 @@ CONTAINS
 
     ! Local-work mode counts as a single process here: in that mode each rank
     ! holds its OWN trial function in Glob_S and needs the complete penalty for
-    ! it, so the pair loops must NOT be split across ranks.
-    IF ((Glob_NumOfProcs == 1) .OR. (Glob_LocalWorkMode)) THEN
+    ! it, so the pair loops must NOT be split across ranks. Neither are they
+    ! with Glob_NpIndependent, so that the sum is that of one process.
+    IF ((Glob_NumOfProcs == 1) .OR. (Glob_LocalWorkMode) .OR. (Glob_NpIndependent)) THEN
 
       !==================================================================
       ! Serial path: one rank does every pair
@@ -3623,11 +3625,11 @@ CONTAINS
     ! Skipped in local-work mode: there the ranks no longer execute the
     ! same sequence of operations, so this collective would hang (see
     ! Glob_LocalWorkMode in globvars.f90). The new frame never sets that
-    ! flag yet, so today this always takes the MPI_ALLREDUCE branch; the
-    ! guard is here so the routine is already correct when BasisEnl brings
-    ! the per-rank trial mode across.
+    ! flag yet; the guard is here so the routine is already correct when
+    ! BasisEnl brings the per-rank trial mode across. Skipped as well with
+    ! Glob_NpIndependent, where every rank has summed all pairs.
     !------------------------------------------------------------------
-    IF (Glob_LocalWorkMode) THEN
+    IF ((Glob_LocalWorkMode) .OR. (Glob_NpIndependent)) THEN
       TotalPenalty = tp
     ELSE
       CALL MPI_ALLREDUCE(tp, TotalPenalty, 1, MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
@@ -3655,7 +3657,8 @@ CONTAINS
     ! dividing the i-side correction. The gradient is NOT reduced here; the
     ! caller reduces WkGR once, after this returns.
     ! Result: TotalPenalty (combined, same on all ranks); WkGR (added to in
-    ! place, still partial per rank).
+    ! place, still partial per rank). With Glob_NpIndependent every rank
+    ! takes all pairs in the single-process order, and WkGR is complete.
     !==================================================================
 
     !------------------------------------------------------------------
@@ -3705,8 +3708,9 @@ CONTAINS
 
     ! Local-work mode counts as a single process here: in that mode each rank
     ! holds its OWN trial function in Glob_S and needs the complete penalty for
-    ! it, so the pair loops must NOT be split across ranks.
-    IF ((Glob_NumOfProcs == 1) .OR. (Glob_LocalWorkMode)) THEN
+    ! it, so the pair loops must NOT be split across ranks. Neither are they
+    ! with Glob_NpIndependent, so that the sums are those of one process.
+    IF ((Glob_NumOfProcs == 1) .OR. (Glob_LocalWorkMode) .OR. (Glob_NpIndependent)) THEN
 
       !==================================================================
       ! Serial path: one rank does every pair
@@ -3852,9 +3856,10 @@ CONTAINS
     !==================================================================
     ! Only the PENALTY is reduced; WkGR stays partial (see the header).
     ! Skipped in local-work mode, where the ranks do not execute the same
-    ! sequence of collectives (never set in this frame yet).
+    ! sequence of collectives (never set in this frame yet), and with
+    ! Glob_NpIndependent, where every rank has summed all pairs.
     !------------------------------------------------------------------
-    IF (Glob_LocalWorkMode) THEN
+    IF ((Glob_LocalWorkMode) .OR. (Glob_NpIndependent)) THEN
       TotalPenalty = tp
     ELSE
       CALL MPI_ALLREDUCE(tp, TotalPenalty, 1, MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
@@ -4341,9 +4346,11 @@ CONTAINS
     ! MPI_ALLREDUCE at the end combines them: W(m) and TWO*t*W(m) are
     ! partial per rank, and the -t2*(...) correction is applied by each rank
     ! to its own slice of m only, so after the sum each m carries it once.
-    ! In local-work mode LoopFirst/LoopStride are 1/1 and nothing is reduced.
+    ! In local-work mode, and with Glob_NpIndependent (the single-process
+    ! order of the sums), LoopFirst/LoopStride are 1/1 and nothing is
+    ! reduced.
     !------------------------------------------------------------------
-    IF (Glob_LocalWorkMode) THEN
+    IF ((Glob_LocalWorkMode) .OR. (Glob_NpIndependent)) THEN
       LoopFirst = 1
       LoopStride = 1
     ELSE
@@ -4395,9 +4402,10 @@ CONTAINS
     ! Combine the partial gradients
     !==================================================================
     ! Skipped in local-work mode, where Glob_WkGR already holds this
-    ! rank's complete gradient for its own trial function.
+    ! rank's complete gradient for its own trial function, and with
+    ! Glob_NpIndependent, where it holds the complete gradient.
     !------------------------------------------------------------------
-    IF (Glob_LocalWorkMode) THEN
+    IF ((Glob_LocalWorkMode) .OR. (Glob_NpIndependent)) THEN
       Gradient(1:nfo*npt) = Glob_WkGR(1:nfo*npt)
     ELSE
       CALL MPI_ALLREDUCE(Glob_WkGR, Gradient, nfo*npt, MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
@@ -4881,10 +4889,11 @@ CONTAINS
     ! Two of the three loops are shared out across ranks and the reduction
     ! at the end combines them: W(m) and 2*t*W(m) are partial per rank, and
     ! the -t2*(...) correction is applied by each rank to its own slice of m
-    ! only, so after the sum each m carries it once. In local-work mode
+    ! only, so after the sum each m carries it once. In local-work mode,
+    ! and with Glob_NpIndependent (the single-process order of the sums),
     ! LoopFirst/LoopStride are 1/1 and nothing is reduced.
     !------------------------------------------------------------------
-    IF (Glob_LocalWorkMode) THEN
+    IF ((Glob_LocalWorkMode) .OR. (Glob_NpIndependent)) THEN
       LoopFirst = 1
       LoopStride = 1
     ELSE
@@ -4936,9 +4945,10 @@ CONTAINS
     ! Combine the partial gradients
     !==================================================================
     ! Skipped in local-work mode, where Glob_WkGR already holds this
-    ! rank's complete gradient for its own trial function.
+    ! rank's complete gradient for its own trial function, and with
+    ! Glob_NpIndependent, where it holds the complete gradient.
     !------------------------------------------------------------------
-    IF (Glob_LocalWorkMode) THEN
+    IF ((Glob_LocalWorkMode) .OR. (Glob_NpIndependent)) THEN
       Gradient(1:nfo*npt) = Glob_WkGR(1:nfo*npt)
     ELSE
       CALL MPI_ALLREDUCE(Glob_WkGR, Gradient, nfo*npt, MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
@@ -5229,8 +5239,9 @@ CONTAINS
             ! A failed write is reported but not fatal: the file is simply not
             ! usable next time, and the matrix elements get recomputed.
             !------------------------------------------------------------------
-            WRITE(*, *)
-            WRITE(*, '(1x,a33)', ADVANCE='no') 'Writing H and S into swap file... '
+            ! A progress message (Verbose >= 2); a failure is always reported
+            IF (Verbose >= 2) WRITE(*, *)
+            IF (Verbose >= 2) WRITE(*, '(1x,a33)', ADVANCE='no') 'Writing H and S into swap file... '
 
             DO i = 1, Glob_CurrBasisSize
               IF (OpenFileErr == 0) THEN
@@ -5246,6 +5257,7 @@ CONTAINS
               IF (Verbose >= 2) WRITE(*, *) 'completed'
               IF (Verbose >= 2) WRITE(*, *)
             ELSE
+              IF (Verbose < 2) WRITE(*, '(1x,a33)', ADVANCE='no') 'Writing H and S into swap file... '
               WRITE(*, *) 'failed to complete'
               WRITE(*, *)
             ENDIF
@@ -6706,6 +6718,11 @@ CONTAINS
     ! s(i), s(j) - a valid Fisher-Yates shuffle (every permutation equally
     ! likely; the i=1 pass is a no-op). REAL(8) is used for the draw like
     ! the other random numbers in this module.
+    !
+    ! Every rank calls it, but only rank 0 shuffles and broadcasts the
+    ! result: the ranks have differently seeded generators, and they must
+    ! visit the functions in the same order (they compute the matrix
+    ! elements of one basis together).
     !==================================================================
 
     !------------------------------------------------------------------
@@ -6732,17 +6749,23 @@ CONTAINS
 
     ELSE
 
-      ! Start from the identity
-      DO i = 1, n
-        s(i) = i
-      ENDDO
+      IF (Glob_ProcID == 0) THEN
 
-      ! Shuffle it
-      DO i = 1, n
-        CALL RANDOM_NUMBER(r8)
-        j = INT(r8*i)+1
-        k = s(i); s(i) = s(j); s(j) = k
-      ENDDO
+        ! Start from the identity
+        DO i = 1, n
+          s(i) = i
+        ENDDO
+
+        ! Shuffle it
+        DO i = 1, n
+          CALL RANDOM_NUMBER(r8)
+          j = INT(r8*i)+1
+          k = s(i); s(i) = s(j); s(j) = k
+        ENDDO
+
+      ENDIF
+
+      CALL MPI_BCAST(s, n, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
 
     ENDIF
 
@@ -8430,7 +8453,8 @@ CONTAINS
     ! Subroutine ComputeQOverlapPenalty evaluates the FULL_OPT1 smooth pair-overlap
     ! penalty without assuming that optimized functions form a trailing block. Each
     ! unordered pair touching the explicit active map is visited exactly once and
-    ! assigned to one MPI rank. Glob_S is read only through its canonical lower
+    ! assigned to one MPI rank (with Glob_NpIndependent every rank takes all pairs,
+    ! in the single-process order). Glob_S is read only through its canonical lower
     ! triangle.
     !
     ! Arguments:
@@ -8459,7 +8483,7 @@ CONTAINS
         b = Q_Workspace%ActivePosition(i)
         IF ((b > 0) .AND. (b < a)) CYCLE
         PairNumber = PairNumber+1
-        IF (MOD(PairNumber-1, Glob_NumOfProcs) /= Glob_ProcID) CYCLE
+        IF ((.NOT. Glob_NpIndependent) .AND. (MOD(PairNumber-1, Glob_NumOfProcs) /= Glob_ProcID)) CYCLE
         PairOverlap = QCanonicalMatrixElement(Glob_S, ActiveIndex, i)
         IF (PairOverlap*PairOverlap > Glob_OverlapPenaltyThreshold2) THEN
           PairPenalty = PenaltyCoefficient* &
@@ -8468,8 +8492,12 @@ CONTAINS
         ENDIF
       ENDDO
     ENDDO
-    CALL MPI_ALLREDUCE(LocalPenalty, TotalPenalty, 1, MPI_WP, MPI_SUM, &
-      MPI_COMM_WORLD, Glob_MPIErrCode)
+    IF (Glob_NpIndependent) THEN
+      TotalPenalty = LocalPenalty
+    ELSE
+      CALL MPI_ALLREDUCE(LocalPenalty, TotalPenalty, 1, MPI_WP, MPI_SUM, &
+        MPI_COMM_WORLD, Glob_MPIErrCode)
+    ENDIF
     ErrorCode = Q_METHOD_SUCCESS
 
   END SUBROUTINE ComputeQOverlapPenalty
@@ -8491,6 +8519,8 @@ CONTAINS
     ! For an active-active pair this expression is applied independently to both
     ! endpoints. Pair ownership follows MPI rank, so the caller's subsequent
     ! gradient MPI_ALLREDUCE combines both the energy-gradient and penalty pieces.
+    ! With Glob_NpIndependent every rank takes all pairs, in the single-process
+    ! order, and the caller does not reduce.
     !
     ! Arguments:
     REAL(wp), INTENT(OUT)   :: TotalPenalty
@@ -8520,7 +8550,7 @@ CONTAINS
         b = Q_Workspace%ActivePosition(i)
         IF ((b > 0) .AND. (b < a)) CYCLE
         PairNumber = PairNumber+1
-        IF (MOD(PairNumber-1, Glob_NumOfProcs) /= Glob_ProcID) CYCLE
+        IF ((.NOT. Glob_NpIndependent) .AND. (MOD(PairNumber-1, Glob_NumOfProcs) /= Glob_ProcID)) CYCLE
         PairOverlap = QCanonicalMatrixElement(Glob_S, ActiveIndex, i)
         IF (PairOverlap*PairOverlap > Glob_OverlapPenaltyThreshold2) THEN
           LocalPenalty = LocalPenalty+PenaltyCoefficient* &
@@ -8543,8 +8573,12 @@ CONTAINS
         ENDIF
       ENDDO
     ENDDO
-    CALL MPI_ALLREDUCE(LocalPenalty, TotalPenalty, 1, MPI_WP, MPI_SUM, &
-      MPI_COMM_WORLD, Glob_MPIErrCode)
+    IF (Glob_NpIndependent) THEN
+      TotalPenalty = LocalPenalty
+    ELSE
+      CALL MPI_ALLREDUCE(LocalPenalty, TotalPenalty, 1, MPI_WP, MPI_SUM, &
+        MPI_COMM_WORLD, Glob_MPIErrCode)
+    ENDIF
     ErrorCode = Q_METHOD_SUCCESS
 
   END SUBROUTINE ComputeQOverlapPenaltyAndAddGradient
@@ -8664,6 +8698,7 @@ CONTAINS
     INTEGER, INTENT(OUT)  :: ErrorCode
     ! Local variables:
     INTEGER  :: a, l, m, npt, MatrixOrder, NumActive, ActiveIndex
+    INTEGER  :: LoopFirst, LoopStride
     REAL(wp) :: W(Glob_npt_MaxAllowed), t, t2
 
     Evalue = HUGE(Evalue)
@@ -8694,11 +8729,21 @@ CONTAINS
     ! both symmetric H/S contributions. The final diagonal subtraction removes
     ! the duplicate diagonal and, through the eigenvalue equation, accounts for
     ! the derivative of normalization of every element touching this function.
+    ! The loops are shared out across ranks and reduced at the end; with
+    ! Glob_NpIndependent every rank does them whole, in the single-process
+    ! order, and nothing is reduced.
+    IF (Glob_NpIndependent) THEN
+      LoopFirst = 1
+      LoopStride = 1
+    ELSE
+      LoopFirst = 1+Glob_ProcID
+      LoopStride = Glob_NumOfProcs
+    ENDIF
     Glob_WkGR(1:NumActive*npt) = ZERO
     DO a = 1, NumActive
       ActiveIndex = Q_Workspace%ActiveFunction(a)
       W(1:npt) = ZERO
-      DO l = 1+Glob_ProcID, MatrixOrder, Glob_NumOfProcs
+      DO l = LoopFirst, MatrixOrder, LoopStride
         t = Glob_c(l)
         DO m = 1, npt
           W(m) = W(m)+t*(Glob_D(m, a, l)-Evalue*Glob_D(m+npt, a, l))
@@ -8709,7 +8754,7 @@ CONTAINS
       DO m = 1, npt
         Glob_WkGR((a-1)*npt+m) = TWO*t*W(m)
       ENDDO
-      DO m = 1+Glob_ProcID, npt, Glob_NumOfProcs
+      DO m = LoopFirst, npt, LoopStride
         Glob_WkGR((a-1)*npt+m) = Glob_WkGR((a-1)*npt+m)- &
           t2*(Glob_D(m, a, ActiveIndex)- &
               Evalue*Glob_D(m+npt, a, ActiveIndex))
@@ -8726,8 +8771,12 @@ CONTAINS
       ENDIF
       Evalue = Evalue+Glob_TotalOverlapPenalty
     ENDIF
-    CALL MPI_ALLREDUCE(Glob_WkGR, Gradient, NumActive*npt, MPI_WP, &
-      MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
+    IF (Glob_NpIndependent) THEN
+      Gradient(1:NumActive*npt) = Glob_WkGR(1:NumActive*npt)
+    ELSE
+      CALL MPI_ALLREDUCE(Glob_WkGR, Gradient, NumActive*npt, MPI_WP, &
+        MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
+    ENDIF
     Glob_EnergyGBCounter = Glob_EnergyGBCounter+1
 
   END SUBROUTINE EnergyQB
@@ -8925,6 +8974,86 @@ CONTAINS
     DEALLOCATE(Survivor)
 
   END SUBROUTINE DeleteQMaskedFunctions
+
+
+
+
+
+  SUBROUTINE WriteStepEnergy(Energy, Status)
+    !==================================================================
+    ! Subroutine WriteStepEnergy
+    !==================================================================
+    ! The Verbose 0 report of one optimization step (BASIS_ENL, OPT_CYCLE,
+    ! FULL_OPT1): the energy and whether the nonlinear parameters were
+    ! optimized. The higher levels print the parameters themselves instead.
+    ! Rank 0 only.
+    !==================================================================
+    REAL(wp), INTENT(IN)     :: Energy  ! energy after the step
+    CHARACTER(*), INTENT(IN) :: Status  ! e.g. '(parameters optimized)'
+    WRITE(*, '(1x,a)', ADVANCE='no') 'E='
+    CALL writereal(6, Energy)
+    WRITE(*, '(3x,a)') Status
+  END SUBROUTINE WriteStepEnergy
+
+
+
+
+
+  SUBROUTINE WriteOptStepEnergy(Energy, Status)
+    !==================================================================
+    ! Subroutine WriteOptStepEnergy
+    !==================================================================
+    ! WriteStepEnergy for an optimization step (OPT_CYCLE, FULL_OPT1):
+    ! two blanks before the status and an empty line after it. Rank 0 only.
+    !==================================================================
+    REAL(wp), INTENT(IN)     :: Energy  ! energy after the step
+    CHARACTER(*), INTENT(IN) :: Status  ! e.g. '(parameters optimized)'
+    WRITE(*, '(1x,a)', ADVANCE='no') 'E='
+    CALL writereal(6, Energy)
+    WRITE(*, '(2x,a)') Status
+    WRITE(*, *)
+  END SUBROUTINE WriteOptStepEnergy
+
+
+
+
+
+  FUNCTION NoChangeReason(StopCode, NumOfEval) RESULT(Reason)
+    !==================================================================
+    ! Function NoChangeReason
+    !==================================================================
+    ! Verbose 0: why an optimization step that was not rejected left the
+    ! parameters unchanged, i.e. why DRMNG found no lower energy. StopCode
+    ! is IV(1) at the end of the DRMNG loop: 1 or 2 when the loop stopped
+    ! on the evaluation budget of the step (DRMNG was still asking for a
+    ! value), 3..10 and the rest as returned by DRMNG.
+    !==================================================================
+    INTEGER, INTENT(IN) :: StopCode   ! IV(1) at the end of the loop
+    INTEGER, INTENT(IN) :: NumOfEval  ! energy evaluations of the step
+    CHARACTER(80)       :: Reason
+    SELECT CASE (StopCode)
+    CASE (1:2)
+      WRITE(Reason, '(a,i0,a)') 'no lower energy in ', NumOfEval, ' evaluations'
+    CASE (3)
+      Reason = 'no lower energy found, x-convergence'
+    CASE (4)
+      Reason = 'already at the minimum'
+    CASE (5)
+      Reason = 'no lower energy found, x- and relative function convergence'
+    CASE (6)
+      Reason = 'no lower energy found, absolute function convergence'
+    CASE (7)
+      Reason = 'no lower energy found, singular convergence'
+    CASE (8)
+      Reason = 'no progress, steps at rounding level'
+    CASE (9)
+      Reason = 'no lower energy found, evaluation limit reached'
+    CASE (10)
+      Reason = 'no lower energy found, iteration limit reached'
+    CASE DEFAULT
+      WRITE(Reason, '(a,i0)') 'no lower energy found, DRMNG stopped with IV(1) = ', StopCode
+    END SELECT
+  END FUNCTION NoChangeReason
 
 
 
@@ -9258,7 +9387,9 @@ CONTAINS
             'Error EC0129 in BasisEnlQ: selected Q candidate cannot be reconstructed, status', ErrCode
           CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
         ENDIF
-        IF (Glob_ProcID == 0) THEN
+        ! The selected block before the optimization (Verbose >= 1; Verbose 0
+        ! reports only the energy after it, see the end of the step)
+        IF ((Glob_ProcID == 0) .AND. (Verbose >= 1)) THEN
           WRITE (*, '(1x,a)', ADVANCE='no') 'E='
           CALL writereal(6, Glob_CurrEnergy)
           IF (Verbose >= 2) WRITE (*, '(5x,a,1x,i0)') 'prototype function is', wbfu
@@ -9537,8 +9668,8 @@ CONTAINS
                     IF (Verbose >= 1) WRITE(*, *) 'Warning WC0110: overlap of the following functions exceeds threshold. ', &
                       'Generated basis function(s) are rejected and a new attempt to generate them will be made'
                   ENDIF
-                  WRITE(*, '(1x,i6,a1,i6,i6,a6)', ADVANCE='no') ii, ':', i, j, '    S='
-                  CALL writerealadv(6, QCanonicalMatrixElement(Glob_S, i, j))
+                  IF (Verbose >= 1) WRITE(*, '(1x,i6,a1,i6,i6,a6)', ADVANCE='no') ii, ':', i, j, '    S='
+                  IF (Verbose >= 1) CALL writerealadv(6, QCanonicalMatrixElement(Glob_S, i, j))
                 ENDIF
               ENDIF
             ENDDO
@@ -9567,8 +9698,8 @@ CONTAINS
                     'Generated basis function(s) are rejected and a new attempt to generate them will be made'
                   ENDIF
                 ENDIF
-                WRITE(*, '(1x,i6,a1,i6,a6)', ADVANCE='no') ii, ':', i, '    c='
-                CALL writerealadv(6, Glob_c(i))
+                IF (Verbose >= 1) WRITE(*, '(1x,i6,a1,i6,a6)', ADVANCE='no') ii, ':', i, '    c='
+                IF (Verbose >= 1) CALL writerealadv(6, Glob_c(i))
               ENDIF
             ENDIF
           ENDDO
@@ -9621,15 +9752,26 @@ CONTAINS
       !==================================================================
       ! Report the accepted block
       !==================================================================
+      ! Verbose >= 1: the evaluations, the energy and the parameters.
+      ! Verbose 0: the energy and whether the parameters were optimized (the
+      ! selected block, ParSetBest, is compared with the accepted one).
       IF (Glob_ProcID == 0) THEN
         IF (Verbose >= 1) THEN
-        WRITE (*, '(1x,a,1x,i0,a,i0)') 'Number of energy/gradient evaluations', NumOfEnergyEval, '/', NumOfGradEval
+          WRITE (*, '(1x,a,1x,i0,a,i0)') 'Number of energy/gradient evaluations', NumOfEnergyEval, '/', NumOfGradEval
+          WRITE (*, *) 'E=', Glob_CurrEnergy
+          DO i = 1, nfo
+            WRITE(*, '(1x,i6,a,i0,a,i0)', ADVANCE='no') nfru+i, ':x', Glob_X_index(nfru+i), ' r^', Glob_PWR(nfru+i)
+            CALL writerealarradv(6, Glob_NonlinParam(1:npt, nfru+i), npt)
+          ENDDO
+        ELSEIF (OptimizationType == 0) THEN
+          CALL WriteStepEnergy(Glob_CurrEnergy, '(parameters not optimized)')
+        ELSEIF (ANY(Glob_NonlinParam(1:npt, nfrup1:K) /= ParSetBest(1:npt, 1:nfo)) .OR. &
+                ANY(Glob_PWR(nfrup1:K) /= PWRSetBest(1:nfo)) .OR. &
+                ANY(Glob_X_index(nfrup1:K) /= XIndSetBest(1:nfo))) THEN
+          CALL WriteStepEnergy(Glob_CurrEnergy, '(parameters optimized)')
+        ELSE
+          CALL WriteStepEnergy(Glob_CurrEnergy, '(parameters not changed by the optimization)')
         ENDIF
-        WRITE (*, *) 'E=', Glob_CurrEnergy
-        DO i = 1, nfo
-          WRITE(*, '(1x,i6,a,i0,a,i0)', ADVANCE='no') nfru+i, ':x', Glob_X_index(nfru+i), ' r^', Glob_PWR(nfru+i)
-          CALL writerealarradv(6, Glob_NonlinParam(1:npt, nfru+i), npt)
-        ENDDO
       ENDIF
       !==================================================================
       ! Generator statistics
@@ -9799,6 +9941,8 @@ CONTAINS
     LOGICAL :: LastIter          ! this is the final step of the cycle
     LOGICAL :: IsOverlapBad      ! an overlap exceeded OverlapThreshold
     LOGICAL :: IsAnyLinCoeffBad  ! a coefficient exceeded LinCoeffThreshold
+    LOGICAL :: EnergyFailed      ! the energy at the best point failed (Verbose 0 report)
+    LOGICAL :: ParamsChanged     ! the step moved the parameters (Verbose 0 report)
     INTEGER :: ErrCode          ! Q status of the latest transaction
     INTEGER :: NumOfFailures    ! failed solves in this step
     INTEGER :: NumOfEnergyEval  ! energy evaluations in this step
@@ -10016,11 +10160,13 @@ CONTAINS
         IF (Glob_ProcID == 0) THEN
           IF (Verbose >= 1) WRITE(*, *)
           IF (nfo > 1) THEN
-            IF (Verbose >= 1) WRITE(*, '(1x,a,1x,i0,a,i0)') 'Optimizing functions', CurrFunc, '-', CurrFunc+nfo-1
+            WRITE(*, '(1x,a,1x,i0,a,i0)') 'Optimizing functions', CurrFunc, '-', CurrFunc+nfo-1
           ELSE
             WRITE(*, '(1x,a,1x,i0)') 'Optimizing function', CurrFunc
           ENDIF
-          IF (Glob_AreParamPrintedInCycleOptX) THEN
+          ! The parameters before the step (Verbose >= 1; Verbose 0 reports
+          ! only the energy after it)
+          IF (Glob_AreParamPrintedInCycleOptX .AND. (Verbose >= 1)) THEN
             IF (Verbose >= 2) WRITE (*, *) 'Nonlinear parameters before optimization:'
             DO a = 1, nfo
               ActiveI = ActiveFunction(a)
@@ -10185,9 +10331,9 @@ CONTAINS
                     IF (Verbose >= 1) WRITE(*, *) 'Warning WC0121: overlap of the following functions exceeds threshold. ', &
                       'Nonlinear parameters will be left unchanged'
                   ENDIF
-                  WRITE(*, '(1x,i6,a1,i6,i6,a6)', ADVANCE='no') &
+                  IF (Verbose >= 1) WRITE(*, '(1x,i6,a1,i6,i6,a6)', ADVANCE='no') &
                     ii, ':', Glob_FuncNum(ActiveI), Glob_FuncNum(j), '    S='
-                  CALL writerealadv(6, QCanonicalMatrixElement(Glob_S, ActiveI, j))
+                  IF (Verbose >= 1) CALL writerealadv(6, QCanonicalMatrixElement(Glob_S, ActiveI, j))
                 ENDIF
               ENDIF
             ENDDO
@@ -10213,17 +10359,17 @@ CONTAINS
                     'Nonlinear parameters will be left unchanged'
                   ENDIF
                 ENDIF
-                WRITE(*, '(1x,i6,a1,i6,a6)', ADVANCE='no') ii, ':', Glob_FuncNum(i), '    c='
-                CALL writerealadv(6, Glob_c(i))
+                IF (Verbose >= 1) WRITE(*, '(1x,i6,a1,i6,a6)', ADVANCE='no') ii, ':', Glob_FuncNum(i), '    c='
+                IF (Verbose >= 1) CALL writerealadv(6, Glob_c(i))
               ENDIF
             ENDIF
           ENDDO
         ENDIF
         ! Reported only for a step that was actually kept
-        IF ((Glob_ProcID == 0) .AND. (ErrCode == Q_METHOD_SUCCESS) .AND. (.NOT. IsOverlapBad) .AND. (.NOT. IsAnyLinCoeffBad)) THEN
-          IF (Verbose >= 1) THEN
+        ! (Verbose >= 1; for Verbose 0 see below the undo block)
+        IF ((Glob_ProcID == 0) .AND. (Verbose >= 1) .AND. &
+            (ErrCode == Q_METHOD_SUCCESS) .AND. (.NOT. IsOverlapBad) .AND. (.NOT. IsAnyLinCoeffBad)) THEN
           WRITE (*, '(1x,a,1x,i0,a,i0)') 'Number of energy/gradient evaluations', NumOfEnergyEval, '/', NumOfGradEval
-          ENDIF
           WRITE (*, *) 'E=', Glob_CurrEnergy
           IF (Glob_AreParamPrintedInCycleOptX) THEN
             IF (Verbose >= 1) WRITE (*, *) 'Nonlinear parameters after optimization:'
@@ -10235,6 +10381,7 @@ CONTAINS
             ENDDO
           ENDIF
         ENDIF
+        EnergyFailed = (ErrCode /= Q_METHOD_SUCCESS)
         !------------------------------------------------------------------
         ! Undo the step if it was not acceptable
         !------------------------------------------------------------------
@@ -10257,6 +10404,25 @@ CONTAINS
               'Warning WC0124 in OptCycleQ: energy cannot be computed.', &
               'Proceeding to the next basis function'
             Glob_CurrEnergy = E_prev
+          ENDIF
+        ENDIF
+        ! Verbose 0: the energy and whether the parameters were optimized
+        IF ((Glob_ProcID == 0) .AND. (Verbose < 1)) THEN
+          ParamsChanged = .FALSE.
+          DO a = 1, nfo
+            IF (ANY(Glob_NonlinParam(1:npt, ActiveFunction(a)) /= x_init((a-1)*npt+1:a*npt))) ParamsChanged = .TRUE.
+          ENDDO
+          IF (EnergyFailed) THEN
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters not changed: energy could not be computed)')
+          ELSEIF (IsOverlapBad) THEN
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters not changed: overlap above the threshold)')
+          ELSEIF (IsAnyLinCoeffBad) THEN
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters not changed: linear coefficient above the threshold)')
+          ELSEIF (ParamsChanged) THEN
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters optimized)')
+          ELSE
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, &
+              '(parameters not changed: '//TRIM(NoChangeReason(IV(1), NumOfEnergyEval))//')')
           ENDIF
         ENDIF
         !------------------------------------------------------------------
@@ -10391,6 +10557,7 @@ CONTAINS
     REAL(4) :: TimeOfLastHessSave  ! CPU time of the last Hessian save
     ! The optimization variables
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: x, grad
+    REAL(wp), ALLOCATABLE, DIMENSION(:) :: x_start  ! starting point, for the Verbose 0 report
     ! Arrays and settings used by DRMNG (rank 0 only)
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: D         ! scale vector
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: V         ! work array
@@ -10419,11 +10586,12 @@ CONTAINS
       IF (Verbose >= 1) WRITE(*, *) 'Routine FullOpt1Q started'
       IF (Verbose >= 1) WRITE(*, *) 'Simultaneous optimization of nonlinear parameters of basis functions'
       IF (Verbose >= 1) WRITE(*, *) InitFunc, '  through', FinalFunc, '  will be attempted'
+      IF (Verbose < 1) WRITE(*, '(1x,a,1x,i0,a,i0)') 'Full optimization of basis functions', InitFunc, '-', FinalFunc
       IF (Glob_OverlapPenaltyAllowed) THEN
         IF (Verbose >= 1) WRITE(*, *) 'Overlap threshold is ', ABS(OverlapThreshold)
         IF (Verbose >= 1) WRITE(*, *) 'Max value of a pair overlap penalty is ', Glob_MaxOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Warning! The energy value that will be shown during the optimization'
-        WRITE(*, *) 'may differ from the actual energy'
+        IF (Verbose >= 1) WRITE(*, *) 'may differ from the actual energy'
       ELSE
         IF (Verbose >= 1) WRITE(*, *) 'No constraints on overlaps will be imposed'
       ENDIF
@@ -10459,6 +10627,7 @@ CONTAINS
       ALLOCATE(V(LV))
     ENDIF
     ALLOCATE(x(nv))
+    ALLOCATE(x_start(nv))
     ALLOCATE(grad(nv))
     ALLOCATE(ActiveFunction(nfo))
     CALL PrepareQWorkspace(nfa, nfa, nfo, ErrCode)
@@ -10514,6 +10683,8 @@ CONTAINS
           Glob_CurrEnergy-Glob_TotalOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Overlap penalty                           ', Glob_TotalOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Initial energy (including overlap penalty ', Glob_CurrEnergy
+        IF (Verbose < 1) WRITE(*, *) 'Initial energy                            ', &
+          Glob_CurrEnergy-Glob_TotalOverlapPenalty
       ELSE
         WRITE(*, *) 'Initial energy                            ', Glob_CurrEnergy
       ENDIF
@@ -10538,6 +10709,7 @@ CONTAINS
       CALL DIVSET(ALG, IV, LIV, LV, V)
       IV(18) = 1000000  ! iteration limit; the evaluation limit IV(17) is set from the budget below
       IV(19) = -1  ! set summary print format
+      IF (Verbose < 1) IV(19) = 0  ! Verbose 0: no iteration summary lines (printing only)
       IV(20) = 0; IV(22) = 0; IV(23) = -1; IV(24) = 0
       V(31) = 0.0_wp
       V(32) = 2*EPSILON(V(32))
@@ -10551,6 +10723,7 @@ CONTAINS
     DO i = 1, nfo
       x((i-1)*npt+1:i*npt) = Glob_NonlinParam(1:npt, ActiveFunction(i))
     ENDDO
+    x_start(1:nv) = x(1:nv)
     IF (Glob_ProcID == 0) THEN
       ! If SaveHessian=.true. then try to read the Hessian from the file
       IF (SaveHessian) THEN
@@ -10725,17 +10898,26 @@ CONTAINS
     IF (Glob_ProcID == 0) THEN
       IF (Verbose >= 1) WRITE(*, *)
       IF (Verbose >= 1) WRITE(*, '(1x,a,1x,i0,a,i0)') 'Number of energy/gradient evaluations', NumOfEnergyEval, '/', NumOfGradEval
-      WRITE(*, *) 'Final energy and overlap statistics:'
+      IF (Verbose >= 1) WRITE(*, *) 'Final energy and overlap statistics:'
       IF (Glob_OverlapPenaltyAllowed) THEN
         IF (Verbose >= 1) WRITE(*, *) 'Energy (without overlap penalty)  ', Evalue-Glob_TotalOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Overlap penalty                   ', Glob_TotalOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Energy (including overlap penalty)', Evalue
       ELSE
-        WRITE(*, *) 'Energy                            ', Evalue
+        IF (Verbose >= 1) WRITE(*, *) 'Energy                            ', Evalue
       ENDIF
       IF (Verbose >= 1) WRITE(*, *) 'Maximal overlap                   ', MaxAbsOverlap
       IF (Verbose >= 1) WRITE(*, *) 'Minimal overlap                   ', MinAbsOverlap
       IF (Verbose >= 1) WRITE(*, *) 'Average abs value of overlap      ', AverageAbsOverlap
+      ! Verbose 0: the energy and whether the parameters were optimized
+      IF (Verbose < 1) THEN
+        IF (ANY(x(1:nv) /= x_start(1:nv))) THEN
+          CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters optimized)')
+        ELSE
+          CALL WriteOptStepEnergy(Glob_CurrEnergy, &
+            '(parameters not changed: '//TRIM(NoChangeReason(IV(1), NumOfEnergyEval))//')')
+        ENDIF
+      ENDIF
     ENDIF
     ! Adding data to history
     Glob_History(nfa)%Energy = Glob_CurrEnergy
@@ -10757,6 +10939,7 @@ CONTAINS
     DEALLOCATE(ActiveFunction)
     DEALLOCATE(grad)
     DEALLOCATE(x)
+    DEALLOCATE(x_start)
     IF (Glob_ProcID == 0) THEN
       DEALLOCATE(V)
       DEALLOCATE(D)
@@ -11202,7 +11385,9 @@ CONTAINS
         Glob_X_index(nfrup1:K) = XIndSetBest(1:nfo)
         Glob_CurrEnergy = EnergyGA(nfrup1, K, .TRUE., ErrCode)
 
-        IF (Glob_ProcID == 0) THEN
+        ! The selected block before the optimization (Verbose >= 1; Verbose 0
+        ! reports only the energy after it, see the end of the step)
+        IF ((Glob_ProcID == 0) .AND. (Verbose >= 1)) THEN
           WRITE (*, '(1x,a)', ADVANCE='no') 'E='
           CALL writereal(6, Glob_CurrEnergy)
           IF (Verbose >= 2) WRITE (*, '(5x,a,1x,i0)') 'prototype function is', wbfu
@@ -11548,8 +11733,8 @@ CONTAINS
                     IF (Verbose >= 1) WRITE(*, *) 'Warning WC0110: overlap of the following functions exceeds threshold. ', &
                       'Generated basis function(s) are rejected and a new attempt to generate them will be made'
                   ENDIF
-                  WRITE(*, '(1x,i6,a1,i6,i6,a6)', ADVANCE='no') ii, ':', i, j, '    S='
-                  CALL writerealadv(6, Glob_S(i, j))
+                  IF (Verbose >= 1) WRITE(*, '(1x,i6,a1,i6,i6,a6)', ADVANCE='no') ii, ':', i, j, '    S='
+                  IF (Verbose >= 1) CALL writerealadv(6, Glob_S(i, j))
                 ENDIF
               ENDIF
             ENDDO
@@ -11582,8 +11767,8 @@ CONTAINS
                     'Generated basis function(s) are rejected and a new attempt to generate them will be made'
                   ENDIF
                 ENDIF
-                WRITE(*, '(1x,i6,a1,i6,a6)', ADVANCE='no') ii, ':', i, '    c='
-                CALL writerealadv(6, Glob_c(i))
+                IF (Verbose >= 1) WRITE(*, '(1x,i6,a1,i6,a6)', ADVANCE='no') ii, ':', i, '    c='
+                IF (Verbose >= 1) CALL writerealadv(6, Glob_c(i))
               ENDIF
             ENDIF
           ENDDO
@@ -11632,15 +11817,26 @@ CONTAINS
       !==================================================================
       ! Report the accepted block
       !==================================================================
+      ! Verbose >= 1: the evaluations, the energy and the parameters.
+      ! Verbose 0: the energy and whether the parameters were optimized (the
+      ! selected block, ParSetBest, is compared with the accepted one).
       IF (Glob_ProcID == 0) THEN
         IF (Verbose >= 1) THEN
-        WRITE (*, '(1x,a,1x,i0,a,i0)') 'Number of energy/gradient evaluations', NumOfEnergyEval, '/', NumOfGradEval
+          WRITE (*, '(1x,a,1x,i0,a,i0)') 'Number of energy/gradient evaluations', NumOfEnergyEval, '/', NumOfGradEval
+          WRITE (*, *) 'E=', Glob_CurrEnergy
+          DO i = 1, nfo
+            WRITE(*, '(1x,i6,a,i0,a,i0)', ADVANCE='no') nfru+i, ':x', Glob_X_index(nfru+i), ' r^', Glob_PWR(nfru+i)
+            CALL writerealarradv(6, Glob_NonlinParam(1:npt, nfru+i), npt)
+          ENDDO
+        ELSEIF (OptimizationType == 0) THEN
+          CALL WriteStepEnergy(Glob_CurrEnergy, '(parameters not optimized)')
+        ELSEIF (ANY(Glob_NonlinParam(1:npt, nfrup1:K) /= ParSetBest(1:npt, 1:nfo)) .OR. &
+                ANY(Glob_PWR(nfrup1:K) /= PWRSetBest(1:nfo)) .OR. &
+                ANY(Glob_X_index(nfrup1:K) /= XIndSetBest(1:nfo))) THEN
+          CALL WriteStepEnergy(Glob_CurrEnergy, '(parameters optimized)')
+        ELSE
+          CALL WriteStepEnergy(Glob_CurrEnergy, '(parameters not changed by the optimization)')
         ENDIF
-        WRITE (*, *) 'E=', Glob_CurrEnergy
-        DO i = 1, nfo
-          WRITE(*, '(1x,i6,a,i0,a,i0)', ADVANCE='no') nfru+i, ':x', Glob_X_index(nfru+i), ' r^', Glob_PWR(nfru+i)
-          CALL writerealarradv(6, Glob_NonlinParam(1:npt, nfru+i), npt)
-        ENDDO
       ENDIF
 
       !==================================================================
@@ -12093,7 +12289,11 @@ CONTAINS
     !------------------------------------------------------------------
     IF ((Kstart > 1) .AND. (Glob_EigIdxTargeting == 1)) THEN
       CALL RetargetShiftToEigenvalue(Glob_CurrBasisSize, 'BasisEnlI')
-      Glob_CurrEnergy = EnergyIA(1, Glob_CurrBasisSize, .FALSE., ErrCode)
+      ! Glob_ShiftFactorKept: the helper left the factorization of the
+      ! re-shifted matrix in Glob_H/Glob_invD, so the solve starts from
+      ! row N+1 - nothing is refactorized (see RefreshINVITShift)
+      Glob_CurrEnergy = EnergyIA(MERGE(Glob_CurrBasisSize+1, 1, Glob_ShiftFactorKept), &
+                                 Glob_CurrBasisSize, .FALSE., ErrCode)
     ENDIF
 
     ! The second test catches a solve that converged on a level other
@@ -12168,7 +12368,9 @@ CONTAINS
       !--------------------------------------------------------------
       IF (nfru > Kstart-1) THEN
         CALL RefreshINVITShift(nfru)
-        Evalue = EnergyIA(1, nfru, .FALSE., ErrCode)
+        ! Glob_ShiftFactorKept: the factorization made by the refresh is
+        ! reused, the solve starts from row nfru+1 (see RefreshINVITShift)
+        Evalue = EnergyIA(MERGE(nfru+1, 1, Glob_ShiftFactorKept), nfru, .FALSE., ErrCode)
         IF ((ErrCode == 0) .AND. (ABS(Evalue) < 1.0E10_wp)) Glob_CurrEnergy = Evalue
         E_init = Glob_CurrEnergy
       ENDIF
@@ -12284,7 +12486,9 @@ CONTAINS
           Glob_LastEigvector(1:K) = v_good(1:K)
         ENDIF
 
-        IF (Glob_ProcID == 0) THEN
+        ! The selected block before the optimization (Verbose >= 1; Verbose 0
+        ! reports only the energy after it, see the end of the step)
+        IF ((Glob_ProcID == 0) .AND. (Verbose >= 1)) THEN
           WRITE (*, '(1x,a)', ADVANCE='no') 'E='
           CALL writereal(6, Glob_CurrEnergy)
           IF (Verbose >= 2) WRITE (*, '(5x,a,1x,i0)') 'prototype function is', wbfu
@@ -12631,8 +12835,8 @@ CONTAINS
                     IF (Verbose >= 1) WRITE(*, *) 'Warning WC0115: overlap of the following functions exceeds threshold. ', &
                       'Generated basis function(s) are rejected and a new attempt to generate them will be made'
                   ENDIF
-                  WRITE(*, '(1x,i6,a1,i6,i6,a6)', ADVANCE='no') ii, ':', i, j, '    S='
-                  CALL writerealadv(6, Glob_S(i, j))
+                  IF (Verbose >= 1) WRITE(*, '(1x,i6,a1,i6,i6,a6)', ADVANCE='no') ii, ':', i, j, '    S='
+                  IF (Verbose >= 1) CALL writerealadv(6, Glob_S(i, j))
                 ENDIF
               ENDIF
             ENDDO
@@ -12665,8 +12869,8 @@ CONTAINS
                     'Generated basis function(s) are rejected and a new attempt to generate them will be made'
                   ENDIF
                 ENDIF
-                WRITE(*, '(1x,i6,a1,i6,a6)', ADVANCE='no') ii, ':', i, '    c='
-                CALL writerealadv(6, Glob_c(i))
+                IF (Verbose >= 1) WRITE(*, '(1x,i6,a1,i6,a6)', ADVANCE='no') ii, ':', i, '    c='
+                IF (Verbose >= 1) CALL writerealadv(6, Glob_c(i))
               ENDIF
             ENDIF
           ENDDO
@@ -12721,15 +12925,26 @@ CONTAINS
       ! since every trial ran one solve, so the division is safe for any
       ! sensible NTrials.
       !------------------------------------------------------------------
+      ! Verbose >= 1: the evaluations, the energy and the parameters.
+      ! Verbose 0: the energy and whether the parameters were optimized (the
+      ! selected block, ParSetBest, is compared with the accepted one).
       IF (Glob_ProcID == 0) THEN
         IF (Verbose >= 1) THEN
-        WRITE (*, '(1x,a,1x,i0,a,i0)') 'Number of energy/gradient evaluations', NumOfEnergyEval, '/', NumOfGradEval
+          WRITE (*, '(1x,a,1x,i0,a,i0)') 'Number of energy/gradient evaluations', NumOfEnergyEval, '/', NumOfGradEval
+          WRITE (*, *) 'E=', Glob_CurrEnergy
+          DO i = 1, nfo
+            WRITE(*, '(1x,i6,a,i0,a,i0)', ADVANCE='no') nfru+i, ':x', Glob_X_index(nfru+i), ' r^', Glob_PWR(nfru+i)
+            CALL writerealarradv(6, Glob_NonlinParam(1:npt, nfru+i), npt)
+          ENDDO
+        ELSEIF (OptimizationType == 0) THEN
+          CALL WriteStepEnergy(Glob_CurrEnergy, '(parameters not optimized)')
+        ELSEIF (ANY(Glob_NonlinParam(1:npt, nfrup1:K) /= ParSetBest(1:npt, 1:nfo)) .OR. &
+                ANY(Glob_PWR(nfrup1:K) /= PWRSetBest(1:nfo)) .OR. &
+                ANY(Glob_X_index(nfrup1:K) /= XIndSetBest(1:nfo))) THEN
+          CALL WriteStepEnergy(Glob_CurrEnergy, '(parameters optimized)')
+        ELSE
+          CALL WriteStepEnergy(Glob_CurrEnergy, '(parameters not changed by the optimization)')
         ENDIF
-        WRITE (*, *) 'E=', Glob_CurrEnergy
-        DO i = 1, nfo
-          WRITE(*, '(1x,i6,a,i0,a,i0)', ADVANCE='no') nfru+i, ':x', Glob_X_index(nfru+i), ' r^', Glob_PWR(nfru+i)
-          CALL writerealarradv(6, Glob_NonlinParam(1:npt, nfru+i), npt)
-        ENDDO
         IF (Verbose >= 1) WRITE (*, *) 'Average number of iterations in GSEPIIS: ', &
           (Glob_InvItTempCounter2*ONE)/Glob_InvItTempCounter1
       ENDIF
@@ -12974,6 +13189,8 @@ CONTAINS
     LOGICAL :: LastIter          ! this is the final step of the cycle
     LOGICAL :: IsOverlapBad      ! an overlap exceeded OverlapThreshold
     LOGICAL :: IsAnyLinCoeffBad  ! a coefficient exceeded LinCoeffThreshold
+    LOGICAL :: EnergyFailed      ! the energy at the best point failed (Verbose 0 report)
+    LOGICAL :: ParamsChanged     ! the step moved the parameters (Verbose 0 report)
 
     ! -- solver bookkeeping ------------------------------------------
     INTEGER :: ErrCode          ! non-zero when a solve failed
@@ -13320,7 +13537,7 @@ CONTAINS
         IF (Glob_ProcID == 0) THEN
           IF (Verbose >= 1) WRITE(*, *)
           IF (nfo > 1) THEN
-            IF (Verbose >= 1) WRITE(*, '(1x,a,1x,i0,a,i0)') 'Optimizing functions', CurrFunc, '-', CurrFunc+nfo-1
+            WRITE(*, '(1x,a,1x,i0,a,i0)') 'Optimizing functions', CurrFunc, '-', CurrFunc+nfo-1
           ELSE
             WRITE(*, '(1x,a,1x,i0)') 'Optimizing function', CurrFunc
           ENDIF
@@ -13373,8 +13590,10 @@ CONTAINS
 
         ENDIF
 
+        ! The parameters before the step (Verbose >= 1; Verbose 0 reports
+        ! only the energy after it)
         IF (Glob_ProcID == 0) THEN
-          IF (Glob_AreParamPrintedInCycleOptX) THEN
+          IF (Glob_AreParamPrintedInCycleOptX .AND. (Verbose >= 1)) THEN
             IF (Verbose >= 2) WRITE (*, *) 'Nonlinear parameters before optimization:'
             DO i = 1, nfo
               WRITE(*, '(1x,i6,a,i0,a,i0)', ADVANCE='no') Glob_FuncNum(nfru+i), ':x', Glob_X_index(nfru+i), &
@@ -13569,9 +13788,9 @@ CONTAINS
                     IF (Verbose >= 1) WRITE(*, *) 'Warning WC0121: overlap of the following functions exceeds threshold. ', &
                       'Nonlinear parameters will be left unchanged'
                   ENDIF
-                  WRITE(*, '(1x,i6,a1,i6,i6,a6)', ADVANCE='no') &
+                  IF (Verbose >= 1) WRITE(*, '(1x,i6,a1,i6,i6,a6)', ADVANCE='no') &
                     ii, ':', Glob_FuncNum(i), Glob_FuncNum(j), '    S='
-                  CALL writerealadv(6, Glob_S(i, j))
+                  IF (Verbose >= 1) CALL writerealadv(6, Glob_S(i, j))
                 ENDIF
               ENDIF
             ENDDO
@@ -13600,21 +13819,21 @@ CONTAINS
                     'Nonlinear parameters will be left unchanged'
                   ENDIF
                 ENDIF
-                WRITE(*, '(1x,i6,a1,i6,a6)', ADVANCE='no') ii, ':', i, '    c='
-                CALL writerealadv(6, Glob_c(i))
+                IF (Verbose >= 1) WRITE(*, '(1x,i6,a1,i6,a6)', ADVANCE='no') ii, ':', i, '    c='
+                IF (Verbose >= 1) CALL writerealadv(6, Glob_c(i))
               ENDIF
             ENDIF
           ENDDO
         ENDIF
 
-        ! Reported only for a step that was actually kept
-        IF ((Glob_ProcID == 0) .AND. (ErrCode == 0) .AND. (.NOT. IsOverlapBad) .AND. (.NOT. IsAnyLinCoeffBad)) THEN
-          IF (Verbose >= 1) THEN
+        ! Reported only for a step that was actually kept (Verbose >= 1; for
+        ! Verbose 0 see below)
+        IF ((Glob_ProcID == 0) .AND. (Verbose >= 1) .AND. &
+            (ErrCode == 0) .AND. (.NOT. IsOverlapBad) .AND. (.NOT. IsAnyLinCoeffBad)) THEN
           WRITE (*, '(1x,a,1x,i0,a,i0)') 'Number of energy/gradient evaluations', NumOfEnergyEval, '/', NumOfGradEval
-          ENDIF
           WRITE (*, *) 'E=', Glob_CurrEnergy
           IF (Glob_AreParamPrintedInCycleOptX) THEN
-            IF (Verbose >= 1) WRITE (*, *) 'Nonlinear parameters after optimization:'
+            WRITE (*, *) 'Nonlinear parameters after optimization:'
             DO i = 1, nfo
               WRITE(*, '(1x,i6,a,i0,a,i0)', ADVANCE='no') Glob_FuncNum(nfru+i), ':x', Glob_X_index(nfru+i), &
                   ' r^', Glob_PWR(nfru+i)
@@ -13622,6 +13841,7 @@ CONTAINS
             ENDDO
           ENDIF
         ENDIF
+        EnergyFailed = (ErrCode /= 0)
 
         !------------------------------------------------------------------
         ! Undo the step if it was not acceptable
@@ -13649,6 +13869,26 @@ CONTAINS
               'Warning WC0124 in OptCycleG: energy cannot be computed.', &
               'Proceeding to the next basis function'
             Glob_CurrEnergy = E_prev
+          ENDIF
+        ENDIF
+
+        ! Verbose 0: the energy and whether the parameters were optimized
+        IF ((Glob_ProcID == 0) .AND. (Verbose < 1)) THEN
+          ParamsChanged = .FALSE.
+          DO i = 1, nfo
+            IF (ANY(Glob_NonlinParam(1:npt, nfru+i) /= x_init((i-1)*npt+1:i*npt))) ParamsChanged = .TRUE.
+          ENDDO
+          IF (EnergyFailed) THEN
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters not changed: energy could not be computed)')
+          ELSEIF (IsOverlapBad) THEN
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters not changed: overlap above the threshold)')
+          ELSEIF (IsAnyLinCoeffBad) THEN
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters not changed: linear coefficient above the threshold)')
+          ELSEIF (ParamsChanged) THEN
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters optimized)')
+          ELSE
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, &
+              '(parameters not changed: '//TRIM(NoChangeReason(IV(1), NumOfEnergyEval))//')')
           ENDIF
         ENDIF
 
@@ -13701,7 +13941,7 @@ CONTAINS
 
       IF (CurrCycle /= NumCycles) THEN
         Glob_History(cbs)%InitFuncAtLastStep = FuncBegin-NumOfFuncToShift
-        IF (Glob_ProcID == 0) WRITE(*, '(1x,a47)', ADVANCE='no') &
+        IF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) WRITE(*, '(1x,a47)', ADVANCE='no') &
           'Ordering basis functions and matrix elements...'
         CALL SortBasisFuncAndMatElem(fbn, cbs, FuncNumTemp, NonlinParamTemp, TempR)
         IF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) WRITE(*, *) 'done'
@@ -13718,7 +13958,7 @@ CONTAINS
     ! the same layout it arrived in - only with better parameters. Both
     ! run on every rank, since every rank holds its own copy.
     !------------------------------------------------------------------
-    IF (Glob_ProcID == 0) WRITE(*, '(1x,a53)', ADVANCE='no') &
+    IF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) WRITE(*, '(1x,a53)', ADVANCE='no') &
       'Final ordering basis functions and matrix elements...'
     CALL SortBasisFuncAndMatElem(FuncBegin, cbs, FuncNumTemp, NonlinParamTemp, TempR)
     CALL ReverseFuncOrder(FuncBegin, cbs)
@@ -13862,6 +14102,8 @@ CONTAINS
     LOGICAL :: LastIter          ! this is the final step of the cycle
     LOGICAL :: IsOverlapBad      ! an overlap exceeded OverlapThreshold
     LOGICAL :: IsAnyLinCoeffBad  ! a coefficient exceeded LinCoeffThreshold
+    LOGICAL :: EnergyFailed      ! the energy at the best point failed (Verbose 0 report)
+    LOGICAL :: ParamsChanged     ! the step moved the parameters (Verbose 0 report)
 
     ! -- solver bookkeeping ------------------------------------------
     INTEGER :: ErrCode          ! non-zero when a solve failed
@@ -14193,7 +14435,10 @@ CONTAINS
     !------------------------------------------------------------------
     IF (Glob_EigIdxTargeting == 1) THEN
       CALL RetargetShiftToEigenvalue(cbs, 'OptCycleI')
-      Glob_CurrEnergy = EnergyIA(1, cbs, .FALSE., ErrCode)
+      ! Glob_ShiftFactorKept: the helper left the factorization of the
+      ! re-shifted matrix in Glob_H/Glob_invD, so the solve starts from
+      ! row cbs+1 - nothing is refactorized (see RefreshINVITShift)
+      Glob_CurrEnergy = EnergyIA(MERGE(cbs+1, 1, Glob_ShiftFactorKept), cbs, .FALSE., ErrCode)
     ENDIF
 
     ! The second test catches a solve that converged on a level other
@@ -14263,7 +14508,7 @@ CONTAINS
         IF (Glob_ProcID == 0) THEN
           IF (Verbose >= 1) WRITE(*, *)
           IF (nfo > 1) THEN
-            IF (Verbose >= 1) WRITE(*, '(1x,a,1x,i0,a,i0)') 'Optimizing functions', CurrFunc, '-', CurrFunc+nfo-1
+            WRITE(*, '(1x,a,1x,i0,a,i0)') 'Optimizing functions', CurrFunc, '-', CurrFunc+nfo-1
           ELSE
             WRITE(*, '(1x,a,1x,i0)') 'Optimizing function', CurrFunc
           ENDIF
@@ -14332,15 +14577,21 @@ CONTAINS
         ! of the leading nfru block, valid for one shift only - but between
         ! windows there is nothing to preserve, and a shift frozen for a
         ! whole OPT_CYCLE step is what makes the solver diverge late in a
-        ! cycle. See RefreshINVITShift. The refresh invalidates the stored
-        ! factorization, so the solve that follows starts from row 1.
+        ! cycle. See RefreshINVITShift. The refresh ends with a factorization
+        ! of the re-shifted matrix; the solve that follows reuses it
+        ! (Glob_ShiftFactorKept) or, if the refresh could not keep one,
+        ! starts from row 1.
         !------------------------------------------------------------------
         CALL RefreshINVITShift(cbs)
-        Evalue = EnergyIA(1, cbs, .FALSE., ErrCode)
+        ! Glob_ShiftFactorKept: the factorization made by the refresh is
+        ! reused, the solve starts from row cbs+1 (see RefreshINVITShift)
+        Evalue = EnergyIA(MERGE(cbs+1, 1, Glob_ShiftFactorKept), cbs, .FALSE., ErrCode)
         IF ((ErrCode == 0) .AND. (ABS(Evalue) < 1.0E10_wp)) Glob_CurrEnergy = Evalue
 
         IF (Glob_ProcID == 0) THEN
-          IF (Glob_AreParamPrintedInCycleOptX) THEN
+          ! The parameters before the step (Verbose >= 1; Verbose 0 reports
+          ! only the energy after it)
+          IF (Glob_AreParamPrintedInCycleOptX .AND. (Verbose >= 1)) THEN
             IF (Verbose >= 2) WRITE (*, *) 'Nonlinear parameters before optimization:'
             DO i = 1, nfo
               WRITE(*, '(1x,i6,a,i0,a,i0)', ADVANCE='no') Glob_FuncNum(nfru+i), ':x', Glob_X_index(nfru+i), &
@@ -14541,9 +14792,9 @@ CONTAINS
                     IF (Verbose >= 1) WRITE(*, *) 'Warning WC0126: overlap of the following functions exceeds threshold. ', &
                       'Nonlinear parameters will be left unchanged'
                   ENDIF
-                  WRITE(*, '(1x,i6,a1,i6,i6,a6)', ADVANCE='no') &
+                  IF (Verbose >= 1) WRITE(*, '(1x,i6,a1,i6,i6,a6)', ADVANCE='no') &
                     ii, ':', Glob_FuncNum(i), Glob_FuncNum(j), '    S='
-                  CALL writerealadv(6, Glob_S(i, j))
+                  IF (Verbose >= 1) CALL writerealadv(6, Glob_S(i, j))
                 ENDIF
               ENDIF
             ENDDO
@@ -14572,8 +14823,8 @@ CONTAINS
                     'Nonlinear parameters will be left unchanged'
                   ENDIF
                 ENDIF
-                WRITE(*, '(1x,i6,a1,i6,a6)', ADVANCE='no') ii, ':', i, '    c='
-                CALL writerealadv(6, Glob_c(i))
+                IF (Verbose >= 1) WRITE(*, '(1x,i6,a1,i6,a6)', ADVANCE='no') ii, ':', i, '    c='
+                IF (Verbose >= 1) CALL writerealadv(6, Glob_c(i))
               ENDIF
             ENDIF
           ENDDO
@@ -14583,10 +14834,10 @@ CONTAINS
         ! average is the figure to watch if the fixed shift starts
         ! costing convergence - see the header. Counter1 is at least 1
         ! by now, because the EnergyIAM solve above bumped it.
-        IF ((Glob_ProcID == 0) .AND. (ErrCode == 0) .AND. (.NOT. IsOverlapBad) .AND. (.NOT. IsAnyLinCoeffBad)) THEN
-          IF (Verbose >= 1) THEN
+        ! (Verbose >= 1; for Verbose 0 see below the undo block)
+        IF ((Glob_ProcID == 0) .AND. (Verbose >= 1) .AND. &
+            (ErrCode == 0) .AND. (.NOT. IsOverlapBad) .AND. (.NOT. IsAnyLinCoeffBad)) THEN
           WRITE (*, '(1x,a,1x,i0,a,i0)') 'Number of energy/gradient evaluations', NumOfEnergyEval, '/', NumOfGradEval
-          ENDIF
           WRITE (*, *) 'E=', Glob_CurrEnergy
           IF (Glob_AreParamPrintedInCycleOptX) THEN
             IF (Verbose >= 1) WRITE (*, *) 'Nonlinear parameters after optimization:'
@@ -14599,6 +14850,8 @@ CONTAINS
               (Glob_InvItTempCounter2*ONE)/Glob_InvItTempCounter1
           ENDIF
         ENDIF
+
+        EnergyFailed = (ErrCode /= 0)
 
         !------------------------------------------------------------------
         ! Undo the step if it was not acceptable
@@ -14637,6 +14890,26 @@ CONTAINS
               'Proceeding to the next basis function'
             Glob_LastEigvector(1:cbs) = v_good(1:cbs)
             Glob_CurrEnergy = E_prev
+          ENDIF
+        ENDIF
+
+        ! Verbose 0: the energy and whether the parameters were optimized
+        IF ((Glob_ProcID == 0) .AND. (Verbose < 1)) THEN
+          ParamsChanged = .FALSE.
+          DO i = 1, nfo
+            IF (ANY(Glob_NonlinParam(1:npt, nfru+i) /= x_init((i-1)*npt+1:i*npt))) ParamsChanged = .TRUE.
+          ENDDO
+          IF (EnergyFailed) THEN
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters not changed: energy could not be computed)')
+          ELSEIF (IsOverlapBad) THEN
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters not changed: overlap above the threshold)')
+          ELSEIF (IsAnyLinCoeffBad) THEN
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters not changed: linear coefficient above the threshold)')
+          ELSEIF (ParamsChanged) THEN
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters optimized)')
+          ELSE
+            CALL WriteOptStepEnergy(Glob_CurrEnergy, &
+              '(parameters not changed: '//TRIM(NoChangeReason(IV(1), NumOfEnergyEval))//')')
           ENDIF
         ENDIF
 
@@ -14690,7 +14963,7 @@ CONTAINS
 
       IF (CurrCycle /= NumCycles) THEN
         Glob_History(cbs)%InitFuncAtLastStep = FuncBegin-NumOfFuncToShift
-        IF (Glob_ProcID == 0) WRITE(*, '(1x,a47)', ADVANCE='no') &
+        IF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) WRITE(*, '(1x,a47)', ADVANCE='no') &
           'Ordering basis functions and matrix elements...'
         CALL SortBasisFuncAndMatElem(fbn, cbs, FuncNumTemp, NonlinParamTemp, TempR)
         ! call EnergyIA because we need to refactorize Glob_H-Glob_ApproxEnergy*Glob_S
@@ -14714,7 +14987,7 @@ CONTAINS
     ! the same layout it arrived in - only with better parameters. Both
     ! run on every rank, since every rank holds its own copy.
     !------------------------------------------------------------------
-    IF (Glob_ProcID == 0) WRITE(*, '(1x,a53)', ADVANCE='no') &
+    IF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) WRITE(*, '(1x,a53)', ADVANCE='no') &
       'Final ordering basis functions and matrix elements...'
     CALL SortBasisFuncAndMatElem(FuncBegin, cbs, FuncNumTemp, NonlinParamTemp, TempR)
     CALL ReverseFuncOrder(FuncBegin, cbs)
@@ -14873,6 +15146,7 @@ CONTAINS
 
     ! -- the optimization variables ----------------------------------
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: x, grad
+    REAL(wp), ALLOCATABLE, DIMENSION(:) :: x_start  ! starting point, for the Verbose 0 report
 
     ! -- arrays and settings used by DRMNG (rank 0 only) -------------
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: D         ! scale vector
@@ -14906,11 +15180,12 @@ CONTAINS
       IF (Verbose >= 1) WRITE(*, *) 'Routine FullOpt1G started'
       IF (Verbose >= 1) WRITE(*, *) 'Simultaneous optimization of nonlinear parameters of basis functions'
       IF (Verbose >= 1) WRITE(*, *) InitFunc, '  through', FinalFunc, '  will be attempted'
+      IF (Verbose < 1) WRITE(*, '(1x,a,1x,i0,a,i0)') 'Full optimization of basis functions', InitFunc, '-', FinalFunc
       IF (Glob_OverlapPenaltyAllowed) THEN
         IF (Verbose >= 1) WRITE(*, *) 'Overlap threshold is ', ABS(OverlapThreshold)
         IF (Verbose >= 1) WRITE(*, *) 'Max value of a pair overlap penalty is ', Glob_MaxOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Warning! The energy value that will be shown during the optimization'
-        WRITE(*, *) 'may differ from the actual energy'
+        IF (Verbose >= 1) WRITE(*, *) 'may differ from the actual energy'
       ELSE
         IF (Verbose >= 1) WRITE(*, *) 'No constraints on overlaps will be imposed'
       ENDIF
@@ -14973,6 +15248,7 @@ CONTAINS
 
     ! Allocate workspace
     ALLOCATE(x(nv))
+    ALLOCATE(x_start(nv))
     ALLOCATE(grad(nv))
 
     ! Setting up a logical variable that determines
@@ -15039,6 +15315,8 @@ CONTAINS
           Glob_CurrEnergy-Glob_TotalOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Overlap penalty                           ', Glob_TotalOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Initial energy (including overlap penalty ', Glob_CurrEnergy
+        IF (Verbose < 1) WRITE(*, *) 'Initial energy                            ', &
+          Glob_CurrEnergy-Glob_TotalOverlapPenalty
       ELSE
         WRITE(*, *) 'Initial energy                            ', Glob_CurrEnergy
       ENDIF
@@ -15068,6 +15346,7 @@ CONTAINS
       CALL DIVSET(ALG, IV, LIV, LV, V)
       IV(18) = 1000000  ! iteration limit; the evaluation limit IV(17) is set from the budget below
       IV(19) = -1  ! set summary print format
+      IF (Verbose < 1) IV(19) = 0  ! Verbose 0: no iteration summary lines (printing only)
       IV(20) = 0; IV(22) = 0; IV(23) = -1; IV(24) = 0
       V(31) = 0.0_wp
       V(32) = 2*EPSILON(V(32))
@@ -15083,6 +15362,7 @@ CONTAINS
     DO i = 1, nfo
       x((i-1)*npt+1:i*npt) = Glob_NonlinParam(1:npt, InitFuncNew+i-1)
     ENDDO
+    x_start(1:nv) = x(1:nv)
 
     IF (Glob_ProcID == 0) THEN
       ! If SaveHessian=.true. then try to read the Hessian
@@ -15314,18 +15594,27 @@ CONTAINS
     IF (Glob_ProcID == 0) THEN
       IF (Verbose >= 1) WRITE(*, *)
       IF (Verbose >= 1) WRITE(*, '(1x,a,1x,i0,a,i0)') 'Number of energy/gradient evaluations', NumOfEnergyEval, '/', NumOfGradEval
-      WRITE(*, *) 'Final energy and overlap statistics:'
+      IF (Verbose >= 1) WRITE(*, *) 'Final energy and overlap statistics:'
       CALL GetOverlapStatistics(InitFuncNew, nfa, MaxAbsOverlap, MinAbsOverlap, AverageAbsOverlap)
       IF (Glob_OverlapPenaltyAllowed) THEN
         IF (Verbose >= 1) WRITE(*, *) 'Energy (without overlap penalty)  ', Evalue-Glob_TotalOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Overlap penalty                   ', Glob_TotalOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Energy (including overlap penalty)', Evalue
       ELSE
-        WRITE(*, *) 'Energy                            ', Evalue
+        IF (Verbose >= 1) WRITE(*, *) 'Energy                            ', Evalue
       ENDIF
       IF (Verbose >= 1) WRITE(*, *) 'Maximal overlap                   ', MaxAbsOverlap
       IF (Verbose >= 1) WRITE(*, *) 'Minimal overlap                   ', MinAbsOverlap
       IF (Verbose >= 1) WRITE(*, *) 'Average abs value of overlap      ', AverageAbsOverlap
+      ! Verbose 0: the energy and whether the parameters were optimized
+      IF (Verbose < 1) THEN
+        IF (ANY(x(1:nv) /= x_start(1:nv))) THEN
+          CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters optimized)')
+        ELSE
+          CALL WriteOptStepEnergy(Glob_CurrEnergy, &
+            '(parameters not changed: '//TRIM(NoChangeReason(IV(1), NumOfEnergyEval))//')')
+        ENDIF
+      ENDIF
     ENDIF
 
     ! Adding data to history
@@ -15370,6 +15659,7 @@ CONTAINS
     ! deallocate workspace
     DEALLOCATE(grad)
     DEALLOCATE(x)
+    DEALLOCATE(x_start)
 
     ! deallocate arrays used by DRMNG
     IF (Glob_ProcID == 0) THEN
@@ -15489,6 +15779,7 @@ CONTAINS
 
     ! -- the optimization variables ----------------------------------
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: x, grad
+    REAL(wp), ALLOCATABLE, DIMENSION(:) :: x_start  ! starting point, for the Verbose 0 report
 
     ! -- inverse-iteration fallback ----------------------------------
     !    Copy of Glob_LastEigvector from the last SUCCESSFUL solve.
@@ -15522,11 +15813,12 @@ CONTAINS
       IF (Verbose >= 1) WRITE(*, *) 'Routine FullOpt1I started'
       IF (Verbose >= 1) WRITE(*, *) 'Simultaneous optimization of nonlinear parameters of basis functions'
       IF (Verbose >= 1) WRITE(*, *) InitFunc, '  through', FinalFunc, '  will be attempted'
+      IF (Verbose < 1) WRITE(*, '(1x,a,1x,i0,a,i0)') 'Full optimization of basis functions', InitFunc, '-', FinalFunc
       IF (Glob_OverlapPenaltyAllowed) THEN
         IF (Verbose >= 1) WRITE(*, *) 'Overlap threshold is ', ABS(OverlapThreshold)
         IF (Verbose >= 1) WRITE(*, *) 'Max value of a pair overlap penalty is ', Glob_MaxOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Warning! The energy value that will be shown during the optimization'
-        WRITE(*, *) 'may differ from the actual energy'
+        IF (Verbose >= 1) WRITE(*, *) 'may differ from the actual energy'
       ELSE
         IF (Verbose >= 1) WRITE(*, *) 'No constraints on overlaps will be imposed'
       ENDIF
@@ -15594,6 +15886,7 @@ CONTAINS
 
     ! Allocate workspace
     ALLOCATE(x(nv))
+    ALLOCATE(x_start(nv))
     ALLOCATE(grad(nv))
 
     ! Setting up a logical variable that determines
@@ -15660,7 +15953,11 @@ CONTAINS
     !------------------------------------------------------------------
     IF (Glob_EigIdxTargeting == 1) THEN
       CALL RetargetShiftToEigenvalue(Glob_CurrBasisSize, 'FullOpt1I')
-      Glob_CurrEnergy = EnergyIA(1, Glob_CurrBasisSize, .FALSE., ErrCode)
+      ! Glob_ShiftFactorKept: the helper left the factorization of the
+      ! re-shifted matrix in Glob_H/Glob_invD, so the solve starts from
+      ! row N+1 - nothing is refactorized (see RefreshINVITShift)
+      Glob_CurrEnergy = EnergyIA(MERGE(Glob_CurrBasisSize+1, 1, Glob_ShiftFactorKept), &
+                                 Glob_CurrBasisSize, .FALSE., ErrCode)
     ENDIF
 
     ! The second test catches a solve that converged on a level other
@@ -15681,6 +15978,8 @@ CONTAINS
           Glob_CurrEnergy-Glob_TotalOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Overlap penalty                           ', Glob_TotalOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Initial energy (including overlap penalty)', Glob_CurrEnergy
+        IF (Verbose < 1) WRITE(*, *) 'Initial energy                            ', &
+          Glob_CurrEnergy-Glob_TotalOverlapPenalty
       ELSE
         WRITE(*, *) 'Initial energy                            ', Glob_CurrEnergy
       ENDIF
@@ -15710,6 +16009,7 @@ CONTAINS
       CALL DIVSET(ALG, IV, LIV, LV, V)
       IV(18) = 1000000  ! iteration limit; the evaluation limit IV(17) is set from the budget below
       IV(19) = -1  ! set summary print format
+      IF (Verbose < 1) IV(19) = 0  ! Verbose 0: no iteration summary lines (printing only)
       IV(20) = 0; IV(22) = 0; IV(23) = -1; IV(24) = 0
       V(31) = 0.0_wp
       V(32) = 2*EPSILON(V(32))
@@ -15725,6 +16025,7 @@ CONTAINS
     DO i = 1, nfo
       x((i-1)*npt+1:i*npt) = Glob_NonlinParam(1:npt, InitFuncNew+i-1)
     ENDDO
+    x_start(1:nv) = x(1:nv)
 
     IF (Glob_ProcID == 0) THEN
       ! If SaveHessian=.true. then try to read the Hessian
@@ -15971,18 +16272,27 @@ CONTAINS
     IF (Glob_ProcID == 0) THEN
       IF (Verbose >= 1) WRITE(*, *)
       IF (Verbose >= 1) WRITE(*, '(1x,a,1x,i0,a,i0)') 'Number of energy/gradient evaluations', NumOfEnergyEval, '/', NumOfGradEval
-      WRITE(*, *) 'Final energy and overlap statistics:'
+      IF (Verbose >= 1) WRITE(*, *) 'Final energy and overlap statistics:'
       CALL GetOverlapStatistics(InitFuncNew, nfa, MaxAbsOverlap, MinAbsOverlap, AverageAbsOverlap)
       IF (Glob_OverlapPenaltyAllowed) THEN
         IF (Verbose >= 1) WRITE(*, *) 'Energy (without overlap penalty)  ', Evalue-Glob_TotalOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Overlap penalty                   ', Glob_TotalOverlapPenalty
         IF (Verbose >= 1) WRITE(*, *) 'Energy (including overlap penalty)', Evalue
       ELSE
-        WRITE(*, *) 'Energy                            ', Evalue
+        IF (Verbose >= 1) WRITE(*, *) 'Energy                            ', Evalue
       ENDIF
       IF (Verbose >= 1) WRITE(*, *) 'Maximal overlap                   ', MaxAbsOverlap
       IF (Verbose >= 1) WRITE(*, *) 'Minimal overlap                   ', MinAbsOverlap
       IF (Verbose >= 1) WRITE(*, *) 'Average abs value of overlap      ', AverageAbsOverlap
+      ! Verbose 0: the energy and whether the parameters were optimized
+      IF (Verbose < 1) THEN
+        IF (ANY(x(1:nv) /= x_start(1:nv))) THEN
+          CALL WriteOptStepEnergy(Glob_CurrEnergy, '(parameters optimized)')
+        ELSE
+          CALL WriteOptStepEnergy(Glob_CurrEnergy, &
+            '(parameters not changed: '//TRIM(NoChangeReason(IV(1), NumOfEnergyEval))//')')
+        ENDIF
+      ENDIF
     ENDIF
 
     ! Adding data to history
@@ -16030,6 +16340,7 @@ CONTAINS
     ! deallocate workspace
     DEALLOCATE(grad)
     DEALLOCATE(x)
+    DEALLOCATE(x_start)
 
     ! deallocate arrays used by DRMNG
     IF (Glob_ProcID == 0) THEN
@@ -18779,10 +19090,10 @@ CONTAINS
     ! ProgramDataInit. SymmAdaptMethod must be 1 (Y'Y on the ket;
     ! ExpValuesMatElem takes a single symmetry matrix), else EC0194.
     !
-    ! The distance and correlation-function formulas of ExpValuesMatElem
-    ! are those of the x_1 r_1^m basis and ignore the x-index of the
-    ! prefactor, as in the original code. They are exact for a basis of
-    ! x_1 functions only; warning WC0196 is printed otherwise.
+    ! ExpValuesMatElem takes the x-indices of both prefactors and the
+    ! transformation of the ket prefactor by the symmetry operator into
+    ! account, so the distances and the correlation function are exact for
+    ! any x_i (the original code used the x_1 formulas for all functions).
     !
     ! Action is 'EXPC_VALS' or 'DENSITIES'. DENSITIES additionally
     ! evaluates the nucleus-nucleus correlation function g(x,y) - the
@@ -18826,7 +19137,6 @@ CONTAINS
     INTEGER :: npt                 ! Glob_npt, parameters per function
     INTEGER :: np2                 ! n*(n+1)/2, pairs including (i,i)
     INTEGER :: BlockSizeForDSYGVX  ! ILAENV block size ('G' only)
-    INTEGER :: NumOfX1Func         ! basis functions with the prefactor x_1
 
     ! -- eigensolver -------------------------------------------------
     INTEGER                                :: ErrorCode          ! DSYGVX INFO, or GSEPIIS status
@@ -18860,6 +19170,22 @@ CONTAINS
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: MEkl_s         ! this rank's partial sums
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: MEkl_r         ! the reduced sums
 
+    ! -- the single-process order of the sums (Glob_NpIndependent, np > 1) --
+    ! Each rank stores, for its pairs, a record: factor, then MEkl of every
+    ! symmetry term. The records of a block of consecutive pairs are gathered
+    ! on rank 0, which adds them in pair order with the statement of the
+    ! single-process loop.
+    LOGICAL                             :: OrderedSums  ! the records are gathered
+    INTEGER                             :: RecLen       ! length of one record
+    INTEGER                             :: NumPairs     ! cbs*(cbs+1)/2
+    INTEGER                             :: BlockPairs   ! pairs per gather
+    INTEGER                             :: BlockFirst   ! first pair of the current block
+    INTEGER                             :: NumOwnRec    ! this rank's records in the block
+    INTEGER                             :: RecPos       ! start of the current record, minus one
+    INTEGER, ALLOCATABLE, DIMENSION(:)  :: RecCounts, RecDispls, RecNext
+    REAL(wp), ALLOCATABLE, DIMENSION(:) :: SendRec      ! this rank's records
+    REAL(wp), ALLOCATABLE, DIMENSION(:) :: RecvRec      ! all records of the block (rank 0)
+
     ! -- one basis pair (kl) and the total (no suffix) ---------------
     REAL(wp)                               :: S            ! c'Sc, from the stored overlap matrix
     REAL(wp), ALLOCATABLE, DIMENSION(:, :) :: rkl, r2kl
@@ -18874,6 +19200,15 @@ CONTAINS
     LOGICAL, ALLOCATABLE, DIMENSION(:)        :: SetHasZero     ! particle 0 listed: r_0j stands for r_j
     CHARACTER(11)                             :: lab            ! quantity label, e.g. r^2_ij
     CHARACTER(40)                             :: fmts           ! run-time format of the symmetrized lines
+
+    ! -- screen report, rank 0 (nothing here enters the sums) ----------
+    DOUBLE PRECISION :: tMark                            ! MPI_WTIME at the start of a phase
+    DOUBLE PRECISION :: tMatElem, tEigen, tExpc          ! wall time of the three phases
+    INTEGER          :: kmax, kmin                       ! functions with the largest and smallest |c_k|
+    INTEGER          :: PairI, PairJ                     ! pair of the current record (Verbose 4)
+    REAL(wp)         :: csum                             ! sum of c_k^2
+    REAL(wp), ALLOCATABLE, DIMENSION(:) :: WeightByX     ! sum of c_k^2 over the functions with x_i
+    LOGICAL, ALLOCATABLE, DIMENSION(:)  :: Listed        ! functions already in the table of largest c_k
 
 
     IF (Glob_ProcID == 0) THEN
@@ -18908,19 +19243,6 @@ CONTAINS
     IF (GSEPsolMethod == 'G') NumOfEigvecs = MIN(cbs, Glob_WhichEigenvalue+10)
     IF (GSEPsolMethod == 'I') NumOfEigvecs = 1
     IF (GSEPsolMethod == 'Q') NumOfEigvecs = 1
-
-    ! The formulas of ExpValuesMatElem are those of x_1 functions
-    NumOfX1Func = COUNT(Glob_X_index(1:cbs) == 1)
-    IF ((NumOfX1Func /= cbs) .AND. (Glob_ProcID == 0)) THEN
-      WRITE(*, *)
-      WRITE(*, '(1x,a,i0,a,i0,a)') 'Warning WC0196 in ExpectationValues: ', cbs-NumOfX1Func, ' of the ', cbs, &
-        ' basis functions carry a prefactor x_i with i > 1.'
-      WRITE(*, *) 'The distances and the correlation function below are computed with the formulas'
-      WRITE(*, *) 'of the x_1 r_1^m basis (inherited from the original code), which do not account'
-      WRITE(*, *) 'for the x_i prefactor; they are exact only for a basis of x_1 functions.'
-      WRITE(*, *) 'The energy is not affected.'
-      WRITE(*, *)
-    ENDIF
 
 
     !==================================================================
@@ -19017,20 +19339,63 @@ CONTAINS
     ALLOCATE(MEkl_s(NumOfExpcVals))
     ALLOCATE(MEkl_r(NumOfExpcVals))
 
+    ! Record buffers for the single-process order of the sums: blocks of at
+    ! most 2^22 values on rank 0, and at least one pair per rank
+    OrderedSums = (Glob_NpIndependent .AND. (Glob_NumOfProcs > 1))
+    IF (OrderedSums) THEN
+      RecLen = 1+Glob_NumYHYTerms*NumOfExpcVals
+      NumPairs = cbs*(cbs+1)/2
+      BlockPairs = MAX(Glob_NumOfProcs, MIN(NumPairs, 4194304/RecLen))
+      ALLOCATE(RecCounts(Glob_NumOfProcs), RecDispls(Glob_NumOfProcs), RecNext(Glob_NumOfProcs))
+      ALLOCATE(SendRec(RecLen*((BlockPairs+Glob_NumOfProcs-1)/Glob_NumOfProcs)))
+      IF (Glob_ProcID == 0) THEN
+        ALLOCATE(RecvRec(RecLen*BlockPairs))
+      ELSE
+        ALLOCATE(RecvRec(1))
+      ENDIF
+    ENDIF
+
+    ! Setup (Verbose >= 1) and the terms of Y'Y (Verbose >= 3)
+    IF ((Glob_ProcID == 0) .AND. (Verbose >= 1)) THEN
+      WRITE(*, '(1x,a,1x,i0)') 'State used (WHICH_EIGENVALUE):', Glob_WhichEigenvalue
+      WRITE(*, '(1x,a,1x,i0)') 'Terms of the symmetry operator Y''Y:', Glob_NumYHYTerms
+      WRITE(*, '(1x,a,1x,i0)') 'Basis-function pairs:', INT(cbs, int64)*(cbs+1)/2
+      IF (OrderedSums) THEN
+        WRITE(*, '(1x,a,1x,i0,a)') 'MPI processes:', Glob_NumOfProcs, &
+          ' (the sums are added in the order of one process)'
+      ELSE
+        WRITE(*, '(1x,a,1x,i0)') 'MPI processes:', Glob_NumOfProcs
+      ENDIF
+      IF (Verbose >= 3) THEN
+        WRITE(*, *) 'Terms of Y''Y (term, coefficient):'
+        DO k = 1, Glob_NumYHYTerms
+          WRITE(*, '(1x,i6)', ADVANCE='no') k
+          CALL writerealadv(6, Glob_YHYCoeff(k))
+        ENDDO
+      ENDIF
+    ENDIF
+
     ALLOCATE(rkl(n, n))
     ALLOCATE(r(n, n))
 
     ALLOCATE(r2kl(n, n))
     ALLOCATE(r2(n, n))
 
+    tMark = MPI_WTIME()
     CALL ReadSwapFileAndDistributeData(IsSwapFileOK)
 
     IF (.NOT. IsSwapFileOK) THEN
-      IF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) WRITE(*, '(1x,a52)', ADVANCE='no') &
-        'Computing Hamiltonian and overlap matrix elements...'
+      ! At Verbose >= 3 matform traces the call, so the line is ended first
+      IF ((Glob_ProcID == 0) .AND. (Verbose >= 3)) THEN
+        WRITE(*, '(1x,a)') 'Computing Hamiltonian and overlap matrix elements...'
+      ELSEIF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) THEN
+        WRITE(*, '(1x,a52)', ADVANCE='no') 'Computing Hamiltonian and overlap matrix elements...'
+      ENDIF
       CALL ComputeMatElem(1, cbs)
       IF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) WRITE(*, *) 'done'
     ENDIF
+    tMatElem = MPI_WTIME()-tMark
+    tMark = MPI_WTIME()
 
     IF (GSEPSolMethod == 'G') THEN
       DO i = 1, cbs
@@ -19092,7 +19457,12 @@ CONTAINS
     ENDIF  ! IF (GSEPSolMethod=='G')
 
     IF (GSEPSolMethod == 'I') THEN
-      IF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) WRITE(*, '(1x,a29)', ADVANCE='no') 'Solving eigenvalue problem...'
+      ! At Verbose >= 3 the solver traces itself, so the line is ended first
+      IF ((Glob_ProcID == 0) .AND. (Verbose >= 3)) THEN
+        WRITE(*, '(1x,a)') 'Solving eigenvalue problem...'
+      ELSEIF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) THEN
+        WRITE(*, '(1x,a29)', ADVANCE='no') 'Solving eigenvalue problem...'
+      ENDIF
       IF (cbs == 1) THEN
         ! Glob_H holds the SHIFTED matrix on this path (see StoreHS), so
         ! the shift is added back. Glob_diagH is not allocated for 'I'.
@@ -19147,7 +19517,12 @@ CONTAINS
     ! 'Q': one fresh factorization of the canonical matrices and one solve
     !------------------------------------------------------------------
     IF (GSEPSolMethod == 'Q') THEN
-      IF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) WRITE(*, '(1x,a29)', ADVANCE='no') 'Solving eigenvalue problem...'
+      ! At Verbose >= 3 the solver traces itself, so the line is ended first
+      IF ((Glob_ProcID == 0) .AND. (Verbose >= 3)) THEN
+        WRITE(*, '(1x,a)') 'Solving eigenvalue problem...'
+      ELSEIF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) THEN
+        WRITE(*, '(1x,a29)', ADVANCE='no') 'Solving eigenvalue problem...'
+      ENDIF
       Glob_c = ONE
       CALL PrepareQWorkspace(cbs, cbs, 1, ErrorCode)
       Q_Workspace%MatricesAreCanonical = .TRUE.
@@ -19179,8 +19554,105 @@ CONTAINS
         S = S+TWO*Glob_c(i)*Glob_c(j)*Glob_S(i, j)
       ENDDO
     ENDDO
+    tEigen = MPI_WTIME()-tMark
 
-    IF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) WRITE(*, '(1x,a31)', ADVANCE='no') 'Computing expectation values...'
+
+    !------------------------------------------------------------------
+    ! Report on the eigenpair (rank 0; nothing here enters the sums)
+    !------------------------------------------------------------------
+    ! Verbose 1: the solver check (gap to the next eigenvalue for 'G',
+    ! iterations and residual for 'I'), the norm check, the largest and
+    ! smallest coefficients, and the share of each prefactor x_i in the sum
+    ! of c_k^2. Verbose 2: the ten largest coefficients. Verbose 3: all of
+    ! them. c_k multiplies the NORMALIZED function k (the stored overlap
+    ! matrix has a unit diagonal), so c_k^2 is its diagonal weight in the
+    ! norm.
+    !------------------------------------------------------------------
+    IF ((Glob_ProcID == 0) .AND. (Verbose >= 1)) THEN
+
+      IF ((GSEPSolMethod == 'G') .AND. (NumOfEigvalsFound > Glob_WhichEigenvalue)) THEN
+        WRITE(*, '(1x,a)', ADVANCE='no') 'Gap to the next eigenvalue:'
+        CALL writerealadv(6, Eigvals(Glob_WhichEigenvalue+1)-Eigvals(Glob_WhichEigenvalue))
+      ENDIF
+      IF (GSEPSolMethod == 'I') THEN
+        WRITE(*, '(1x,a,1x,i0,a)', ADVANCE='no') 'Inverse iteration:', NumOfIterations, ' iterations, residual'
+        CALL writerealadv(6, Glob_LastEigvalTol)
+      ENDIF
+      WRITE(*, '(1x,a)', ADVANCE='no') 'Norm check |c''Sc - 1|:'
+      CALL writerealadv(6, ABS(S-ONE))
+
+      kmax = 1
+      kmin = 1
+      csum = ZERO
+      ALLOCATE(WeightByX(n))
+      WeightByX(1:n) = ZERO
+      DO k = 1, cbs
+        IF (ABS(Glob_c(k)) > ABS(Glob_c(kmax))) kmax = k
+        IF (ABS(Glob_c(k)) < ABS(Glob_c(kmin))) kmin = k
+        csum = csum+Glob_c(k)**2
+        IF ((Glob_X_index(k) >= 1) .AND. (Glob_X_index(k) <= n)) &
+          WeightByX(Glob_X_index(k)) = WeightByX(Glob_X_index(k))+Glob_c(k)**2
+      ENDDO
+      WRITE(*, '(1x,a,1x,i0,a)', ADVANCE='no') 'Largest  |c_k|: function', kmax, ', c_k ='
+      CALL writerealadv(6, Glob_c(kmax))
+      WRITE(*, '(1x,a,1x,i0,a)', ADVANCE='no') 'Smallest |c_k|: function', kmin, ', c_k ='
+      CALL writerealadv(6, Glob_c(kmin))
+      WRITE(*, *) 'Share of the sum of c_k^2 by prefactor:'
+      DO i = 1, n
+        WRITE(*, '(5x,a,i0,a,i8,a,f9.4,a)') 'x_', i, ':', COUNT(Glob_X_index(1:cbs) == i), &
+          ' functions,', 100*WeightByX(i)/csum, ' %'
+      ENDDO
+      DEALLOCATE(WeightByX)
+
+      IF (Verbose >= 3) THEN
+        WRITE(*, *) 'Coefficients of all basis functions:'
+        WRITE(*, '(1x,a)') '  function  x_i      m                      c_k c_k^2 share (%)'
+        DO k = 1, cbs
+          WRITE(*, '(1x,i10,i5,i7)', ADVANCE='no') k, Glob_X_index(k), Glob_PWR(k)
+          CALL writereal(6, Glob_c(k))
+          WRITE(*, '(f16.6)') 100*Glob_c(k)**2/csum
+        ENDDO
+      ELSEIF (Verbose >= 2) THEN
+        WRITE(*, *) 'The ten largest coefficients:'
+        WRITE(*, '(1x,a)') '  function  x_i      m                      c_k c_k^2 share (%)'
+        ALLOCATE(Listed(cbs))
+        Listed(1:cbs) = .FALSE.
+        DO i = 1, MIN(10, cbs)
+          k = 0
+          DO j = 1, cbs
+            IF (Listed(j)) CYCLE
+            IF (k == 0) THEN
+              k = j
+            ELSEIF (ABS(Glob_c(j)) > ABS(Glob_c(k))) THEN
+              k = j
+            ENDIF
+          ENDDO
+          Listed(k) = .TRUE.
+          WRITE(*, '(1x,i10,i5,i7)', ADVANCE='no') k, Glob_X_index(k), Glob_PWR(k)
+          CALL writereal(6, Glob_c(k))
+          WRITE(*, '(f16.6)') 100*Glob_c(k)**2/csum
+        ENDDO
+        DEALLOCATE(Listed)
+      ENDIF
+      WRITE(*, *)
+
+    ENDIF
+
+
+    ! At Verbose >= 4 the pairs are listed below, so the line is ended first
+    IF ((Glob_ProcID == 0) .AND. (Verbose >= 4)) THEN
+      WRITE(*, '(1x,a)') 'Computing expectation values...'
+      IF (OrderedSums .OR. (Glob_NumOfProcs == 1)) THEN
+        WRITE(*, *) 'One line per basis-function pair (i, j) and term P of Y''Y:'
+        WRITE(*, *) 'i, j, term, factor = c_i c_j/SQRT(S_ii S_jj) (twice that for i /= j), then the'
+        WRITE(*, *) 'matrix elements <phi_i|r_ab|P phi_j> and <phi_i|r_ab^2|P phi_j>, a <= b: 11, 12, ..., nn'
+      ELSE
+        WRITE(*, *) 'The per-pair lines need one MPI process or Glob_NpIndependent; not printed'
+      ENDIF
+    ELSEIF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) THEN
+      WRITE(*, '(1x,a31)', ADVANCE='no') 'Computing expectation values...'
+    ENDIF
+    tMark = MPI_WTIME()
 
 
     !==================================================================
@@ -19190,15 +19662,22 @@ CONTAINS
     ! Y'Y terms are summed with their coefficients, the result is
     ! normalized and weighted with the linear coefficients, and added to
     ! this rank's partial sums; one MPI_ALLREDUCE then combines them. With
-    ! the correlation function the pairs are passed once per y grid point,
-    ! as ExpValuesMatElem computes one row of the grid per call (the way
-    ! the original code did); the distances are taken from the first pass.
+    ! OrderedSums the ranks store records instead, and rank 0 adds them in
+    ! pair order block by block (AddRecordsInOrder), so that the sums are
+    ! those of one process. With the correlation function the pairs are
+    ! passed once per y grid point, as ExpValuesMatElem computes one row of
+    ! the grid per call (the way the original code did); the distances are
+    ! taken from the first pass.
     !------------------------------------------------------------------
     DO iy = 1, NumOfYRows
 
       ycf = CFGridY(iy)
       MEkl_s(1:NumOfExpcVals) = ZERO
       counter = 0
+      BlockFirst = 1
+      NumOwnRec = 0
+      PairI = 1
+      PairJ = 0
       DO i = 1, cbs
         DO j = 1, i
           counter = counter+1
@@ -19216,10 +19695,16 @@ CONTAINS
               factor = TWO*factor*Glob_c(i)*Glob_c(j)
             ENDIF
 
+            IF (OrderedSums) THEN
+              NumOwnRec = NumOwnRec+1
+              RecPos = (NumOwnRec-1)*RecLen
+              SendRec(RecPos+1) = factor
+            ENDIF
+
             DO k = 1, Glob_NumYHYTerms
 
-              CALL ExpValuesMatElem(Glob_PWR(i), Glob_NonlinParam(1:npt, i), &
-                                    Glob_PWR(j), Glob_NonlinParam(1:npt, j), &
+              CALL ExpValuesMatElem(Glob_PWR(i), Glob_X_index(i), Glob_NonlinParam(1:npt, i), &
+                                    Glob_PWR(j), Glob_X_index(j), Glob_NonlinParam(1:npt, j), &
                                     Glob_YHYMatr(1:n, 1:n, k), &
                                     NumCFGridPointsX, CFGridX, ycf, CFkl, AreCorrFuncNeeded, &
                                     (iy == 1), rkl, r2kl)
@@ -19245,17 +19730,41 @@ CONTAINS
                 c = c+NumCFGridPointsX
               ENDIF
 
-              MEkl_s(1:NumOfExpcVals) = MEkl_s(1:NumOfExpcVals) &
-                                     +factor*Glob_YHYCoeff(k)*MEkl(1:NumOfExpcVals)
+              ! Verbose 4, one process: the pair line (with OrderedSums rank
+              ! 0 prints it in AddRecordsInOrder)
+              IF ((Verbose >= 4) .AND. (Glob_NumOfProcs == 1) .AND. (iy == 1)) &
+                CALL PrintPairLine(i, j, k, factor, MEkl(1:2*np2))
+
+              IF (OrderedSums) THEN
+                SendRec(RecPos+2+(k-1)*NumOfExpcVals:RecPos+1+k*NumOfExpcVals) = MEkl(1:NumOfExpcVals)
+              ELSE
+                MEkl_s(1:NumOfExpcVals) = MEkl_s(1:NumOfExpcVals) &
+                                       +factor*Glob_YHYCoeff(k)*MEkl(1:NumOfExpcVals)
+              ENDIF
 
             ENDDO  ! k=1,Glob_NumYHYTerms
 
           ENDIF
+
+          ! End of a block: rank 0 adds its records in pair order
+          IF (OrderedSums) THEN
+            IF ((counter-BlockFirst+1 == BlockPairs) .OR. (counter == NumPairs)) THEN
+              CALL AddRecordsInOrder(BlockFirst, counter)
+              BlockFirst = counter+1
+              NumOwnRec = 0
+            ENDIF
+          ENDIF
+
         ENDDO
       ENDDO
 
       ! Combining the results of all processes
-      CALL MPI_ALLREDUCE(MEkl_s, MEkl_r, NumOfExpcVals, MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
+      IF (OrderedSums) THEN
+        CALL MPI_BCAST(MEkl_s, NumOfExpcVals, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+        MEkl_r(1:NumOfExpcVals) = MEkl_s(1:NumOfExpcVals)
+      ELSE
+        CALL MPI_ALLREDUCE(MEkl_s, MEkl_r, NumOfExpcVals, MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
+      ENDIF
 
       ! Extracting expectation values from array MEkl_r
       c = 0
@@ -19281,6 +19790,7 @@ CONTAINS
       ENDIF
 
     ENDDO  ! iy=1,NumOfYRows
+    tExpc = MPI_WTIME()-tMark
 
 
     !==================================================================
@@ -19539,6 +20049,11 @@ CONTAINS
     DEALLOCATE(Glob_S)
     DEALLOCATE(Glob_H)
 
+    IF ((Glob_ProcID == 0) .AND. (Verbose >= 1)) THEN
+      WRITE(*, *) 'Expectation values were saved in file ', TRIM(Glob_ExpValFileName)
+      WRITE(*, '(1x,a,f12.3,a,f12.3,a,f12.3)') 'Wall time (s): matrix elements', tMatElem, &
+        ', eigenproblem', tEigen, ', expectation values', tExpc
+    ENDIF
     IF ((Glob_ProcID == 0) .AND. (Verbose >= 1)) WRITE (*, *) 'Routine ExpectationValues finished'
 
 
@@ -19550,6 +20065,72 @@ CONTAINS
       CHARACTER(*), INTENT(IN) :: Name
       IsNoFile = (Name == ' ') .OR. (Name == 'none') .OR. (Name == 'NONE') .OR. (Name == 'None')
     END FUNCTION IsNoFile
+
+
+
+
+
+    SUBROUTINE AddRecordsInOrder(FirstPair, LastPair)
+      ! Gathers the records of pairs FirstPair..LastPair on rank 0 (pair q is
+      ! on rank MOD(q, Glob_NumOfProcs)) and adds them to MEkl_s in pair order,
+      ! term by term, with the statement of the single-process loop.
+      INTEGER, INTENT(IN) :: FirstPair, LastPair
+      INTEGER :: q, rk, pos, kk
+
+      RecCounts(1:Glob_NumOfProcs) = 0
+      DO q = FirstPair, LastPair
+        rk = MOD(q, Glob_NumOfProcs)
+        RecCounts(rk+1) = RecCounts(rk+1)+RecLen
+      ENDDO
+      RecDispls(1) = 0
+      DO rk = 2, Glob_NumOfProcs
+        RecDispls(rk) = RecDispls(rk-1)+RecCounts(rk-1)
+      ENDDO
+      CALL MPI_GATHERV(SendRec, RecCounts(Glob_ProcID+1), MPI_WP, RecvRec, RecCounts, RecDispls, &
+                       MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+
+      IF (Glob_ProcID == 0) THEN
+        RecNext(1:Glob_NumOfProcs) = RecDispls(1:Glob_NumOfProcs)
+        DO q = FirstPair, LastPair
+          rk = MOD(q, Glob_NumOfProcs)
+          pos = RecNext(rk+1)
+          RecNext(rk+1) = pos+RecLen
+          factor = RecvRec(pos+1)
+          ! Verbose 4: the pair (i, j) of record q, pairs being numbered
+          ! i = 1..cbs, j = 1..i
+          IF (Verbose >= 4) THEN
+            PairJ = PairJ+1
+            IF (PairJ > PairI) THEN
+              PairI = PairI+1
+              PairJ = 1
+            ENDIF
+          ENDIF
+          DO kk = 1, Glob_NumYHYTerms
+            MEkl(1:NumOfExpcVals) = RecvRec(pos+2+(kk-1)*NumOfExpcVals:pos+1+kk*NumOfExpcVals)
+            IF ((Verbose >= 4) .AND. (iy == 1)) CALL PrintPairLine(PairI, PairJ, kk, factor, MEkl(1:2*np2))
+            MEkl_s(1:NumOfExpcVals) = MEkl_s(1:NumOfExpcVals) &
+                                   +factor*Glob_YHYCoeff(kk)*MEkl(1:NumOfExpcVals)
+          ENDDO
+        ENDDO
+      ENDIF
+
+    END SUBROUTINE AddRecordsInOrder
+
+
+
+
+
+    SUBROUTINE PrintPairLine(PairRow, PairCol, Term, PairFactor, Vals)
+      ! One line of the Verbose 4 listing: the pair, the term of Y'Y, the
+      ! factor of the pair, and its matrix elements of r_ab and r_ab^2
+      ! (packed as in MEkl). Printing only.
+      INTEGER, INTENT(IN)  :: PairRow, PairCol, Term
+      REAL(wp), INTENT(IN) :: PairFactor
+      REAL(wp), INTENT(IN) :: Vals(:)
+      WRITE(*, '(1x,i6,1x,i6,1x,i4)', ADVANCE='no') PairRow, PairCol, Term
+      CALL writereal(6, PairFactor)
+      CALL writerealarradv(6, Vals, SIZE(Vals))
+    END SUBROUTINE PrintPairLine
 
 
 

@@ -2,10 +2,12 @@ MODULE matform
   ! Module matform forms the Hamiltonian and overlap matrices (and their
   ! derivatives) from the matrix elements of module matelem.
   !
-  ! MatrixElements evaluates ONE symmetry term of a pair per call, so each
-  ! pair is dealt out to one rank, which loops over the Glob_NumYHYTerms
-  ! terms of the Young operator and sums them with Glob_YHYCoeff. Buffers,
-  ! storage routines and the layout of Glob_D are those of PG_0S.
+  ! MatrixElements evaluates ONE symmetry term of a pair per call. The
+  ! (pair, term) items of a batch of consecutive pairs are dealt out to the
+  ! ranks cyclically, gathered, and every rank sums the Glob_NumYHYTerms
+  ! terms of each pair with Glob_YHYCoeff in the order of the terms (see
+  ! ComputeMatElem and BatchMatElem). Buffers, storage routines and the
+  ! layout of Glob_D are those of PG_0S.
   !
   ! The inverse-iteration shift helpers ReportWrongStateOnce,
   ! RetargetShiftToEigenvalue, RefreshINVITShift, IsEigenpairUsable and
@@ -17,6 +19,25 @@ MODULE matform
   USE linalg
 
   IMPLICIT NONE
+
+  ! The (pair, term) items of one batch, item q = (b-1)*Glob_NumYHYTerms+j
+  ! for pair b of the batch and term j: the pairs (BatchK(b), BatchL(b)),
+  ! and for every item the overlap, the Hamiltonian and (ComputeMatElemAndDeriv)
+  ! their derivatives as returned by MatrixElements. A batch has at most
+  ! MaxRankItems*Glob_NumOfProcs items (MaxRankItems computed by each
+  ! rank), but always at least one whole pair: every synchronization of
+  ! the ranks lets the fastest wait for the slowest, so the batches are
+  ! made large. BatchMatElem gathers all items of a batch on every rank
+  ! (two values per item); the derivative items stay with the rank that
+  ! computed them and the owner of their pair.
+  INTEGER, PARAMETER :: MaxRankItems = 16384
+  INTEGER, ALLOCATABLE, DIMENSION(:), SAVE :: BatchK, BatchL
+  REAL(wp), ALLOCATABLE, DIMENSION(:), SAVE :: ItemS, ItemH
+  REAL(wp), ALLOCATABLE, DIMENSION(:, :), SAVE :: ItemdSk, ItemdHk, ItemdSl, ItemdHl
+  ! ComputeMatElemAndDeriv: the items received by the owner of their pair
+  ! and the sums of the pairs (see BatchMatElemAndDeriv).
+  REAL(wp), ALLOCATABLE, DIMENSION(:), SAVE :: RecvS, RecvH, SumH, SumS
+  REAL(wp), ALLOCATABLE, DIMENSION(:, :), SAVE :: RecvdSk, RecvdHk, RecvdSl, RecvdHl, SumDk, SumDl
 
 CONTAINS
 
@@ -222,66 +243,45 @@ CONTAINS
     !  Input parameters :
     !   Nmin-1 :: number of functions whose matrix elements are known
     !     Nmax :: number of functions whose matrix elements are needed
-    ! Each pair is evaluated by ONE rank (pair i goes to rank
-    ! MOD(i,Glob_NumOfProcs)); the other ranks leave zeros in the buffer
-    ! and the MPI_ALLREDUCE assembles the sum.
+    ! The pairs are collected in batches; BatchMatElem deals the (pair,
+    ! term) items of a batch out to the ranks and puts the sum over the
+    ! terms of every pair into Glob_HklBuff2/Glob_SklBuff2 on all ranks,
+    ! whence StoreHS takes them buffer by buffer as before.
 
     IMPLICIT NONE
 
     ! Arguments :
     INTEGER, INTENT(IN) :: Nmin, Nmax
     ! Local variables :
-    INTEGER  :: k, l, i, kk, ll, ii, j
-    INTEGER  :: kstart, lstart, lstop, n, npt, nb
-    INTEGER  :: mk, ml, ik, il
-    REAL(wp) :: Paramk(Glob_n*(Glob_n+1)/2)
-    REAL(wp) :: Paraml(Glob_n*(Glob_n+1)/2)
-    REAL(wp) :: Ssum, Hsum
-    ! One symmetry term of a pair, as returned by MatrixElements. The
-    ! derivative arrays are not used here but must be present in the call.
-    REAL(wp) :: Skl, Hkl
-    REAL(wp) :: dSk(Glob_npt), dSl(Glob_npt), dHk(Glob_npt), dHl(Glob_npt)
+    INTEGER  :: k, l, i, kk, ll, ii
+    INTEGER  :: kstart, lstart, lstop
+    INTEGER  :: NumBatch     ! pairs collected for the current batch
+    INTEGER  :: MaxBatch     ! pairs per batch
 
-    n = Glob_n
-    npt = Glob_npt
-    nb = Glob_HSBuffLen
     IF ((Verbose >= 4) .AND. (Glob_ProcID == 0)) THEN
       WRITE(*, '(1x,a,i0,a,i0,a,i0,a)') 'ComputeMatElem: functions ', Nmin, '..', Nmax, &
                                           ' (', Nmax*(Nmax+1)/2-(Nmin-1)*Nmin/2, ' pairs)'
     ENDIF
-    Glob_HklBuff1(1:nb) = ZERO
-    Glob_SklBuff1(1:nb) = ZERO
+    MaxBatch = MAX(1, (MaxRankItems*Glob_NumOfProcs)/Glob_NumYHYTerms)
+    CALL AllocItemBuffers(MaxBatch, .FALSE.)
     i = 0
+    NumBatch = 0
 
     DO k = Nmin, Nmax
-      Paramk(1:npt) = Glob_NonlinParam(1:npt, k)
-      mk = Glob_PWR(k)
-      ik = Glob_X_index(k)
       DO l = k, 1, -1
         i = i+1
         IF (i == 1) THEN
           kstart = k
           lstart = l
         ENDIF
-        Paraml(1:npt) = Glob_NonlinParam(1:npt, l)
-        ml = Glob_PWR(l)
-        il = Glob_X_index(l)
-        Hsum = ZERO; Ssum = ZERO
-        IF (MOD(i, Glob_NumOfProcs) == Glob_ProcID) THEN
-          DO j = 1, Glob_NumYHYTerms
-            CALL MatrixElements(mk, ik, Paramk, ml, il, Paraml, Glob_YHYMatr(1:n, 1:n, j), &
-                                Skl, Hkl, dSk, dSl, dHk, dHl, 0)
-            Hsum = Hsum+Glob_YHYCoeff(j)*Hkl
-            Ssum = Ssum+Glob_YHYCoeff(j)*Skl
-          ENDDO
+        NumBatch = NumBatch+1
+        BatchK(NumBatch) = k
+        BatchL(NumBatch) = l
+        IF ((NumBatch == MaxBatch) .OR. (i == Glob_HSBuffLen) .OR. ((k == Nmax) .AND. (l == 1))) THEN
+          CALL BatchMatElem(NumBatch, i-NumBatch)
+          NumBatch = 0
         ENDIF
-        Glob_HklBuff1(i) = Hsum
-        Glob_SklBuff1(i) = Ssum
         IF (i == Glob_HSBuffLen) THEN
-          CALL MPI_ALLREDUCE(Glob_HklBuff1, Glob_HklBuff2, i, &
-                             MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
-          CALL MPI_ALLREDUCE(Glob_SklBuff1, Glob_SklBuff2, i, &
-                             MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
           ii = 0
           DO kk = kstart, k
             IF (kk == kstart) THEN
@@ -301,16 +301,10 @@ CONTAINS
             ENDDO
           ENDDO
           i = 0
-          Glob_HklBuff1(1:nb) = ZERO
-          Glob_SklBuff1(1:nb) = ZERO
         ENDIF
       ENDDO
     ENDDO
     IF (i > 0) THEN
-      CALL MPI_ALLREDUCE(Glob_HklBuff1, Glob_HklBuff2, i, &
-                         MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
-      CALL MPI_ALLREDUCE(Glob_SklBuff1, Glob_SklBuff2, i, &
-                         MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
       ii = 0
       DO kk = kstart, Nmax
         IF (kk == kstart) THEN
@@ -333,6 +327,161 @@ CONTAINS
 
 
 
+  SUBROUTINE BatchMatElem(NumBatch, Offset)
+    ! Matrix elements of H and S (no derivatives) of the NumBatch pairs
+    ! (BatchK(b), BatchL(b)) of a batch; the sum over the terms of pair b
+    ! goes to Glob_HklBuff2(Offset+b), Glob_SklBuff2(Offset+b) on all ranks.
+    ! The NumBatch*Glob_NumYHYTerms (pair, term) items, item q = (b-1)*
+    ! Glob_NumYHYTerms+j for term j of pair b, are dealt out cyclically:
+    ! item q goes to rank MOD(q-1,Glob_NumOfProcs). The cost of an item
+    ! depends on its pair (the powers, the x-indices), not on its term, so
+    ! every rank gets about the same share of every pair, however the cost
+    ! of the pairs varies. Every rank computes its items with MatrixElements
+    ! into its slots of ItemS/ItemH (ItemSlots), MPI_ALLGATHERV gives every
+    ! rank all items (an exact copy), and every rank sums the terms of each
+    ! pair in the order j = 1, ..., Glob_NumYHYTerms. These are the
+    ! operations of the sum done by one rank, so the results do not depend
+    ! on the number of ranks.
+
+    IMPLICIT NONE
+
+    ! Arguments :
+    INTEGER, INTENT(IN) :: NumBatch, Offset
+    ! Local variables :
+    INTEGER  :: k, l, b, j, q, n, npt, nt, np, Slot
+    INTEGER  :: Counts(Glob_NumOfProcs), Displs(Glob_NumOfProcs)
+    REAL(wp) :: Ssum, Hsum
+    ! The derivative arrays of MatrixElements are not used here but must
+    ! be present in the call.
+    REAL(wp) :: dSk(Glob_npt), dSl(Glob_npt), dHk(Glob_npt), dHl(Glob_npt)
+
+    n = Glob_n
+    npt = Glob_npt
+    nt = Glob_NumYHYTerms
+    np = Glob_NumOfProcs
+
+    CALL ItemSlots(NumBatch*nt, Counts, Displs)
+    Slot = Displs(Glob_ProcID+1)
+    DO q = Glob_ProcID+1, NumBatch*nt, np
+      b = (q-1)/nt+1
+      j = q-(b-1)*nt
+      k = BatchK(b)
+      l = BatchL(b)
+      Slot = Slot+1
+      CALL MatrixElements(Glob_PWR(k), Glob_X_index(k), Glob_NonlinParam(1:npt, k), &
+                          Glob_PWR(l), Glob_X_index(l), Glob_NonlinParam(1:npt, l), &
+                          Glob_YHYMatr(1:n, 1:n, j), ItemS(Slot), ItemH(Slot), dSk, dSl, dHk, dHl, 0)
+    ENDDO
+
+    IF (np > 1) THEN
+      CALL MPI_ALLGATHERV(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, ItemS, Counts, Displs, &
+                          MPI_WP, MPI_COMM_WORLD, Glob_MPIErrCode)
+      CALL MPI_ALLGATHERV(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, ItemH, Counts, Displs, &
+                          MPI_WP, MPI_COMM_WORLD, Glob_MPIErrCode)
+    ENDIF
+
+    ! The loop over the terms must not be vectorized: the compiler would
+    ! round the products Glob_YHYCoeff(j)*ItemH(Slot) in vector registers and
+    ! add them one by one, where the sum done by one rank fuses every
+    ! product with its addition.
+    DO b = 1, NumBatch
+      Hsum = ZERO
+      Ssum = ZERO
+      !GCC$ NOVECTOR
+      !DIR$ NOVECTOR
+      DO j = 1, nt
+        q = (b-1)*nt+j
+        Slot = Displs(MOD(q-1, np)+1)+(q-1)/np+1
+        Hsum = Hsum+Glob_YHYCoeff(j)*ItemH(Slot)
+        Ssum = Ssum+Glob_YHYCoeff(j)*ItemS(Slot)
+      ENDDO
+      Glob_HklBuff2(Offset+b) = Hsum
+      Glob_SklBuff2(Offset+b) = Ssum
+    ENDDO
+
+  END SUBROUTINE BatchMatElem
+
+
+
+
+
+  SUBROUTINE ItemSlots(NumItems, Counts, Displs)
+    ! Slots of the NumItems items of a batch dealt out cyclically (item q
+    ! to rank r = MOD(q-1,Glob_NumOfProcs)): rank r has Counts(r+1) items,
+    ! stored in the slots Displs(r+1)+1 .. Displs(r+1)+Counts(r+1) of the
+    ! item arrays in the order of q, so item q is in the slot
+    ! Displs(r+1)+(q-1)/Glob_NumOfProcs+1.
+
+    IMPLICIT NONE
+
+    ! Arguments :
+    INTEGER, INTENT(IN)  :: NumItems
+    INTEGER, INTENT(OUT) :: Counts(Glob_NumOfProcs), Displs(Glob_NumOfProcs)
+    ! Local variables :
+    INTEGER :: r
+
+    Displs(1) = 0
+    DO r = 0, Glob_NumOfProcs-1
+      Counts(r+1) = (NumItems+Glob_NumOfProcs-1-r)/Glob_NumOfProcs
+      IF (r > 0) Displs(r+1) = Displs(r)+Counts(r)
+    ENDDO
+
+  END SUBROUTINE ItemSlots
+
+
+
+
+
+  SUBROUTINE AllocItemBuffers(MaxBatch, WithDeriv)
+    ! (Re)allocates the batch arrays for MaxBatch pairs, i.e. MaxBatch*
+    ! Glob_NumYHYTerms items, with the derivative arrays if WithDeriv (a
+    ! rank computes at most NumOwn of the items, an owner receives at most
+    ! NumRecv). Nothing is done when they are large enough already.
+
+    IMPLICIT NONE
+
+    ! Arguments :
+    INTEGER, INTENT(IN) :: MaxBatch
+    LOGICAL, INTENT(IN) :: WithDeriv
+    ! Local variables :
+    INTEGER :: NumItems, NumOwn, NumRecv, npt2
+
+    NumItems = MaxBatch*Glob_NumYHYTerms  ! all items of a batch
+    NumOwn = (NumItems+Glob_NumOfProcs-1)/Glob_NumOfProcs  ! computed by one rank
+    NumRecv = ((MaxBatch+Glob_NumOfProcs-1)/Glob_NumOfProcs)*Glob_NumYHYTerms  ! of one owner's pairs
+    npt2 = 2*Glob_npt
+    IF (ALLOCATED(BatchK)) THEN
+      IF (SIZE(BatchK) < MaxBatch) DEALLOCATE(BatchK, BatchL)
+    ENDIF
+    IF (.NOT. ALLOCATED(BatchK)) ALLOCATE(BatchK(MaxBatch), BatchL(MaxBatch))
+    IF (ALLOCATED(ItemS)) THEN
+      IF (SIZE(ItemS) < NumItems) DEALLOCATE(ItemS, ItemH)
+    ENDIF
+    IF (.NOT. ALLOCATED(ItemS)) ALLOCATE(ItemS(NumItems), ItemH(NumItems))
+    IF (.NOT. WithDeriv) RETURN
+    IF (ALLOCATED(ItemdSk)) THEN
+      IF (SIZE(ItemdSk, 2) < NumOwn) DEALLOCATE(ItemdSk, ItemdHk, ItemdSl, ItemdHl)
+    ENDIF
+    IF (.NOT. ALLOCATED(ItemdSk)) ALLOCATE(ItemdSk(Glob_npt, NumOwn), ItemdHk(Glob_npt, NumOwn), &
+                                           ItemdSl(Glob_npt, NumOwn), ItemdHl(Glob_npt, NumOwn))
+    IF (ALLOCATED(RecvS)) THEN
+      IF (SIZE(RecvS) < NumRecv) DEALLOCATE(RecvS, RecvH, RecvdSk, RecvdHk, RecvdSl, RecvdHl)
+    ENDIF
+    IF (.NOT. ALLOCATED(RecvS)) ALLOCATE(RecvS(NumRecv), RecvH(NumRecv), &
+                                         RecvdSk(Glob_npt, NumRecv), RecvdHk(Glob_npt, NumRecv), &
+                                         RecvdSl(Glob_npt, NumRecv), RecvdHl(Glob_npt, NumRecv))
+    IF (ALLOCATED(SumH)) THEN
+      IF (SIZE(SumH) < MaxBatch) DEALLOCATE(SumH, SumS, SumDk, SumDl)
+    ENDIF
+    IF (.NOT. ALLOCATED(SumH)) ALLOCATE(SumH(MaxBatch), SumS(MaxBatch), &
+                                        SumDk(npt2, MaxBatch), SumDl(npt2, MaxBatch))
+
+  END SUBROUTINE AllocItemBuffers
+
+
+
+
+
   SUBROUTINE ComputeMatElemAndDeriv(Nmin, Nmax)
     ! Subroutine ComputeMatElemAndDeriv computes the matrix elements of H
     ! and S and their derivatives for the functions Nmin..Nmax and stores
@@ -342,96 +491,47 @@ CONTAINS
     !  Input parameters :
     !   Nmin-1 :: number of functions whose matrix elements are known
     !     Nmax :: number of functions whose matrix elements are needed
-    ! Each pair is evaluated by ONE rank and assembled by MPI_ALLREDUCE.
-    ! gradflag is 1 when only the derivatives with respect to function k
-    ! are wanted and 2 when those with respect to l are wanted too (l is
-    ! itself optimized). Dk(1:npt) = dH/dvechLk, Dk(npt+1:2*npt) = dS/dvechLk,
-    ! and likewise for Dl.
+    ! The pairs are collected in batches as in ComputeMatElem;
+    ! BatchMatElemAndDeriv computes them. gradflag is 1 when only the
+    ! derivatives with respect to function k are wanted and 2 when those
+    ! with respect to l are wanted too (l is itself optimized).
+    ! Dk(1:npt) = dH/dvechLk, Dk(npt+1:2*npt) = dS/dvechLk, and likewise for Dl.
 
     IMPLICIT NONE
 
     ! Arguments :
     INTEGER, INTENT(IN) :: Nmin, Nmax
     ! Local variables :
-    INTEGER  :: k, l, i, kk, ll, ii, j
-    INTEGER  :: kstart, lstart, lstop, n, npt, npt2, nb
-    INTEGER  :: mk, ml, ik, il, gradflag
-    REAL(wp) :: Paramk(Glob_n*(Glob_n+1)/2)
-    REAL(wp) :: Paraml(Glob_n*(Glob_n+1)/2)
-    REAL(wp) :: Ssum, Hsum
-    REAL(wp) :: Dksum(Glob_n*(Glob_n+1))
-    REAL(wp) :: Dlsum(Glob_n*(Glob_n+1))
-    LOGICAL  :: grad_l
-    ! One symmetry term of a pair, as returned by MatrixElements
-    REAL(wp) :: Skl, Hkl
-    REAL(wp) :: dSk(Glob_npt), dSl(Glob_npt), dHk(Glob_npt), dHl(Glob_npt)
+    INTEGER  :: k, l, i, kk, ll, ii
+    INTEGER  :: kstart, lstart, lstop, npt2
+    INTEGER  :: NumBatch     ! pairs collected for the current batch
+    INTEGER  :: MaxBatch     ! pairs per batch
 
-    n = Glob_n
-    npt = Glob_npt
-    npt2 = 2*npt  ! the derivative buffers and Glob_D are dimensioned 2*Glob_npt
-    nb = Glob_HSBuffLen
+    npt2 = 2*Glob_npt  ! the derivative buffers and Glob_D are dimensioned 2*Glob_npt
     IF ((Verbose >= 4) .AND. (Glob_ProcID == 0)) THEN
       WRITE(*, '(1x,a,i0,a,i0,a,i0,a,i0)') 'ComputeMatElemAndDeriv: functions ', Nmin, '..', Nmax, &
                                             ', derivatives for ', Glob_nfo, ' function(s) after ', Glob_nfru
     ENDIF
-
-    Glob_HklBuff1(1:nb) = ZERO
-    Glob_SklBuff1(1:nb) = ZERO
-    Glob_DkBuff1(1:npt2, 1:nb) = ZERO
-    IF (Glob_nfo > 1) Glob_DlBuff1(1:npt2, 1:nb) = ZERO
+    MaxBatch = MAX(1, (MaxRankItems*Glob_NumOfProcs)/Glob_NumYHYTerms)
+    CALL AllocItemBuffers(MaxBatch, .TRUE.)
     i = 0
+    NumBatch = 0
 
     DO k = Nmin, Nmax
-      Paramk(1:npt) = Glob_NonlinParam(1:npt, k)
-      mk = Glob_PWR(k)
-      ik = Glob_X_index(k)
       DO l = k, 1, -1
         i = i+1
         IF (i == 1) THEN
           kstart = k
           lstart = l
         ENDIF
-        Paraml(1:npt) = Glob_NonlinParam(1:npt, l)
-        ml = Glob_PWR(l)
-        il = Glob_X_index(l)
-        Hsum = ZERO
-        Ssum = ZERO
-        Dksum(1:npt2) = ZERO
-        IF ((l > Glob_nfru) .AND. (l /= k)) THEN
-          grad_l = .TRUE.
-          gradflag = 2
-          Dlsum(1:npt2) = ZERO
-        ELSE
-          grad_l = .FALSE.
-          gradflag = 1
+        NumBatch = NumBatch+1
+        BatchK(NumBatch) = k
+        BatchL(NumBatch) = l
+        IF ((NumBatch == MaxBatch) .OR. (i == Glob_HSBuffLen) .OR. ((k == Nmax) .AND. (l == 1))) THEN
+          CALL BatchMatElemAndDeriv(NumBatch, i-NumBatch)
+          NumBatch = 0
         ENDIF
-        IF (MOD(i, Glob_NumOfProcs) == Glob_ProcID) THEN
-          DO j = 1, Glob_NumYHYTerms
-            CALL MatrixElements(mk, ik, Paramk, ml, il, Paraml, Glob_YHYMatr(1:n, 1:n, j), &
-                                Skl, Hkl, dSk, dSl, dHk, dHl, gradflag)
-            Hsum = Hsum+Glob_YHYCoeff(j)*Hkl
-            Ssum = Ssum+Glob_YHYCoeff(j)*Skl
-            Dksum(1:npt) = Dksum(1:npt)+Glob_YHYCoeff(j)*dHk(1:npt)
-            Dksum(npt+1:npt2) = Dksum(npt+1:npt2)+Glob_YHYCoeff(j)*dSk(1:npt)
-            IF (grad_l) THEN
-              Dlsum(1:npt) = Dlsum(1:npt)+Glob_YHYCoeff(j)*dHl(1:npt)
-              Dlsum(npt+1:npt2) = Dlsum(npt+1:npt2)+Glob_YHYCoeff(j)*dSl(1:npt)
-            ENDIF
-          ENDDO
-        ENDIF
-        Glob_HklBuff1(i) = Hsum
-        Glob_SklBuff1(i) = Ssum
-        Glob_DkBuff1(1:npt2, i) = Dksum(1:npt2)
-        IF (grad_l) Glob_DlBuff1(1:npt2, i) = Dlsum(1:npt2)
         IF (i == Glob_HSBuffLen) THEN
-          CALL MPI_ALLREDUCE(Glob_HklBuff1, Glob_HklBuff2, i, &
-                             MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
-          CALL MPI_ALLREDUCE(Glob_SklBuff1, Glob_SklBuff2, i, &
-                             MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
-          CALL MPI_ALLREDUCE(Glob_DkBuff1, Glob_DkBuff2, i*npt2, &
-                             MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
-          IF (Glob_nfo > 1) CALL MPI_ALLREDUCE(Glob_DlBuff1, Glob_DlBuff2, i*npt2, &
-                                               MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
           ii = 0
           DO kk = kstart, k
             IF (kk == kstart) THEN
@@ -452,22 +552,10 @@ CONTAINS
             ENDDO
           ENDDO
           i = 0
-          Glob_HklBuff1(1:nb) = ZERO
-          Glob_SklBuff1(1:nb) = ZERO
-          Glob_DkBuff1(1:npt2, 1:nb) = ZERO
-          IF (Glob_nfo > 1) Glob_DlBuff1(1:npt2, 1:nb) = ZERO
         ENDIF
       ENDDO
     ENDDO
     IF (i > 0) THEN
-      CALL MPI_ALLREDUCE(Glob_HklBuff1, Glob_HklBuff2, i, &
-                         MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
-      CALL MPI_ALLREDUCE(Glob_SklBuff1, Glob_SklBuff2, i, &
-                         MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
-      CALL MPI_ALLREDUCE(Glob_DkBuff1, Glob_DkBuff2, i*npt2, &
-                         MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
-      IF (Glob_nfo > 1) CALL MPI_ALLREDUCE(Glob_DlBuff1, Glob_DlBuff2, i*npt2, &
-                                           MPI_WP, MPI_SUM, MPI_COMM_WORLD, Glob_MPIErrCode)
       ii = 0
       DO kk = kstart, Nmax
         IF (kk == kstart) THEN
@@ -486,6 +574,161 @@ CONTAINS
     ENDIF
 
   END SUBROUTINE ComputeMatElemAndDeriv
+
+
+
+
+
+  SUBROUTINE BatchMatElemAndDeriv(NumBatch, Offset)
+    ! BatchMatElem with the derivatives: the terms of pair b are computed
+    ! with gradflag 2 when BatchL(b) is optimized and differs from BatchK(b)
+    ! (then the derivatives with respect to l are summed too), with
+    ! gradflag 1 otherwise. The sums of pair b go to Glob_HklBuff2,
+    ! Glob_SklBuff2, Glob_DkBuff2 and (gradflag 2) Glob_DlBuff2 at Offset+b.
+    ! The items are dealt out cyclically as in BatchMatElem. They carry the
+    ! derivative vectors, so they are not gathered on every rank: pair b is
+    ! summed by its owner, rank MOD(b-1,Glob_NumOfProcs). Every rank
+    ! computes its items owner by owner (in the order of q for each owner)
+    ! into ItemS, ItemH, ItemdSk, ..., MPI_ALLTOALLV sends them to the
+    ! owners (RecvS, RecvH, RecvdSk, ...), every owner sums the terms of its
+    ! pairs in the order j = 1, ..., Glob_NumYHYTerms, and MPI_ALLGATHERV
+    ! gives every rank the sums of all pairs (SumH, SumS, SumDk, SumDl, exact
+    ! copies). The first term of pair b dealt to rank r is
+    ! MOD(r-MOD((b-1)*Glob_NumYHYTerms,np)+np,np)+1, the next ones follow at
+    ! steps of np = Glob_NumOfProcs.
+
+    IMPLICIT NONE
+
+    ! Arguments :
+    INTEGER, INTENT(IN) :: NumBatch, Offset
+    ! Local variables :
+    INTEGER  :: k, l, b, j, n, npt, npt2, nt, np, me, Owner, Src, Slot, gradflag
+    INTEGER  :: SendCounts(Glob_NumOfProcs), SendDispls(Glob_NumOfProcs)
+    INTEGER  :: RecvCounts(Glob_NumOfProcs), RecvDispls(Glob_NumOfProcs)
+    INTEGER  :: RecvPos(Glob_NumOfProcs)     ! last slot taken from each source
+    INTEGER  :: PairCounts(Glob_NumOfProcs), PairDispls(Glob_NumOfProcs)
+    LOGICAL  :: grad_l, AnyGradL
+    REAL(wp) :: Ssum, Hsum
+    REAL(wp) :: Dksum(Glob_n*(Glob_n+1))
+    REAL(wp) :: Dlsum(Glob_n*(Glob_n+1))
+
+    n = Glob_n
+    npt = Glob_npt
+    npt2 = 2*npt
+    nt = Glob_NumYHYTerms
+    np = Glob_NumOfProcs
+    me = Glob_ProcID
+
+    AnyGradL = .FALSE.
+    DO b = 1, NumBatch
+      IF ((BatchL(b) > Glob_nfru) .AND. (BatchL(b) /= BatchK(b))) AnyGradL = .TRUE.
+    ENDDO
+
+    ! The items of this rank, owner by owner
+    Slot = 0
+    DO Owner = 0, np-1
+      SendDispls(Owner+1) = Slot
+      DO b = Owner+1, NumBatch, np
+        k = BatchK(b)
+        l = BatchL(b)
+        IF ((l > Glob_nfru) .AND. (l /= k)) THEN
+          gradflag = 2
+        ELSE
+          gradflag = 1
+        ENDIF
+        DO j = MOD(me-MOD((b-1)*nt, np)+np, np)+1, nt, np
+          Slot = Slot+1
+          CALL MatrixElements(Glob_PWR(k), Glob_X_index(k), Glob_NonlinParam(1:npt, k), &
+                              Glob_PWR(l), Glob_X_index(l), Glob_NonlinParam(1:npt, l), &
+                              Glob_YHYMatr(1:n, 1:n, j), ItemS(Slot), ItemH(Slot), &
+                              ItemdSk(1:npt, Slot), ItemdSl(1:npt, Slot), ItemdHk(1:npt, Slot), &
+                              ItemdHl(1:npt, Slot), gradflag)
+        ENDDO
+      ENDDO
+      SendCounts(Owner+1) = Slot-SendDispls(Owner+1)
+    ENDDO
+
+    ! The items of the pairs of this rank, source by source
+    RecvCounts(1:np) = 0
+    DO b = me+1, NumBatch, np
+      DO Src = 0, np-1
+        RecvCounts(Src+1) = RecvCounts(Src+1)+(nt-MOD(Src-MOD((b-1)*nt, np)+np, np)-1+np)/np
+      ENDDO
+    ENDDO
+    RecvDispls(1) = 0
+    DO Src = 1, np-1
+      RecvDispls(Src+1) = RecvDispls(Src)+RecvCounts(Src)
+    ENDDO
+
+    CALL MPI_ALLTOALLV(ItemS, SendCounts, SendDispls, MPI_WP, RecvS, RecvCounts, RecvDispls, MPI_WP, &
+                       MPI_COMM_WORLD, Glob_MPIErrCode)
+    CALL MPI_ALLTOALLV(ItemH, SendCounts, SendDispls, MPI_WP, RecvH, RecvCounts, RecvDispls, MPI_WP, &
+                       MPI_COMM_WORLD, Glob_MPIErrCode)
+    CALL MPI_ALLTOALLV(ItemdSk, npt*SendCounts, npt*SendDispls, MPI_WP, &
+                       RecvdSk, npt*RecvCounts, npt*RecvDispls, MPI_WP, MPI_COMM_WORLD, Glob_MPIErrCode)
+    CALL MPI_ALLTOALLV(ItemdHk, npt*SendCounts, npt*SendDispls, MPI_WP, &
+                       RecvdHk, npt*RecvCounts, npt*RecvDispls, MPI_WP, MPI_COMM_WORLD, Glob_MPIErrCode)
+    IF (AnyGradL) THEN
+      CALL MPI_ALLTOALLV(ItemdSl, npt*SendCounts, npt*SendDispls, MPI_WP, &
+                         RecvdSl, npt*RecvCounts, npt*RecvDispls, MPI_WP, MPI_COMM_WORLD, Glob_MPIErrCode)
+      CALL MPI_ALLTOALLV(ItemdHl, npt*SendCounts, npt*SendDispls, MPI_WP, &
+                         RecvdHl, npt*RecvCounts, npt*RecvDispls, MPI_WP, MPI_COMM_WORLD, Glob_MPIErrCode)
+    ENDIF
+
+    ! The sums of the pairs of this rank. Every source sent the items of
+    ! these pairs in the order of q, the order in which they are summed.
+    ! The loop over the terms must not be vectorized (see BatchMatElem).
+    CALL ItemSlots(NumBatch, PairCounts, PairDispls)
+    RecvPos(1:np) = RecvDispls(1:np)
+    DO b = me+1, NumBatch, np
+      grad_l = ((BatchL(b) > Glob_nfru) .AND. (BatchL(b) /= BatchK(b)))
+      Hsum = ZERO
+      Ssum = ZERO
+      Dksum(1:npt2) = ZERO
+      IF (grad_l) Dlsum(1:npt2) = ZERO
+      !GCC$ NOVECTOR
+      !DIR$ NOVECTOR
+      DO j = 1, nt
+        Src = MOD((b-1)*nt+j-1, np)
+        RecvPos(Src+1) = RecvPos(Src+1)+1
+        Slot = RecvPos(Src+1)
+        Hsum = Hsum+Glob_YHYCoeff(j)*RecvH(Slot)
+        Ssum = Ssum+Glob_YHYCoeff(j)*RecvS(Slot)
+        Dksum(1:npt) = Dksum(1:npt)+Glob_YHYCoeff(j)*RecvdHk(1:npt, Slot)
+        Dksum(npt+1:npt2) = Dksum(npt+1:npt2)+Glob_YHYCoeff(j)*RecvdSk(1:npt, Slot)
+        IF (grad_l) THEN
+          Dlsum(1:npt) = Dlsum(1:npt)+Glob_YHYCoeff(j)*RecvdHl(1:npt, Slot)
+          Dlsum(npt+1:npt2) = Dlsum(npt+1:npt2)+Glob_YHYCoeff(j)*RecvdSl(1:npt, Slot)
+        ENDIF
+      ENDDO
+      Slot = PairDispls(me+1)+(b-1)/np+1
+      SumH(Slot) = Hsum
+      SumS(Slot) = Ssum
+      SumDk(1:npt2, Slot) = Dksum(1:npt2)
+      IF (grad_l) SumDl(1:npt2, Slot) = Dlsum(1:npt2)
+    ENDDO
+
+    IF (np > 1) THEN
+      CALL MPI_ALLGATHERV(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, SumH, PairCounts, PairDispls, &
+                          MPI_WP, MPI_COMM_WORLD, Glob_MPIErrCode)
+      CALL MPI_ALLGATHERV(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, SumS, PairCounts, PairDispls, &
+                          MPI_WP, MPI_COMM_WORLD, Glob_MPIErrCode)
+      CALL MPI_ALLGATHERV(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, SumDk, npt2*PairCounts, npt2*PairDispls, &
+                          MPI_WP, MPI_COMM_WORLD, Glob_MPIErrCode)
+      IF (AnyGradL) CALL MPI_ALLGATHERV(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, SumDl, npt2*PairCounts, &
+                                        npt2*PairDispls, MPI_WP, MPI_COMM_WORLD, Glob_MPIErrCode)
+    ENDIF
+
+    DO b = 1, NumBatch
+      Slot = PairDispls(MOD(b-1, np)+1)+(b-1)/np+1
+      Glob_HklBuff2(Offset+b) = SumH(Slot)
+      Glob_SklBuff2(Offset+b) = SumS(Slot)
+      Glob_DkBuff2(1:npt2, Offset+b) = SumDk(1:npt2, Slot)
+      IF ((BatchL(b) > Glob_nfru) .AND. (BatchL(b) /= BatchK(b))) &
+        Glob_DlBuff2(1:npt2, Offset+b) = SumDl(1:npt2, Slot)
+    ENDDO
+
+  END SUBROUTINE BatchMatElemAndDeriv
 
 
 
@@ -637,6 +880,10 @@ CONTAINS
     ! (sigma_old - sigma_new)*S (Glob_S has a unit diagonal in 'I' mode).
     ! Cost: one LDL^T per bisection step, once per BBOP step. Inert unless
     ! Glob_EigIdxTargeting == 1.
+    ! The bisection works in Glob_invD and Glob_WorkForGSEPIIS (when they are
+    ! allocated and large enough), so that on success Glob_H and Glob_invD
+    ! hold the factorization of H - NewSigma*S and the caller can solve
+    ! without refactorizing: Glob_ShiftFactorKept says so. See globvars.
     !==================================================================
 
     IMPLICIT NONE
@@ -646,8 +893,10 @@ CONTAINS
 
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: invDwork, wwork
     REAL(wp)                            :: NewSigma, lo, hi, width, OldSigma
-    INTEGER                             :: NumFact, ErrorCode
+    INTEGER                             :: NumFact, ErrorCode, FinalFactCode
+    LOGICAL                             :: UseGlobalWork
 
+    Glob_ShiftFactorKept = .FALSE.
     IF (Glob_EigIdxTargeting /= 1) RETURN
 
     ! A basis of N functions supports only N eigenvalues; asking for
@@ -673,8 +922,18 @@ CONTAINS
     ENDIF
 
     OldSigma = Glob_ApproxEnergy
-    ALLOCATE(invDwork(N))
-    ALLOCATE(wwork(N))
+
+    ! The factorization diagonal goes to Glob_invD (and the work vector to
+    ! Glob_WorkForGSEPIIS) whenever the driver has allocated them for this
+    ! basis size: that is what lets the next solve reuse the factorization.
+    UseGlobalWork = .FALSE.
+    IF (ALLOCATED(Glob_invD) .AND. ALLOCATED(Glob_WorkForGSEPIIS)) THEN
+      IF ((SIZE(Glob_invD) >= N) .AND. (SIZE(Glob_WorkForGSEPIIS) >= N)) UseGlobalWork = .TRUE.
+    ENDIF
+    IF (.NOT. UseGlobalWork) THEN
+      ALLOCATE(invDwork(N))
+      ALLOCATE(wwork(N))
+    ENDIF
 
     ! A deliberately modest starting bracket - GSEPIIS_ShiftForIndex widens
     ! it by itself if the inertia count says the target is outside.
@@ -686,16 +945,25 @@ CONTAINS
     ! back holding H - NewSigma*S, and on failure it is restored to
     ! H - OldSigma*S. Either way it stays consistent with
     ! Glob_ApproxEnergy as set below, which is what the next EnergyIA
-    ! assumes. Its upper triangle is left holding an L^T that the next
-    ! solve overwrites.
-    CALL GSEPIIS_ShiftForIndex(N, Glob_H, Glob_HSLeadDim, OldSigma, &
-                               Glob_S, Glob_HSLeadDim, &
-                               Glob_WhichEigenvalue, lo, hi, NewSigma, &
-                               invDwork, wwork, NumFact, ErrorCode)
+    ! assumes. On success its upper triangle holds the L^T of the final
+    ! factorization (FinalFactCode = 0), which the next solve reuses when
+    ! the diagonal went to Glob_invD.
+    IF (UseGlobalWork) THEN
+      CALL GSEPIIS_ShiftForIndex(N, Glob_H, Glob_HSLeadDim, OldSigma, &
+                                 Glob_S, Glob_HSLeadDim, &
+                                 Glob_WhichEigenvalue, lo, hi, NewSigma, &
+                                 Glob_invD, Glob_WorkForGSEPIIS, NumFact, ErrorCode, FinalFactCode)
+    ELSE
+      CALL GSEPIIS_ShiftForIndex(N, Glob_H, Glob_HSLeadDim, OldSigma, &
+                                 Glob_S, Glob_HSLeadDim, &
+                                 Glob_WhichEigenvalue, lo, hi, NewSigma, &
+                                 invDwork, wwork, NumFact, ErrorCode, FinalFactCode)
+    ENDIF
 
     IF (ErrorCode == 0) THEN
 
       Glob_ApproxEnergy = NewSigma
+      Glob_ShiftFactorKept = (UseGlobalWork .AND. (FinalFactCode == 0))
 
       ! Discard the previous eigenvector as the starting guess. Essential: an
       ! exact eigenvector of the pencil is a FIXED POINT of inverse iteration
@@ -706,9 +974,10 @@ CONTAINS
       ! callers use as the initial guess of a fresh step.
       Glob_LastEigvector(1:N) = ONE
 
-      IF (Glob_ProcID == 0) THEN
+      ! A progress report: the whole block at Verbose >= 2, with its title
+      IF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) THEN
         WRITE(*, *)
-        IF (Verbose >= 2) WRITE(*, *) 'Eigenvalue-index targeting in ', RoutineName
+        WRITE(*, *) 'Eigenvalue-index targeting in ', RoutineName
         WRITE(*, *) '  WHICH_EIGENVALUE      = ', Glob_WhichEigenvalue
         WRITE(*, '(a26)', ADVANCE='no') '   shift before         ='
         CALL writerealadv(6, OldSigma)
@@ -729,8 +998,10 @@ CONTAINS
 
     ENDIF
 
-    DEALLOCATE(wwork)
-    DEALLOCATE(invDwork)
+    IF (.NOT. UseGlobalWork) THEN
+      DEALLOCATE(wwork)
+      DEALLOCATE(invDwork)
+    ENDIF
 
   END SUBROUTINE RetargetShiftToEigenvalue
 
@@ -754,7 +1025,13 @@ CONTAINS
     ! without bisection. Cost: an O(N^2) update of the lower triangle,
     ! H - sigma_new*S = (H - sigma_old*S) + (sigma_old - sigma_new)*S (unit
     ! diagonal of Glob_S in 'I' mode). THE CALLER MUST REFACTORIZE FROM
-    ! ROW 1 afterwards (one EnergyIA(1,N,.FALSE.,ErrCode) does it).
+    ! ROW 1 afterwards (one EnergyIA(1,N,.FALSE.,ErrCode) does it) -
+    ! UNLESS Glob_ShiftFactorKept comes back .TRUE.: then the last
+    ! factorization made here, of exactly the matrix left in Glob_H, is in
+    ! Glob_H (upper triangle) and Glob_invD, and EnergyIA(N+1,N,.FALSE.,
+    ! ErrCode) solves without refactorizing. That is the case when the
+    ! driver has allocated Glob_invD and Glob_WorkForGSEPIIS for this basis
+    ! size and the final factorization succeeded.
     !==================================================================
 
     IMPLICIT NONE
@@ -764,7 +1041,9 @@ CONTAINS
     REAL(wp)                            :: SigmaNow, NewSigma, Offset
     INTEGER                             :: it, mcount, FactCode
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: invDwork, wwork
+    LOGICAL                             :: UseGlobalWork
 
+    Glob_ShiftFactorKept = .FALSE.
     IF (N < 1) RETURN
 
     ! EVERY branch below must be taken identically on every rank: the search
@@ -800,14 +1079,29 @@ CONTAINS
       RETURN
     ENDIF
 
-    ALLOCATE(invDwork(N))
-    ALLOCATE(wwork(N))
+    ! The factorization diagonal goes to Glob_invD (and the work vector to
+    ! Glob_WorkForGSEPIIS) whenever the driver has allocated them for this
+    ! basis size: that is what lets the next solve reuse the factorization.
+    UseGlobalWork = .FALSE.
+    IF (ALLOCATED(Glob_invD) .AND. ALLOCATED(Glob_WorkForGSEPIIS)) THEN
+      IF ((SIZE(Glob_invD) >= N) .AND. (SIZE(Glob_WorkForGSEPIIS) >= N)) UseGlobalWork = .TRUE.
+    ENDIF
+    IF (.NOT. UseGlobalWork) THEN
+      ALLOCATE(invDwork(N))
+      ALLOCATE(wwork(N))
+    ENDIF
 
     DO it = 1, 60
       NewSigma = Glob_CurrEnergy-Offset
-      CALL ReShiftAndFactor(N, Glob_H, Glob_HSLeadDim, SigmaNow, &
-                            Glob_S, Glob_HSLeadDim, NewSigma, &
-                            invDwork, wwork, mcount, FactCode)
+      IF (UseGlobalWork) THEN
+        CALL ReShiftAndFactor(N, Glob_H, Glob_HSLeadDim, SigmaNow, &
+                              Glob_S, Glob_HSLeadDim, NewSigma, &
+                              Glob_invD, Glob_WorkForGSEPIIS, mcount, FactCode)
+      ELSE
+        CALL ReShiftAndFactor(N, Glob_H, Glob_HSLeadDim, SigmaNow, &
+                              Glob_S, Glob_HSLeadDim, NewSigma, &
+                              invDwork, wwork, mcount, FactCode)
+      ENDIF
       IF (FactCode == 0) THEN
         IF (mcount == Glob_WhichEigenvalue-1) EXIT
         IF (mcount >= Glob_WhichEigenvalue) THEN
@@ -833,12 +1127,21 @@ CONTAINS
     !------------------------------------------------------------------
     Offset = Offset/FOUR
     NewSigma = Glob_CurrEnergy-Offset
-    CALL ReShiftAndFactor(N, Glob_H, Glob_HSLeadDim, SigmaNow, &
-                          Glob_S, Glob_HSLeadDim, NewSigma, &
-                          invDwork, wwork, mcount, FactCode)
+    IF (UseGlobalWork) THEN
+      CALL ReShiftAndFactor(N, Glob_H, Glob_HSLeadDim, SigmaNow, &
+                            Glob_S, Glob_HSLeadDim, NewSigma, &
+                            Glob_invD, Glob_WorkForGSEPIIS, mcount, FactCode)
+    ELSE
+      CALL ReShiftAndFactor(N, Glob_H, Glob_HSLeadDim, SigmaNow, &
+                            Glob_S, Glob_HSLeadDim, NewSigma, &
+                            invDwork, wwork, mcount, FactCode)
+      DEALLOCATE(wwork)
+      DEALLOCATE(invDwork)
+    ENDIF
 
-    DEALLOCATE(wwork)
-    DEALLOCATE(invDwork)
+    ! This factorization is of the matrix now in Glob_H, at the shift that
+    ! becomes Glob_ApproxEnergy: the caller may solve from row N+1.
+    Glob_ShiftFactorKept = (UseGlobalWork .AND. (FactCode == 0))
 
     Glob_ApproxEnergy = SigmaNow
 
