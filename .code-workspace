@@ -1,6 +1,8 @@
 {
     "folders": [
         { "path": "CG_0S" },
+        { "path": "PG_0S" },
+        { "path": "PG_1P" },
         { "path": "RG_0S" },
         { "path": "RG_1P" },
         { "path": "RG_2D" },
