@@ -180,6 +180,43 @@ FOR ANY PARTICULAR PURPOSE.
 
 ---
 
+## SLATEC modified Bessel K routines
+
+**Files:** `bessel.f90` and its coefficient tables in `bessel_coeff.f90`,
+present (identical) in each of `RG_0S/src/`, `RG_1P/src/`, `RG_2D/src/`, and
+`RG_2P/src/`. The development notes in
+`doc/devnotes/mod_Bessel_high_precision/` document the adaptation and provide
+a test program comparing it with independent reference values.
+
+**Origin:** the routines `DBESK`, `DBSKNU`, and `DASYIK` (author D. E. Amos,
+Sandia National Laboratories) from version 4.1 of the SLATEC Common
+Mathematical Library, <https://netlib.org/slatec/>. The fixed-form sources
+were obtained from the unmodified `src/original/` copy of SLATEC 4.1 in
+<https://github.com/Zaneham/SLATEC>. ECGPACK does not use that repository's
+modernised sources (`src/modern/`, Apache License 2.0). The original fixed-form
+sources are not bundled with ECGPACK.
+
+**Modifications made for ECGPACK:** the adapted routines use `REAL(wp)`,
+with `wp` obtained from `globvars`, so their interface and arithmetic follow
+the precision selected for the ECGPACK build. The generic Fortran `GAMMA`
+intrinsic replaces the SLATEC `DGAMMA` dependency, and integer-order starting
+values are evaluated by `DBSKNU`, avoiding the separate order-zero and
+order-one Chebyshev dependency chain. `DBESK` gains an optional output that
+evaluates `sqrt(2x/pi)*exp(x)*K_1(x)-1` without cancellation. Calls to the
+SLATEC `XERMSG` error handler are replaced by descriptive `ERROR STOP`
+statements. The original SLATEC coefficient tables limit the numerical
+algorithm to approximately 14 significant decimal digits even when a wider
+working kind is selected, so the Debye table is extended through order 24
+using exact-rational coefficients (DLMF 10.41.9), the reciprocal-gamma table
+is regenerated using 120-decimal-digit arithmetic, and convergence limits are
+selected from `wp`.
+
+The SLATEC public-domain statement reproduced in the following machine-
+constants section also applies to these original routines. The ECGPACK
+modifications are distributed under the ECGPACK license (`LICENSE.md`).
+
+---
+
 ## SLATEC machine constants (`I1MACH` and `D1MACH`)
 
 **Files:** `X1MACH.f90` in each of `CG_0S/src/`, `RG_0S/src/`,
