@@ -21,7 +21,7 @@ MODULE wp_def
   ! ReadIOFile requires the data file to specify EXACTLY this many particles
   ! (PARTICLES record), so it is an exact count, not an upper bound. HD+ (and the muonic
   ! dp-mu, tp-mu, td-mu ions): 3.
-  INTEGER, PARAMETER :: Glob_AllowedNumOfParticles=3
+  INTEGER, PARAMETER :: Glob_AllowedNumOfParticles=4
 
 CONTAINS
 

@@ -8,6 +8,7 @@ MODULE linalg  ! version 0.52
   !   *_PMode      1 = distributed over the MPI processes, 0 = every process computes the whole result
   !   *_SModeType  in the serial branch: 1 = every process computes, 0 = rank 0 computes and broadcasts
   !   *_UseBLAS    1 = call BLAS in the serial branch (only when a BLAS library is linked)
+  ! With Glob_NpIndependent (globvars) every PMode is 0 and GSEPIIS runs on rank 0 alone.
 
   INTEGER :: Glob_LDLTF_PMode = 1
   INTEGER :: Glob_LDLTF_SModeType = 0
@@ -109,6 +110,9 @@ CONTAINS
     ! at np = 1 and in their parallel branches at np > 1; the O(n) helpers stay serial. For wp=8
     ! LDLTF/LDLHF route bulk factorizations between the blocked serial path and the parallel
     ! branch with the calibrated cost models; thin updates stay in the parallel branch.
+    ! With Glob_NpIndependent every routine takes its serial path at any np, as at np = 1:
+    ! the factorizations on rank 0, which broadcasts the factor, and GSEPIIS on rank 0 alone.
+    ! No calibration then.
     INTEGER :: n
     INTEGER :: pm, min_procs_par
 
@@ -132,6 +136,9 @@ CONTAINS
       pm = 0  ! single process - avoid all MPI call overhead
     ENDIF
 
+    ! Results independent of the process count: the serial code at every np
+    IF (Glob_NpIndependent) pm = 0
+
     ! Heavy routines: parallel at np > 1 (LDLTF/LDLHF decide internally between the blocked
     ! serial path and the parallel branch).
     Glob_LDLTF_PMode = pm
@@ -147,8 +154,13 @@ CONTAINS
 
     ! SModeType 0 at np > 1: rank 0 factorizes alone and broadcasts the factor (faster than
     ! redundant computation on a shared-memory node); 1 at np = 1.
-    Glob_LDLTF_SModeType = 1-pm
-    Glob_LDLHF_SModeType = 1-pm
+    IF (Glob_NumOfProcs > 1) THEN
+      Glob_LDLTF_SModeType = 0
+      Glob_LDLHF_SModeType = 0
+    ELSE
+      Glob_LDLTF_SModeType = 1
+      Glob_LDLHF_SModeType = 1
+    ENDIF
 
     ! O(n) vector helpers: always serial at these problem sizes.
     Glob_RMaxAbsEl_PMode = 0
@@ -162,8 +174,9 @@ CONTAINS
     Glob_RVDiffEucNorm_PMode = 0
     Glob_CVDiffEucNorm_PMode = 0
 
-    ! Calibrate the routing cost models once per run (wp=8, np > 1; MPI collectives inside).
-    IF ((wp == 8) .AND. (Glob_NumOfProcs > 1) .AND. (Glob_LDLF_CsR < ZERO)) THEN
+    ! Calibrate the routing cost models once per run (wp=8, np > 1, parallel branches in use;
+    ! MPI collectives inside).
+    IF ((wp == 8) .AND. (Glob_NumOfProcs > 1) .AND. (Glob_LDLF_CsR < ZERO) .AND. (pm == 1)) THEN
       CALL linalg_ldlf_calibrate
     ENDIF
 
@@ -1946,6 +1959,65 @@ CONTAINS
 
   SUBROUTINE GSEPIIS(k, n, M, nM, invD, B, nB, apprlambda, v, w, Tol, &
                      lambda, x, RelAcc, MaxIter, SpecifNorm, NumIter, ErrorCode)
+    ! Inverse iteration for one eigenpair of the real symmetric pencil A*x = lambda*B*x; the
+    ! arguments are those of GSEPIIS_Serial, which does the work. With Glob_NpIndependent at
+    ! np > 1 rank 0 runs it alone, exactly as a single process does (its factorization stays
+    ! local), and broadcasts everything it changed: the new columns k..n of the factor and of
+    ! invD, the vectors v, w and x, and the scalar results.
+
+    ! Arguments
+    INTEGER  :: k, n, nM, nB, MaxIter, SpecifNorm, NumIter, ErrorCode
+    REAL(wp) :: M(nM, n), invD(n), B(nB, n), v(n), w(n), x(n)
+    REAL(wp) :: apprlambda, Tol, lambda, RelAcc
+    ! Local variables
+    INTEGER  :: i, SaveSModeType
+    INTEGER  :: IntResults(4)
+    REAL(wp) :: RealResults(2)
+
+    IF ((.NOT. Glob_NpIndependent) .OR. (Glob_NumOfProcs == 1)) THEN
+      CALL GSEPIIS_Serial(k, n, M, nM, invD, B, nB, apprlambda, v, w, Tol, &
+                          lambda, x, RelAcc, MaxIter, SpecifNorm, NumIter, ErrorCode)
+      RETURN
+    ENDIF
+
+    IF (Glob_ProcID == 0) THEN
+      SaveSModeType = Glob_LDLTF_SModeType
+      Glob_LDLTF_SModeType = 1
+      CALL GSEPIIS_Serial(k, n, M, nM, invD, B, nB, apprlambda, v, w, Tol, &
+                          lambda, x, RelAcc, MaxIter, SpecifNorm, NumIter, ErrorCode)
+      Glob_LDLTF_SModeType = SaveSModeType
+      IntResults(1) = NumIter
+      IntResults(2) = ErrorCode
+      IntResults(3) = Glob_NumEvalsBelowShift
+      IntResults(4) = Glob_LastEigIndex
+      RealResults(1) = lambda
+      RealResults(2) = RelAcc
+    ENDIF
+
+    DO i = k, n
+      CALL MPI_BCAST(M(1:i-1, i), i-1, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+    ENDDO
+    IF (k <= n) CALL MPI_BCAST(invD(k:n), n-k+1, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+    CALL MPI_BCAST(v, n, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+    CALL MPI_BCAST(w, n, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+    CALL MPI_BCAST(x, n, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+    CALL MPI_BCAST(IntResults, 4, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+    CALL MPI_BCAST(RealResults, 2, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+    NumIter = IntResults(1)
+    ErrorCode = IntResults(2)
+    Glob_NumEvalsBelowShift = IntResults(3)
+    Glob_LastEigIndex = IntResults(4)
+    lambda = RealResults(1)
+    RelAcc = RealResults(2)
+
+  END SUBROUTINE GSEPIIS
+
+
+
+
+
+  SUBROUTINE GSEPIIS_Serial(k, n, M, nM, invD, B, nB, apprlambda, v, w, Tol, &
+                            lambda, x, RelAcc, MaxIter, SpecifNorm, NumIter, ErrorCode)
     ! Inverse iteration for one eigenpair of the real symmetric pencil A*x = lambda*B*x, extending
     ! the factorization M = A - apprlambda*B = L*D*L^T of the leading (k-1) x (k-1) block (LDLTF).
     ! Converges to the eigenvalue nearest apprlambda; eigenvalues closer than about epsilon
@@ -2120,7 +2192,7 @@ CONTAINS
       CALL RVScale(n, x, 1/SQRT(t1))
     ENDSELECT
 
-  END SUBROUTINE GSEPIIS
+  END SUBROUTINE GSEPIIS_Serial
 
 
 
@@ -2241,7 +2313,7 @@ CONTAINS
 
 
   SUBROUTINE GSEPIIS_ShiftForIndex(n, A, nA, Sigma0, B, nB, WhichEigval, SigmaLo, SigmaHi, &
-                                   Sigma, invD, w, NumFact, ErrorCode)
+                                   Sigma, invD, w, NumFact, ErrorCode, FinalFactCode)
     ! Bisection on the inertia count until exactly WhichEigval-1 eigenvalues lie below the shift,
     ! so that GSEPIIS then converges to eigenvalue number WhichEigval.
     !   A(nA,n)   lower triangle: A - Sigma0*B in, A - Sigma*B out (restored on failure);
@@ -2249,18 +2321,22 @@ CONTAINS
     !   Sigma0    shift already in A;   B(nB,n) overlap;   SigmaLo, SigmaHi  initial bracket (widened)
     !   Sigma     result;   invD  its 1/D_ii;   w  work;   NumFact  factorizations used
     !   ErrorCode 0 ok, 3 no bracket within Glob_EigIdxMaxBisect steps
+    !   FinalFactCode (optional) LDLTF status of the LAST factorization: 0 means that A (upper
+    !             triangle) and invD hold a valid factorization of A - Sigma*B on return
     ! Works in place: LDLTF writes only the strict upper triangle and invD, so the lower triangle
     ! is re-shifted between trials.
     IMPLICIT NONE
     INTEGER  :: n, nA, nB, WhichEigval, NumFact, ErrorCode
     REAL(wp) :: A(nA, n), B(nB, n), invD(n), w(n)
     REAL(wp) :: SigmaLo, SigmaHi, Sigma, Sigma0
+    INTEGER, OPTIONAL, INTENT(OUT) :: FinalFactCode
     ! Local variables:
     INTEGER  :: it, mcount, CountLo, CountHi, FactCode
     REAL(wp) :: lo, hi, width, SigmaNow
 
     ErrorCode = 0
     NumFact = 0
+    IF (PRESENT(FinalFactCode)) FinalFactCode = 1
     lo = SigmaLo
     hi = SigmaHi
     ! SigmaNow always records the shift currently built into A, so that the
@@ -2366,6 +2442,7 @@ CONTAINS
     Sigma = lo
     CALL ReShiftAndFactor(n, A, nA, SigmaNow, B, nB, Sigma, invD, w, mcount, FactCode)
     NumFact = NumFact + 1
+    IF (PRESENT(FinalFactCode)) FinalFactCode = FactCode
     IF ((Verbose >= 4) .AND. (Glob_ProcID == 0)) THEN
       WRITE(*, '(1x,a,i0,a,es16.8,a,es16.8,a,es16.8)') '   ShiftForIndex: factorization ', NumFact, ' shift=', &
         SigmaNow, ' lo=', lo, ' hi=', hi
