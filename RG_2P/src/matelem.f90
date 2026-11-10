@@ -2,6 +2,7 @@ module matelem
 !Module matelem contains subroutines for computing
 !matrix elements with real L=1 Gaussians.
   use globvars
+  use bessel
   implicit none
 
 contains
@@ -833,7 +834,7 @@ contains
   end subroutine PrecomputeMatrices_L_A_MA
 
   subroutine MatrixElementsAll_RG_2P(m_k, m_l, mm_k, mm_l, Lk, Ll, Ak, Al, Pbra, Pket, &
-                                          Hkl, Skl, Tkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
+                                          Hkl, Skl, Tkl, Trkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
                                           MVkl, drach_MVkl1, drach_MVkl2, Darwinkl, drach_Darwinkl, OOkl, rmrmkl, prvalkl, &
                                           NumCFGridPoints, CFGrid, &
                                           CFkl, NumDensGridPoints, DensGrid, Denskl, &
@@ -845,7 +846,7 @@ contains
     integer,intent(in)       :: m_k,m_l,mm_k,mm_l
     real(wp),intent(in)   :: Lk(nn,nn),Ll(nn,nn),Ak(nn,nn),Al(nn,nn)
     real(wp),intent(in)   :: Pbra(Glob_n,Glob_n),Pket(Glob_n,Glob_n)
-    real(wp),intent(out)  :: Hkl,Skl,Tkl,Vkl,MVkl,drach_MVkl1,drach_MVkl2,Darwinkl,drach_Darwinkl,OOkl
+    real(wp),intent(out)  :: Hkl,Skl,Tkl,Trkl,Vkl,MVkl,drach_MVkl1,drach_MVkl2,Darwinkl,drach_Darwinkl,OOkl
     real(wp),intent(out)  :: rm2kl(Glob_n,Glob_n),rmkl(Glob_n,Glob_n)
     real(wp),intent(out)  :: rkl(Glob_n,Glob_n),r2kl(Glob_n,Glob_n)
     real(wp),intent(out)  :: deltarkl(Glob_n,Glob_n)
@@ -1741,61 +1742,64 @@ contains
 !Evaluation of momentum-space correlation functions and particle densities.
 !For computational efficiency, we compute zeta=eta/4 and lambdas that are 2 times less than
 !those defined in the paper.  Products lambda_r*lambda_s/eta remain unchanged.
-    if (AreMCorrFuncNeeded.or.AreMomDensNeeded) then
-      !inv_invtAkinvtAl=(inv(tAk)+inv(tAl))^{-1}
-      !                =tAl-tAl*inv(tAkl)*tAl.
-      do i=1,nn
-        do j=i,nn
-          temp1=ZERO
-          do q=1,nn
-            temp1=temp1+tAl(i,q)*inv_tAkltAl(q,j)
-          enddo
-          inv_invtAkinvtAl(i,j)=tAl(i,j)-temp1
-          inv_invtAkinvtAl(j,i)=inv_invtAkinvtAl(i,j)
+    !inv_invtAkinvtAl=(inv(tAk)+inv(tAl))^{-1}
+    !                =tAk*inv(tAkl)*tAl=tAk*inv_tAkltAl, symmetrized.
+    !The equivalent form tAl-tAl*inv(tAkl)*tAl is not used: when tAl has
+    !much larger eigenvalues than tAk it subtracts nearly equal numbers,
+    !and roundoff can make the momentum widths wrong or even non-positive.
+    do i=1,nn
+      do j=i,nn
+        temp1=ZERO
+        temp2=ZERO
+        do q=1,nn
+          temp1=temp1+tAk(i,q)*inv_tAkltAl(q,j)
+          temp2=temp2+tAk(j,q)*inv_tAkltAl(q,i)
         enddo
+        inv_invtAkinvtAl(i,j)=ONEHALF*(temp1+temp2)
+        inv_invtAkinvtAl(j,i)=inv_invtAkinvtAl(i,j)
       enddo
+    enddo
 !Zeta(I,J)=a_I'*inv_invtAkinvtAl*a_J for physical-particle momentum selectors
 !a_1=-(1,...,1)' and a_I=e_(I-1), I=2,...,n+1.
-      Zeta(1,1)=ZERO
-      do i=1,nn
-        temp1=ZERO
-        do j=1,nn
-          Zeta(j+1,i+1)=inv_invtAkinvtAl(j,i)
-          temp1=temp1+inv_invtAkinvtAl(j,i)
-        enddo
-        Zeta(1,i+1)=-temp1
-        Zeta(i+1,1)=-temp1
-        Zeta(1,1)=Zeta(1,1)+temp1
+    Zeta(1,1)=ZERO
+    do i=1,nn
+      temp1=ZERO
+      do j=1,nn
+        Zeta(j+1,i+1)=inv_invtAkinvtAl(j,i)
+        temp1=temp1+inv_invtAkinvtAl(j,i)
       enddo
+      Zeta(1,i+1)=-temp1
+      Zeta(i+1,1)=-temp1
+      Zeta(1,1)=Zeta(1,1)+temp1
+    enddo
 !The four angular-vector couplings use the independently permuted bra
 !and ket global vectors:
 ! lambda_k1= tvk'*inv(tAkl)*tAl*a, lambda_k2= tbk'*inv(tAkl)*tAl*a,
 ! lambda_l1=-tvl'*inv(tAkl)*tAk*a, lambda_l2=-tbl'*inv(tAkl)*tAk*a.
-      lambda_k1=ZERO
-      lambda_k2=ZERO
-      lambda_l1=ZERO
-      lambda_l2=ZERO
-      do i=1,nn
-        temp1=ZERO
-        temp2=ZERO
-        temp3=ZERO
-        temp4=ZERO
-        do j=1,nn
-          temp1=temp1+tvkinv_tAkl(j)*tAl(j,i)
-          temp2=temp2+tbkinv_tAkl(j)*tAl(j,i)
-          temp3=temp3-inv_tAkltvl(j)*tAk(j,i)
-          temp4=temp4-inv_tAkltbl(j)*tAk(j,i)
-        enddo
-        lambda_k1(i+1)=temp1
-        lambda_k2(i+1)=temp2
-        lambda_l1(i+1)=temp3
-        lambda_l2(i+1)=temp4
-        lambda_k1(1)=lambda_k1(1)-temp1
-        lambda_k2(1)=lambda_k2(1)-temp2
-        lambda_l1(1)=lambda_l1(1)-temp3
-        lambda_l2(1)=lambda_l2(1)-temp4
+    lambda_k1=ZERO
+    lambda_k2=ZERO
+    lambda_l1=ZERO
+    lambda_l2=ZERO
+    do i=1,nn
+      temp1=ZERO
+      temp2=ZERO
+      temp3=ZERO
+      temp4=ZERO
+      do j=1,nn
+        temp1=temp1+tvkinv_tAkl(j)*tAl(j,i)
+        temp2=temp2+tbkinv_tAkl(j)*tAl(j,i)
+        temp3=temp3-inv_tAkltvl(j)*tAk(j,i)
+        temp4=temp4-inv_tAkltbl(j)*tAk(j,i)
       enddo
-    endif
+      lambda_k1(i+1)=temp1
+      lambda_k2(i+1)=temp2
+      lambda_l1(i+1)=temp3
+      lambda_l2(i+1)=temp4
+      lambda_k1(1)=lambda_k1(1)-temp1
+      lambda_k2(1)=lambda_k2(1)-temp2
+      lambda_l1(1)=lambda_l1(1)-temp3
+      lambda_l2(1)=lambda_l2(1)-temp4
+    enddo
 
     if (AreMCorrFuncNeeded) then
       temp1=Ckl/(EIGHT*Glob_Pi*Glob_SqrtPi)
@@ -1867,7 +1871,101 @@ contains
       enddo
     endif
 
+!Evaluation of the semi-relativistic kinetic energy matrix element
+!  Trkl = Ckl * sum_{i=1}^{n+1} m_i/alpha^2 * [2*D_i*q0(tau_i) - 2*K_i/(3*zeta_i)*q1(tau_i)],
+!where the sum runs over all physical particles, zeta_i=4*Zeta(i,i),
+!tau_i=(m_i/alpha)^2/zeta_i, and q0, q1 are evaluated by SemiRelKinHelpers.
+!D_i and K_i are the constant and quadratic coefficients of the momentum
+!density of particle i. With the halved lambdas used here (see the momentum
+!density section) and the normalization of Skl, this becomes
+!  Trkl = Ckl * sum_i m_i/alpha^2 * [temp44b*q0(tau_i) - temp55b/(3*Zeta(i,i))*q1(tau_i)]
+    Trkl=ZERO
+    do i=1,nn+1
+      temp2=Zeta(i,i)
+      if (temp2<=ZERO) then
+        write(*,'(1x,a,1x,i0)') 'Non-positive semi-relativistic kinetic-energy width on MPI rank',Glob_ProcID
+        call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+      endif
+      chi3=ONEHALF*(tau3+lambda_k1(i)*lambda_l1(i)/temp2)
+      chi33=ONEHALF*(tau33+lambda_k2(i)*lambda_l2(i)/temp2)
+      chi333=ONEHALF*(tau333+lambda_k1(i)*lambda_l2(i)/temp2)
+      chi334=ONEHALF*(tau334+lambda_k2(i)*lambda_l1(i)/temp2)
+      temp44b=chi3*chi33-chi333*chi334
+      temp55b=chi3*lambda_k2(i)*lambda_l2(i)+chi33*lambda_k1(i)*lambda_l1(i) &
+          -chi333*lambda_k2(i)*lambda_l1(i)-chi334*lambda_k1(i)*lambda_l2(i)
+      temp3=Glob_Mass(i)/Glob_FineStructConst
+      call SemiRelKinHelpers(temp3*temp3/(FOUR*temp2),temp4,temp5,temp6)
+      Trkl=Trkl+temp3/Glob_FineStructConst*(temp44b*temp4-ONETHIRD*temp55b*temp5/temp2)
+    enddo
+    Trkl=Ckl*Trkl
+
   end subroutine MatrixElementsAll_RG_2P
+
+  subroutine SemiRelKinHelpers(x,q0,q1,q2)
+!This subroutine evaluates the auxiliary functions
+!  q_s(x) = (2s+1)!!/2^s * [x^(s+3/2)*U(s+3/2,s+3,x) - 1],   s=0,1,2,
+!that appear in the matrix elements of the semi-relativistic kinetic
+!energy operator sqrt(m^2*c^4+p^2*c^2)-m*c^2. Here U is the confluent
+!hypergeometric function of the second kind. In terms of
+!  F_j(x) = sqrt(x/pi)*exp(x/2)*K_j(x/2)
+!these functions are
+!  q0(x) = F_1(x)-1
+!  q1(x) = [(4-x)*F_1(x)+x*F_0(x)-3]/2
+!  q2(x) = [(x^2-4*x+12)*F_1(x)+x*(3-x)*F_0(x)-15/2]/2
+!For large x, q_s(x) ~ 1/x and the closed forms above suffer from severe
+!cancellation. In that case the asymptotic expansion of U is summed instead:
+!  q_s(x) = (2s+1)!!/2^s * sum_{k>=1} (s+3/2)_k*(-1/2)_k/k! * (-1/x)^k
+!
+!Input:
+!   x   :: argument, x>0
+!Output:
+!   q0, q1, q2 :: q_0(x), q_1(x), q_2(x)
+    real(wp),intent(in)   :: x
+    real(wp),intent(out)  :: q0,q1,q2
+
+    integer           k,NZ
+    real(wp)       Bes(2),F0,F1,xlim,rk,c,t0,t1,t2,s0,s1,s2,tmax,tmaxold
+
+!The smallest term of the asymptotic series is roughly exp(-x), so the
+!switching point is raised for working kinds with more than 15 digits
+    xlim=max(50.0_wp,2.5_wp*precision(ONE))
+    if (x>xlim) then
+      t0=ONE
+      t1=ONE
+      t2=ONE
+      s0=ZERO
+      s1=ZERO
+      s2=ZERO
+      tmaxold=ONE
+      do k=1,400
+        rk=real(k,wp)
+        c=-(rk-THREE*ONEHALF)/(rk*x)
+        t0=t0*c*(rk+ONEHALF)
+        t1=t1*c*(rk+THREE*ONEHALF)
+        t2=t2*c*(rk+FIVE*ONEHALF)
+        s0=s0+t0
+        s1=s1+t1
+        s2=s2+t2
+        tmax=max(abs(t0)/abs(s0),abs(t1)/abs(s1),abs(t2)/abs(s2))
+        if (tmax<=epsilon(ONE)) exit
+!The series is asymptotic: stop before the terms start to grow
+        if (tmax>tmaxold) exit
+        tmaxold=tmax
+      enddo
+      q0=s0
+      q1=THREE*ONEHALF*s1
+      q2=15*ONEFOURTH*s2
+    else
+!Scaled Bessel functions exp(x/2)*K_0(x/2) and exp(x/2)*K_1(x/2)
+      call DBESK(ONEHALF*x,ZERO,2,2,Bes,NZ)
+      F0=sqrt(x/Glob_Pi)*Bes(1)
+      F1=sqrt(x/Glob_Pi)*Bes(2)
+      q0=F1-ONE
+      q1=ONEHALF*((FOUR-x)*F1+x*F0-THREE)
+      q2=ONEHALF*((x*x-FOUR*x+12)*F1+x*(THREE-x)*F0-15*ONEHALF)
+    endif
+
+  end subroutine SemiRelKinHelpers
 
   function ME_KDFG(rindexI,rindexJ,KK,DD,FF,GG,tAk,tAl,inv_tAkl,det_tAkl,tvk,tvl,twk,twl)
 

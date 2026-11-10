@@ -246,7 +246,8 @@ endif
 export OBJS_LPKBLS=$(addprefix $(BUILD_DIR)/,$(BARE_OBJS_LPKBLS))
 
 export BARE_OBJS=wp_def_$(PREC).o X1MACH.o dmng.o globvars.o misc.o linalg.o \
-              matelem.o matform.o qrupdate_linalg.o qrupdate_error.o \
+              bessel_coeff.o bessel.o matelem.o matform.o \
+              qrupdate_linalg.o qrupdate_error.o \
               qrupdate_real.o qrupdate_complex.o qrupdate.o qrlinalg.o \
               workproc.o main.o spin.o
 export OBJS=$(addprefix $(BUILD_DIR)/,$(BARE_OBJS))
@@ -343,7 +344,13 @@ $(BUILD_DIR)/spin.o: $(SRC_DIR)/spin.f90 $(BUILD_DIR)/globvars.o
 $(BUILD_DIR)/misc.o: $(SRC_DIR)/misc.f90 $(BUILD_DIR)/globvars.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/misc.f90 -o $(BUILD_DIR)/misc.o
 
-$(BUILD_DIR)/matelem.o: $(SRC_DIR)/matelem.f90 $(BUILD_DIR)/globvars.o $(BUILD_DIR)/spin.o
+$(BUILD_DIR)/bessel_coeff.o: $(SRC_DIR)/bessel_coeff.f90 $(BUILD_DIR)/globvars.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/bessel_coeff.f90 -o $(BUILD_DIR)/bessel_coeff.o
+
+$(BUILD_DIR)/bessel.o: $(SRC_DIR)/bessel.f90 $(BUILD_DIR)/bessel_coeff.o $(BUILD_DIR)/globvars.o
+	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/bessel.f90 -o $(BUILD_DIR)/bessel.o
+
+$(BUILD_DIR)/matelem.o: $(SRC_DIR)/matelem.f90 $(BUILD_DIR)/globvars.o $(BUILD_DIR)/spin.o $(BUILD_DIR)/bessel.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/matelem.f90 -o $(BUILD_DIR)/matelem.o
 
 $(BUILD_DIR)/gpu_backend.o: $(SRC_DIR)/gpu_backend.f90 $(BUILD_DIR)/globvars.o $(BUILD_DIR)/matelem.o

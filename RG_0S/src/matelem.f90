@@ -2,6 +2,7 @@ module matelem
 !Module matelem contains subroutines for computing
 !matrix elements with real L=0 Gaussians without normalization.
   use globvars
+  use bessel
   implicit none
 
 contains
@@ -511,7 +512,7 @@ contains
   end subroutine PrecomputeMatrices_L_A_MA
 
   subroutine MatrixElementsAll_RG_0S(Lk, Ll, Ak, Al, Pbra, Pket, &
-                                       Hkl, Skl, Tkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
+                                       Hkl, Skl, Tkl, Trkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
                              MVkl, drach_MVkl1, drach_MVkl2, drach_MVkl3, Darwinkl, drach_Darwinkl, OOkl, rmrmkl, del2kl, prvalkl, &
                                        wf2originkl, NumCFGridPoints, CFGrid, CFkl, NumDensGridPoints, DensGrid, Denskl, &
                                        AreCorrFuncNeeded, ArePartDensNeeded, AreMCorrFuncNeeded, AreMomDensNeeded)
@@ -528,6 +529,7 @@ contains
 !   Hkl             ::        Hamiltonian
 !   Skl             ::        Overlap
 !   Tkl      :: Kinetic energy
+!   Trkl     :: Semi-relativistic kinetic energy
 !   Vkl      :: Potential energy
 !   rm2kl    :: 1/r_i^2, 1/r_{ij}^2
 !   rmkl     :: 1/r_i, 1/r_{ij}
@@ -565,7 +567,7 @@ contains
     integer,parameter :: nn=Glob_n
     real(wp),intent(in)   :: Lk(nn,nn),Ll(nn,nn),Ak(nn,nn),Al(nn,nn)
     real(wp),intent(in)   :: Pbra(Glob_n,Glob_n),Pket(Glob_n,Glob_n)
-    real(wp),intent(out)  :: Hkl,Skl,Tkl,Vkl,MVkl,drach_MVkl1,drach_MVkl2,drach_MVkl3,Darwinkl,drach_Darwinkl,OOkl
+    real(wp),intent(out)  :: Hkl,Skl,Tkl,Trkl,Vkl,MVkl,drach_MVkl1,drach_MVkl2,drach_MVkl3,Darwinkl,drach_Darwinkl,OOkl
     real(wp),intent(out)  :: rm2kl(Glob_n,Glob_n),rmkl(Glob_n,Glob_n)
     real(wp),intent(out)  :: rkl(Glob_n,Glob_n),r2kl(Glob_n,Glob_n)
     real(wp),intent(out)  :: deltarkl(Glob_n,Glob_n)
@@ -600,6 +602,8 @@ contains
     real(wp)       Eta(nn+1,nn+1)
     real(wp)       Mass_For_Darwin(0:nn)
     real(wp)       V2kl
+    real(wp)       Bes(1)
+    integer        N_Bes
 
     n=Glob_n
     np=Glob_np
@@ -1382,43 +1386,46 @@ contains
       enddo
     endif
 
-    if (AreMCorrFuncNeeded .or. AreMomDensNeeded) then
-      !GAl = tAl*inv_tAkl*tAl
-      !inv_invtAkinvtAl = tAl - GAl
-      do i=1,nn
-        do j=i,nn
-          if (i==j) then
-            inv_invtAkinvtAl(i,i) = tAl(i,i) - GAl(i,i)
-          else
-            inv_invtAkinvtAl(i,j) = tAl(i,j) - GAl(i,j)
-            inv_invtAkinvtAl(j,i) = inv_invtAkinvtAl(i,j)
-          endif
+    !inv_invtAkinvtAl=(inv(tAk)+inv(tAl))^{-1}
+    !                =tAk*inv(tAkl)*tAl=tAk*AtAl, symmetrized.
+    !The equivalent form tAl-tAl*inv(tAkl)*tAl is not used: when tAl has
+    !much larger eigenvalues than tAk it subtracts nearly equal numbers,
+    !and roundoff can make the momentum widths wrong or even non-positive.
+    do i=1,nn
+      do j=i,nn
+        temp1=ZERO
+        temp2=ZERO
+        do k=1,nn
+          temp1=temp1+tAk(i,k)*AtAl(k,j)
+          temp2=temp2+tAk(j,k)*AtAl(k,i)
         enddo
+        inv_invtAkinvtAl(i,j)=ONEHALF*(temp1+temp2)
+        inv_invtAkinvtAl(j,i)=inv_invtAkinvtAl(i,j)
       enddo
-      ! Construct
-      !   Eta(I,J) = 4*a_I^T R_KL a_J
-      ! where
-      !   a_1  = -(1,1,...,1)^T,
-      !   a_I  = e_(I-1),  I = 2,...,n+1.
-      ! Eta has dimensions (n+1,n+1).
-      Eta(1,1) = ZERO
-      do i = 1, nn
-        temp1 = ZERO
-        do j = 1, nn
-          temp2 = inv_invtAkinvtAl(j,i)
-          ! Eta(j+1,i+1) = R_KL(j,i)
-          Eta(j+1,i+1) = temp2
-          ! Required for Eta(1,i+1)
-          temp1 = temp1 + temp2
-        enddo
-        ! Eta(1,i+1) = -1^T R_KL e_i
-        Eta(1,i+1) = -temp1
-        ! R_KL is symmetric, so Eta(i+1,1) is identical.
-        Eta(i+1,1) = -temp1
-        ! Eta(1,1) = sum over all elements of R_KL.
-        Eta(1,1) = Eta(1,1) + temp1
+    enddo
+    ! Construct
+    !   Eta(I,J) = 4*a_I^T R_KL a_J
+    ! where
+    !   a_1  = -(1,1,...,1)^T,
+    !   a_I  = e_(I-1),  I = 2,...,n+1.
+    ! Eta has dimensions (n+1,n+1).
+    Eta(1,1) = ZERO
+    do i = 1, nn
+      temp1 = ZERO
+      do j = 1, nn
+        temp2 = inv_invtAkinvtAl(j,i)
+        ! Eta(j+1,i+1) = R_KL(j,i)
+        Eta(j+1,i+1) = temp2
+        ! Required for Eta(1,i+1)
+        temp1 = temp1 + temp2
       enddo
-    endif
+      ! Eta(1,i+1) = -1^T R_KL e_i
+      Eta(1,i+1) = -temp1
+      ! R_KL is symmetric, so Eta(i+1,1) is identical.
+      Eta(i+1,1) = -temp1
+      ! Eta(1,1) = sum over all elements of R_KL.
+      Eta(1,1) = Eta(1,1) + temp1
+    enddo
 
 
     if (AreMCorrFuncNeeded) then
@@ -1470,6 +1477,27 @@ contains
         enddo
       enddo
     endif
+
+    !Evaluate Trkl = Skl * sum_{i=1}^{n+1} m_i/alpha^2 * (F_1(tau)-1)
+    ! tau = (m_i/alpha)^2 / (4*eta_i),  eta_i = Eta(i,i)
+    ! F_1(tau) = sqrt(tau/pi) * Ke_1(tau/2),  Ke_1 is the scaled modified Bessel function of the second kind
+
+    Trkl = ZERO
+    do i = 1, nn+1
+      if (Eta(i,i) <= ZERO) then
+        write(*,'(1x,a,1x,i0)') 'Non-positive semi-relativistic kinetic-energy width on MPI rank',Glob_ProcID
+        call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+      endif
+
+      temp2 = Glob_Mass(i) / Glob_FineStructConst
+      temp3 = (temp2 * temp2) / (FOUR * Eta(i,i))
+      !Compute Ke_1(tau/2) and the cancellation-safe value F_1(tau)-1.
+      call DBESK(ONEHALF*temp3,ONE,2,1,Bes,N_Bes,temp5)
+
+      !add the contribution to Trkl
+      Trkl = Trkl + temp2/Glob_FineStructConst*temp5
+    enddo
+    Trkl = Skl * Trkl
 
   end subroutine MatrixElementsAll_RG_0S
 

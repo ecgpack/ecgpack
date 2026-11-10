@@ -12007,9 +12007,9 @@ contains
     integer                                    :: NumOfCFAndDensExpVals
     real(wp),allocatable,dimension(:)       :: CFDMEkl_s
     real(wp),allocatable,dimension(:)       :: MEkl,MEkl_s
-    real(wp)                                :: Hkl,Skl,Tkl,Vkl
+    real(wp)                                :: Hkl,Skl,Tkl,Trkl,Vkl
     real(wp)                                :: MVkl,drach_MVkl1,drach_MVkl2,Darwinkl,drach_Darwinkl,OOkl
-    real(wp)                                :: H,S,T,V,MV,drach_MV1,drach_MV2,Darwin,drach_Darwin,OO
+    real(wp)                                :: H,S,T,T_rel,V,MV,drach_MV1,drach_MV2,Darwin,drach_Darwin,OO
     real(wp),allocatable,dimension(:,:)     :: rm2kl,rmkl,rkl,r2kl,deltarkl,drach_deltarkl,prvalkl
     real(wp),allocatable,dimension(:,:)     :: rm2,rm,r,r2,deltar,drach_deltar,prval
     real(wp),allocatable,dimension(:,:,:,:) :: rmrmkl
@@ -12274,14 +12274,15 @@ AreMomDensNeeded   = .false.
 !H            ME(7*n*(n+1)/2+1)
 !S            ME(7*n*(n+1)/2+2)
 !T            ME(7*n*(n+1)/2+3)
-!V            ME(7*n*(n+1)/2+4)
-!MV           ME(7*n*(n+1)/2+5)
-!drach_MVkl   ME(7*n*(n+1)/2+6)
-!Darwin       ME(7*n*(n+1)/2+7)
-!drach_Darwin ME(7*n*(n+1)/2+8)
-!OO           ME(7*n*(n+1)/2+9)
-!rmrmkl       ME( 7*n*(n+1)/2+10 + (3*n**4+10*n**3+9*n**2+2*n)/24 : 6*n*(n+1)/2+9 + (3*n**4+10*n**3+9*n**2+2*n)/12 )
-    NumOfExpcVals = 10 + 7*n*(n+1)/2 + (3*n**4+10*n**3+9*n**2+2*n)/12
+!T_rel        ME(7*n*(n+1)/2+4)
+!V            ME(7*n*(n+1)/2+5)
+!MV           ME(7*n*(n+1)/2+6)
+!drach_MVkl   ME(7*n*(n+1)/2+7)
+!Darwin       ME(7*n*(n+1)/2+8)
+!drach_Darwin ME(7*n*(n+1)/2+9)
+!OO           ME(7*n*(n+1)/2+10)
+!rmrmkl       ME( 7*n*(n+1)/2+11 + (3*n**4+10*n**3+9*n**2+2*n)/24 : 6*n*(n+1)/2+10 + (3*n**4+10*n**3+9*n**2+2*n)/12 )
+    NumOfExpcVals = 11 + 7*n*(n+1)/2 + (3*n**4+10*n**3+9*n**2+2*n)/12
 
     allocate(MEkl(NumOfExpcVals))
     allocate(MEkl_s(NumOfExpcVals))
@@ -12579,7 +12580,7 @@ AreMomDensNeeded   = .false.
             do k=1,Glob_NumYHYTerms
               call MatrixElementsAll_RG_1P(Glob_ZIndex(i),Glob_ZIndex(j),            &
                                                Lh(1,1,i),Lh(1,1,j),Ah(1,1,i),Ah(1,1,j),                                 &
-                                               IdentityPerm,Glob_YHYMatr(1:n,1:n,k),Hkl,Skl,Tkl,Vkl,                    &
+                                               IdentityPerm,Glob_YHYMatr(1:n,1:n,k),Hkl,Skl,Tkl,Trkl,Vkl,               &
                                                rm2kl,rmkl,rkl,r2kl,deltarkl,drach_deltarkl,MVkl,drach_MVkl1, drach_MVkl2,     &
                                                Darwinkl,drach_Darwinkl,OOkl,rmrmkl,prvalkl,NumCFGridPoints,CFGrid,CFkl, &
                                                NumDensGridPoints,DensGrid,Denskl,AreCorrFuncNeeded,ArePartDensNeeded, &
@@ -12623,6 +12624,7 @@ AreMomDensNeeded   = .false.
               c=c+1; MEkl(c)=Hkl
               c=c+1; MEkl(c)=Skl
               c=c+1; MEkl(c)=Tkl
+              c=c+1; MEkl(c)=Trkl
               c=c+1; MEkl(c)=Vkl
               c=c+1; MEkl(c)=MVkl
               c=c+1; MEkl(c)=drach_MVkl1
@@ -12728,7 +12730,7 @@ AreMomDensNeeded   = .false.
               do kk=1,Glob_NumYTerms
                 call MatrixElementsAll_RG_1P(Glob_ZIndex(i),Glob_ZIndex(j),            &
                                                  Lh(1,1,i),Lh(1,1,j),Ah(1,1,i),Ah(1,1,j),                                 &
-                                                 Glob_YMatr(1:n,1:n,k),Glob_YMatr(1:n,1:n,kk),Hkl,Skl,Tkl,Vkl,            &
+                                                 Glob_YMatr(1:n,1:n,k),Glob_YMatr(1:n,1:n,kk),Hkl,Skl,Tkl,Trkl,Vkl,       &
                                                  rm2kl,rmkl,rkl,r2kl,deltarkl,drach_deltarkl,MVkl,drach_MVkl1, drach_MVkl2,    &
                                                  Darwinkl,drach_Darwinkl,OOkl,rmrmkl,prvalkl,NumCFGridPoints,CFGrid,CFkl, &
                                                  NumDensGridPoints,DensGrid,Denskl,AreCorrFuncNeeded,ArePartDensNeeded, &
@@ -12772,6 +12774,7 @@ AreMomDensNeeded   = .false.
                 c=c+1; MEkl(c)=Hkl
                 c=c+1; MEkl(c)=Skl
                 c=c+1; MEkl(c)=Tkl
+                c=c+1; MEkl(c)=Trkl
                 c=c+1; MEkl(c)=Vkl
                 c=c+1; MEkl(c)=MVkl
                 c=c+1; MEkl(c)=drach_MVkl1
@@ -12956,6 +12959,7 @@ AreMomDensNeeded   = .false.
     c=c+1; H=MEkl_s(c)
     c=c+1; S=MEkl_s(c)
     c=c+1; T=MEkl_s(c)
+    c=c+1; T_rel=MEkl_s(c)
     c=c+1; V=MEkl_s(c)
     c=c+1; MV=MEkl_s(c)
     c=c+1; drach_MV1=MEkl_s(c)
@@ -13164,6 +13168,7 @@ AreMomDensNeeded   = .false.
       write(*,*) '                      H=',H
       write(*,*) '                      S=',S
       write(*,*) '                      T=',T
+      write(*,*) '             semi_rel_T=',T_rel
       write(*,*) '                      V=',V
       write(*,*) '                     MV=',MV
       if (Glob_ArePseudoParticleMassesTheSame) then
@@ -13287,6 +13292,8 @@ AreMomDensNeeded   = .false.
       call writerealadv(2,S)
       write(2,'(a)',advance='no') '                      T '
       call writerealadv(2,T)
+      write(2,'(a)',advance='no') '             semi_rel_T '
+      call writerealadv(2,T_rel)
       write(2,'(a)',advance='no') '                      V '
       call writerealadv(2,V)
       write(2,'(a)',advance='no') '                     MV '

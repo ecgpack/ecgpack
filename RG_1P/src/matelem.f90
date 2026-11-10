@@ -2,6 +2,7 @@ module matelem
 !Module matelem contains subroutines for computing
 !matrix elements with real L=1 Gaussians without normalization
   use globvars
+  use bessel
   implicit none
 
 contains
@@ -721,7 +722,7 @@ contains
   end subroutine PrecomputeMatrices_L_A_MA
 
   subroutine MatrixElementsAll_RG_1P(m_k, m_l, Lk, Ll, Ak, Al, Pbra, Pket, &
-                                         Hkl, Skl, Tkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
+                                         Hkl, Skl, Tkl, Trkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
                                          MVkl, drach_MVkl1, drach_MVkl2, Darwinkl, drach_Darwinkl, OOkl, rmrmkl, prvalkl, &
                                          NumCFGridPoints, CFGrid, CFkl, NumDensGridPoints, DensGrid, Denskl, &
                                          AreCorrFuncNeeded, ArePartDensNeeded, AreMCorrFuncNeeded, AreMomDensNeeded)
@@ -741,6 +742,7 @@ contains
 !   Hkl             ::        Hamiltonian
 !   Skl             ::        Overlap
 !   Tkl      :: Kinetic energy
+!   Trkl     :: Semi-relativistic kinetic energy (sqrt(m^2*c^4+p^2*c^2)-m*c^2 summed over all particles)
 !   Vkl      :: Potential energy
 !   rm2kl    :: 1/r_i^2, 1/r_{ij}^2
 !   rmkl     :: 1/r_i, 1/r_{ij}
@@ -778,7 +780,7 @@ contains
     integer,intent(in)       :: m_k,m_l
     real(wp),intent(in)   :: Lk(nn,nn),Ll(nn,nn),Ak(nn,nn),Al(nn,nn)
     real(wp),intent(in)   :: Pbra(Glob_n,Glob_n),Pket(Glob_n,Glob_n)
-    real(wp),intent(out)  :: Hkl,Skl,Tkl,Vkl,MVkl,drach_MVkl1,drach_MVkl2,Darwinkl,drach_Darwinkl,OOkl
+    real(wp),intent(out)  :: Hkl,Skl,Tkl,Trkl,Vkl,MVkl,drach_MVkl1,drach_MVkl2,Darwinkl,drach_Darwinkl,OOkl
     real(wp),intent(out)  :: rm2kl(Glob_n,Glob_n),rmkl(Glob_n,Glob_n)
     real(wp),intent(out)  :: rkl(Glob_n,Glob_n),r2kl(Glob_n,Glob_n)
     real(wp),intent(out)  :: deltarkl(Glob_n,Glob_n)
@@ -1950,64 +1952,67 @@ contains
     endif
 
 
-    if (AreMCorrFuncNeeded .or. AreMomDensNeeded) then
-      !GAl = tAl*inv_tAkl*tAl
-      !inv_invtAkinvtAl = tAl - GAl
-      do i=1,nn
-        do j=i,nn
-          if (i==j) then
-            inv_invtAkinvtAl(i,i) = tAl(i,i) - GAl(i,i)
-          else
-            inv_invtAkinvtAl(i,j) = tAl(i,j) - GAl(i,j)
-            inv_invtAkinvtAl(j,i) = inv_invtAkinvtAl(i,j)
-          endif
+    !inv_invtAkinvtAl=(inv(tAk)+inv(tAl))^{-1}
+    !                =tAk*inv(tAkl)*tAl=tAk*inv_tAkltAl, symmetrized.
+    !The equivalent form tAl-tAl*inv(tAkl)*tAl is not used: when tAl has
+    !much larger eigenvalues than tAk it subtracts nearly equal numbers,
+    !and roundoff can make the momentum widths wrong or even non-positive.
+    do i=1,nn
+      do j=i,nn
+        temp1=ZERO
+        temp2=ZERO
+        do k=1,nn
+          temp1=temp1+tAk(i,k)*inv_tAkltAl(k,j)
+          temp2=temp2+tAk(j,k)*inv_tAkltAl(k,i)
         enddo
+        inv_invtAkinvtAl(i,j)=ONEHALF*(temp1+temp2)
+        inv_invtAkinvtAl(j,i)=inv_invtAkinvtAl(i,j)
       enddo
-      ! Construct
-      !   Zeta(I,J) = a_I^T R_KL a_J
-      ! where
-      !   a_1  = -(1,1,...,1)^T,
-      !   a_I  = e_(I-1),  I = 2,...,n+1.
-      ! Zeta has dimensions (n+1,n+1).
-      Zeta(1,1) = ZERO
-      do i = 1, nn
-        temp1 = ZERO
-        do j = 1, nn
-          temp2 = inv_invtAkinvtAl(j,i)
-          ! Zeta(j+1,i+1) = R_KL(j,i)
-          Zeta(j+1,i+1) = temp2
-          ! Required for Zeta(1,i+1)
-          temp1 = temp1 + temp2
-        enddo
-        ! Zeta(1,i+1) = -1^T R_KL e_i
-        Zeta(1,i+1) = -temp1
-        ! R_KL is symmetric, so Zeta(i+1,1) is identical.
-        Zeta(i+1,1) = -temp1
-        ! Zeta(1,1) = sum over all elements of R_KL.
-        Zeta(1,1) = Zeta(1,1) + temp1
+    enddo
+    ! Construct
+    !   Zeta(I,J) = a_I^T R_KL a_J
+    ! where
+    !   a_1  = -(1,1,...,1)^T,
+    !   a_I  = e_(I-1),  I = 2,...,n+1.
+    ! Zeta has dimensions (n+1,n+1).
+    Zeta(1,1) = ZERO
+    do i = 1, nn
+      temp1 = ZERO
+      do j = 1, nn
+        temp2 = inv_invtAkinvtAl(j,i)
+        ! Zeta(j+1,i+1) = R_KL(j,i)
+        Zeta(j+1,i+1) = temp2
+        ! Required for Zeta(1,i+1)
+        temp1 = temp1 + temp2
       enddo
-      ! Construct the angular-vector couplings for every physical-particle
-      ! momentum.  The global vectors must be transformed by their respective
-      ! bra and ket permutations, just as they are in tau3:
-      !   lambda_k^T = -tvk^T tA_kl^{-1} tA_l,
-      !   lambda_l^T =  tvl^T tA_kl^{-1} tA_k.
-      ! For particle I>1, a_I=e_(I-1); for the reference particle,
-      ! a_1=-(1,1,...,1)^T.
-      lambda_k = ZERO
-      lambda_l = ZERO
-      do i=1,nn
-        temp1 = ZERO
-        temp2 = ZERO
-        do j=1,nn
-          temp1 = temp1 - tvkinv_tAkl(j)*tAl(j,i)
-          temp2 = temp2 + inv_tAkltvl(j)*tAk(j,i)
-        enddo
-        lambda_k(i+1) = temp1
-        lambda_k(1) = lambda_k(1) - temp1
-        lambda_l(i+1) = temp2
-        lambda_l(1) = lambda_l(1) - temp2
+      ! Zeta(1,i+1) = -1^T R_KL e_i
+      Zeta(1,i+1) = -temp1
+      ! R_KL is symmetric, so Zeta(i+1,1) is identical.
+      Zeta(i+1,1) = -temp1
+      ! Zeta(1,1) = sum over all elements of R_KL.
+      Zeta(1,1) = Zeta(1,1) + temp1
+    enddo
+    ! Construct the angular-vector couplings for every physical-particle
+    ! momentum.  The global vectors must be transformed by their respective
+    ! bra and ket permutations, just as they are in tau3:
+    !   lambda_k^T = -tvk^T tA_kl^{-1} tA_l,
+    !   lambda_l^T =  tvl^T tA_kl^{-1} tA_k.
+    ! For particle I>1, a_I=e_(I-1); for the reference particle,
+    ! a_1=-(1,1,...,1)^T.
+    lambda_k = ZERO
+    lambda_l = ZERO
+    do i=1,nn
+      temp1 = ZERO
+      temp2 = ZERO
+      do j=1,nn
+        temp1 = temp1 - tvkinv_tAkl(j)*tAl(j,i)
+        temp2 = temp2 + inv_tAkltvl(j)*tAk(j,i)
       enddo
-    endif
+      lambda_k(i+1) = temp1
+      lambda_k(1) = lambda_k(1) - temp1
+      lambda_l(i+1) = temp2
+      lambda_l(1) = lambda_l(1) - temp2
+    enddo
 
 
     if (AreMCorrFuncNeeded) then
@@ -2069,7 +2074,93 @@ contains
       enddo
     endif
 
+!Evaluation of the semi-relativistic kinetic energy matrix element
+!  Trkl = Ckl * sum_{i=1}^{n+1} m_i/alpha^2 * [chi13*q0(tau_i) - lambda1*lambda3/(3*zeta_i)*q1(tau_i)],
+!where the sum runs over all physical particles, zeta_i=4*Zeta(i,i),
+!tau_i=(m_i/alpha)^2/zeta_i, and q0, q1 are evaluated by SemiRelKinHelpers.
+!With the halved lambdas used here, lambda1*lambda3/zeta_i=lambda_k(i)*lambda_l(i)/Zeta(i,i)
+!and chi13=(tau3+lambda_k(i)*lambda_l(i)/Zeta(i,i))/2.
+    Trkl=ZERO
+    do i=1,nn+1
+      temp2=Zeta(i,i)
+      if (temp2<=ZERO) then
+        write(*,'(1x,a,1x,i0)') 'Non-positive semi-relativistic kinetic-energy width on MPI rank',Glob_ProcID
+        call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+      endif
+      temp3=Glob_Mass(i)/Glob_FineStructConst
+      call SemiRelKinHelpers(temp3*temp3/(FOUR*temp2),temp4,temp5,temp6)
+      temp7=lambda_k(i)*lambda_l(i)/temp2
+      Trkl=Trkl+temp3/Glob_FineStructConst*(ONEHALF*(tau3+temp7)*temp4-ONETHIRD*temp7*temp5)
+    enddo
+    Trkl=Ckl*Trkl
+
   end subroutine MatrixElementsAll_RG_1P
+
+  subroutine SemiRelKinHelpers(x,q0,q1,q2)
+!This subroutine evaluates the auxiliary functions
+!  q_s(x) = (2s+1)!!/2^s * [x^(s+3/2)*U(s+3/2,s+3,x) - 1],   s=0,1,2,
+!that appear in the matrix elements of the semi-relativistic kinetic
+!energy operator sqrt(m^2*c^4+p^2*c^2)-m*c^2. Here U is the confluent
+!hypergeometric function of the second kind. In terms of
+!  F_j(x) = sqrt(x/pi)*exp(x/2)*K_j(x/2)
+!these functions are
+!  q0(x) = F_1(x)-1
+!  q1(x) = [(4-x)*F_1(x)+x*F_0(x)-3]/2
+!  q2(x) = [(x^2-4*x+12)*F_1(x)+x*(3-x)*F_0(x)-15/2]/2
+!For large x, q_s(x) ~ 1/x and the closed forms above suffer from severe
+!cancellation. In that case the asymptotic expansion of U is summed instead:
+!  q_s(x) = (2s+1)!!/2^s * sum_{k>=1} (s+3/2)_k*(-1/2)_k/k! * (-1/x)^k
+!
+!Input:
+!   x   :: argument, x>0
+!Output:
+!   q0, q1, q2 :: q_0(x), q_1(x), q_2(x)
+    real(wp),intent(in)   :: x
+    real(wp),intent(out)  :: q0,q1,q2
+
+    integer           k,NZ
+    real(wp)       Bes(2),F0,F1,xlim,rk,c,t0,t1,t2,s0,s1,s2,tmax,tmaxold
+
+!The smallest term of the asymptotic series is roughly exp(-x), so the
+!switching point is raised for working kinds with more than 15 digits
+    xlim=max(50.0_wp,2.5_wp*precision(ONE))
+    if (x>xlim) then
+      t0=ONE
+      t1=ONE
+      t2=ONE
+      s0=ZERO
+      s1=ZERO
+      s2=ZERO
+      tmaxold=ONE
+      do k=1,400
+        rk=real(k,wp)
+        c=-(rk-THREE*ONEHALF)/(rk*x)
+        t0=t0*c*(rk+ONEHALF)
+        t1=t1*c*(rk+THREE*ONEHALF)
+        t2=t2*c*(rk+FIVE*ONEHALF)
+        s0=s0+t0
+        s1=s1+t1
+        s2=s2+t2
+        tmax=max(abs(t0)/abs(s0),abs(t1)/abs(s1),abs(t2)/abs(s2))
+        if (tmax<=epsilon(ONE)) exit
+!The series is asymptotic: stop before the terms start to grow
+        if (tmax>tmaxold) exit
+        tmaxold=tmax
+      enddo
+      q0=s0
+      q1=THREE*ONEHALF*s1
+      q2=15*ONEFOURTH*s2
+    else
+!Scaled Bessel functions exp(x/2)*K_0(x/2) and exp(x/2)*K_1(x/2)
+      call DBESK(ONEHALF*x,ZERO,2,2,Bes,NZ)
+      F0=sqrt(x/Glob_Pi)*Bes(1)
+      F1=sqrt(x/Glob_Pi)*Bes(2)
+      q0=F1-ONE
+      q1=ONEHALF*((FOUR-x)*F1+x*F0-THREE)
+      q2=ONEHALF*((x*x-FOUR*x+12)*F1+x*(THREE-x)*F0-15*ONEHALF)
+    endif
+
+  end subroutine SemiRelKinHelpers
 
   subroutine symmetrize_matrix(W)
 !subroutine symmetrize_matrix makes an arbitrary square matrix W
