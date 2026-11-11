@@ -13,6 +13,11 @@ MODULE matelem
   !                      respect to vech L_k and vech L_l
   !   MatrixElementsXi - the same for one prefactor x_j of the symmetry
   !                      transformed ket (called by MatrixElements)
+  !   BraSetup, KetSetup - the parts of the setup of MatrixElementsXi that
+  !                      belong to the bra or to one ket term alone, kept
+  !                      and reused by MatrixElements (see BraPart)
+  !   SameVech, KetStoreReady - their bookkeeping
+  !   GramTablesInit   - products of the Gram-term power sums, formed once
   !   ExpValuesMatElem - the nucleus-nucleus correlation function and the
   !                      interparticle distances <r_ij>, <r_ij^2>
   !   ExpValuesXi      - the same for one prefactor x_j of the symmetry
@@ -48,11 +53,296 @@ MODULE matelem
   ! slower than the original loops over one pair at a time.
   LOGICAL, PARAMETER :: PairedPowerSums = (wp == 8)
 
+  ! The parts of the Gaussian setup of MatrixElementsXi that belong to the
+  ! bra alone (BraSetup: Lk, Ak = Lk*Lk', inv(Lk), invAk, M*Ak, M*Lk,
+  ! det Lk) or to one ket term alone (KetSetup: PLl = SymMatrix'*Ll,
+  ! Al = PLl*PLl', invAl, M*Al, det Ll). MatrixElements keeps the bra of
+  ! its last call (BraKept) and, when the caller passes KetSlot, the ket
+  ! terms in KetStore(KetSlot); an entry is used again only while the
+  ! exponent parameters it was formed from are unchanged (vech, compared
+  ! exactly). Every element is formed with the operations it had in
+  ! MatrixElementsXi, so the results do not depend on the reuse.
+  TYPE BraPart
+    LOGICAL  :: Valid = .FALSE.
+    REAL(wp) :: vech(Glob_npt)
+    REAL(wp) :: Lk(Glob_n, Glob_n), Ak(Glob_n, Glob_n), invLk(Glob_n, Glob_n), invAk(Glob_n, Glob_n)
+    REAL(wp) :: MAk(Glob_n, Glob_n), MLk(Glob_n, Glob_n), detLk
+  END TYPE BraPart
+  TYPE KetPart
+    LOGICAL  :: Valid = .FALSE.
+    REAL(wp) :: vech(Glob_npt)
+    REAL(wp) :: PLl(Glob_n, Glob_n), Al(Glob_n, Glob_n), invAl(Glob_n, Glob_n), MAl(Glob_n, Glob_n), detLl
+  END TYPE KetPart
+  TYPE(BraPart), SAVE :: BraKept
+  TYPE(KetPart), TARGET, SAVE :: KetScratch
+  TYPE(KetPart), ALLOCATABLE, DIMENSION(:), TARGET, SAVE :: KetStore
+  ! KetStore is given up (KetStoreOn false) when it would exceed KetStoreBudget bytes
+  LOGICAL, SAVE :: KetStoreOn = .TRUE.
+  INTEGER(8), PARAMETER :: KetStoreBudget = 536870912_8
+
+  ! Products of the power sums of the Gram term (GramTermPair,
+  ! GramTermCorrPairs), formed once (GramTablesInit):
+  !   GramW3(t) = (2t+1)*gm3(t),  GramW3t(t) = GramW3(t)*t
+  LOGICAL, SAVE :: GramTablesDone = .FALSE.
+  REAL(wp), SAVE :: GramW3(0:Glob_MaxPowerPossible), GramW3t(0:Glob_MaxPowerPossible)
+
 CONTAINS
 
 
+  SUBROUTINE GramTablesInit()
+    ! GramW3, GramW3t (see the module header), as the power sums formed them
+    IMPLICIT NONE
+    INTEGER :: t
+    DO t = 0, Glob_MaxPowerPossible
+      GramW3(t) = (TWO*t+ONE)*Glob_gm3(t)
+      GramW3t(t) = (TWO*t+ONE)*Glob_gm3(t)*t
+    ENDDO
+    GramTablesDone = .TRUE.
+  END SUBROUTINE GramTablesInit
+
+
+
+
+
+  SUBROUTINE BraSetup(vechLk, Bra)
+    ! The bra part of the setup of MatrixElementsXi (see BraPart): every
+    ! element with the operations it had there.
+    IMPLICIT NONE
+    INTEGER, PARAMETER :: n = Glob_n  ! number of pseudoparticles
+    REAL(wp), INTENT(IN) :: vechLk(Glob_npt)
+    TYPE(BraPart), INTENT(INOUT) :: Bra
+    INTEGER :: i, j, k, indx
+    REAL(wp) :: SUM1
+
+    Bra%vech = vechLk
+    Bra%Lk = ZERO
+    indx = 0
+    DO j = 1, n
+      DO i = j, n
+        indx = indx+1
+        Bra%Lk(i, j) = vechLk(indx)
+      ENDDO
+    ENDDO
+
+    ! Ak = Lk*Lk' (symmetric: the lower triangle, then mirrored)
+    Bra%Ak = ZERO
+    DO j = 1, n
+      DO k = 1, n
+        DO i = j, n
+          Bra%Ak(i, j) = Bra%Ak(i, j)+Bra%Lk(i, k)*Bra%Lk(j, k)
+        ENDDO
+      ENDDO
+      DO i = 1, j-1
+        Bra%Ak(i, j) = Bra%Ak(j, i)
+      ENDDO
+    ENDDO
+
+    Bra%detLk = ONE
+    DO i = 1, n
+      Bra%detLk = Bra%detLk*Bra%Lk(i, i)
+    ENDDO
+
+    ! inv(Lk), column by column, and invAk = inv(Lk)'*inv(Lk)
+    Bra%invLk = Bra%Lk
+    DO i = 1, n
+      Bra%invLk(i, i) = ONE/Bra%invLk(i, i)
+      DO j = i+1, n
+        SUM1 = ZERO
+        DO k = i, j-1
+          SUM1 = SUM1-Bra%invLk(j, k)*Bra%invLk(k, i)
+        ENDDO
+        Bra%invLk(j, i) = SUM1/Bra%invLk(j, j)
+        Bra%invLk(i, j) = ZERO
+      ENDDO
+    ENDDO
+    Bra%invAk = ZERO
+    DO j = 1, n
+      DO k = 1, n
+        DO i = j, n
+          Bra%invAk(i, j) = Bra%invAk(i, j)+Bra%invLk(k, i)*Bra%invLk(k, j)
+        ENDDO
+      ENDDO
+      DO i = 1, j-1
+        Bra%invAk(i, j) = Bra%invAk(j, i)
+      ENDDO
+    ENDDO
+
+    ! M*Ak and M*Lk
+    Bra%MAk = ZERO
+    Bra%MLk = ZERO
+    DO k = 1, n
+      DO j = 1, n
+        DO i = 1, n
+          Bra%MAk(i, j) = Bra%MAk(i, j)+Glob_MassMatrix(i, k)*Bra%Ak(k, j)
+          Bra%MLk(i, j) = Bra%MLk(i, j)+Glob_MassMatrix(i, k)*Bra%Lk(k, j)
+        ENDDO
+      ENDDO
+    ENDDO
+    Bra%Valid = .TRUE.
+
+  END SUBROUTINE BraSetup
+
+
+
+
+
+  SUBROUTINE KetSetup(vechLl, SymMatrix, Ket)
+    ! The part of the setup of MatrixElementsXi that belongs to one ket
+    ! term (see KetPart): every element with the operations it had there.
+    IMPLICIT NONE
+    INTEGER, PARAMETER :: n = Glob_n  ! number of pseudoparticles
+    REAL(wp), INTENT(IN) :: vechLl(Glob_npt), SymMatrix(n, n)
+    TYPE(KetPart), INTENT(INOUT) :: Ket
+    INTEGER :: i, j, k, indx
+    REAL(wp) :: SUM1, SUM3
+    REAL(wp) :: Ll(n, n), chAl(n, n)
+
+    Ket%vech = vechLl
+    Ll = ZERO
+    indx = 0
+    DO j = 1, n
+      DO i = j, n
+        indx = indx+1
+        Ll(i, j) = vechLl(indx)
+      ENDDO
+    ENDDO
+
+    ! PLl = SymMatrix'*Ll
+    Ket%PLl = ZERO
+    DO j = 1, n
+      DO k = j, n
+        DO i = 1, n
+          Ket%PLl(i, j) = Ket%PLl(i, j)+SymMatrix(k, i)*Ll(k, j)
+        ENDDO
+      ENDDO
+    ENDDO
+
+    ! Al = PLl*PLl' (symmetric: the lower triangle, then mirrored)
+    Ket%Al = ZERO
+    DO j = 1, n
+      DO k = 1, n
+        DO i = j, n
+          Ket%Al(i, j) = Ket%Al(i, j)+Ket%PLl(i, k)*Ket%PLl(j, k)
+        ENDDO
+      ENDDO
+      DO i = 1, j-1
+        Ket%Al(i, j) = Ket%Al(j, i)
+      ENDDO
+    ENDDO
+
+    Ket%detLl = ONE
+    DO i = 1, n
+      Ket%detLl = Ket%detLl*Ll(i, i)
+    ENDDO
+
+    ! Cholesky factor of Al, its inverse, invAl = inv(chAl)'*inv(chAl)
+    chAl = Ket%Al
+    DO i = 1, n
+      DO j = i, n
+        SUM1 = chAl(i, j)
+        DO k = i-1, 1, -1
+          SUM1 = SUM1-chAl(i, k)*chAl(j, k)
+        ENDDO
+        IF (i == j) THEN
+          chAl(i, i) = SQRT(SUM1)
+        ELSE
+          chAl(j, i) = SUM1/chAl(i, i)
+        ENDIF
+      ENDDO
+    ENDDO
+    DO i = 1, n
+      chAl(i, i) = ONE/chAl(i, i)
+      DO j = i+1, n
+        SUM3 = ZERO
+        DO k = i, j-1
+          SUM3 = SUM3-chAl(j, k)*chAl(k, i)
+        ENDDO
+        chAl(j, i) = SUM3/chAl(j, j)
+        chAl(i, j) = ZERO
+      ENDDO
+    ENDDO
+    Ket%invAl = ZERO
+    DO j = 1, n
+      DO k = 1, n
+        DO i = j, n
+          Ket%invAl(i, j) = Ket%invAl(i, j)+chAl(k, i)*chAl(k, j)
+        ENDDO
+      ENDDO
+      DO i = 1, j-1
+        Ket%invAl(i, j) = Ket%invAl(j, i)
+      ENDDO
+    ENDDO
+
+    ! M*Al
+    Ket%MAl = ZERO
+    DO k = 1, n
+      DO j = 1, n
+        DO i = 1, n
+          Ket%MAl(i, j) = Ket%MAl(i, j)+Glob_MassMatrix(i, k)*Ket%Al(k, j)
+        ENDDO
+      ENDDO
+    ENDDO
+    Ket%Valid = .TRUE.
+
+  END SUBROUTINE KetSetup
+
+
+
+
+
+  LOGICAL FUNCTION SameVech(a, b)
+    ! a and b are equal element by element (a NaN is equal to nothing)
+    IMPLICIT NONE
+    REAL(wp), INTENT(IN) :: a(Glob_npt), b(Glob_npt)
+    INTEGER :: i
+    SameVech = .TRUE.
+    DO i = 1, Glob_npt
+      IF (a(i) /= b(i)) THEN
+        SameVech = .FALSE.
+        RETURN
+      ENDIF
+    ENDDO
+  END FUNCTION SameVech
+
+
+
+
+
+  LOGICAL FUNCTION KetStoreReady(slot)
+    ! KetStore can hold entry slot (it is enlarged when needed). False when
+    ! the store is off, or would exceed KetStoreBudget, which switches it off.
+    IMPLICIT NONE
+    INTEGER, INTENT(IN) :: slot
+    INTEGER :: OldSize, NewSize
+    TYPE(KetPart), ALLOCATABLE, DIMENSION(:) :: Tmp
+
+    KetStoreReady = .FALSE.
+    IF ((.NOT. KetStoreOn) .OR. (slot < 1)) RETURN
+    OldSize = 0
+    IF (ALLOCATED(KetStore)) OldSize = SIZE(KetStore)
+    IF (slot <= OldSize) THEN
+      KetStoreReady = .TRUE.
+      RETURN
+    ENDIF
+    NewSize = MAX(slot, Glob_NumYHYTerms*(Glob_CurrBasisSize+16))
+    IF (INT(NewSize, 8)*INT(STORAGE_SIZE(KetScratch)/8, 8) > KetStoreBudget) THEN
+      KetStoreOn = .FALSE.
+      IF (ALLOCATED(KetStore)) DEALLOCATE(KetStore)
+      RETURN
+    ENDIF
+    ALLOCATE(Tmp(NewSize))
+    IF (OldSize > 0) Tmp(1:OldSize) = KetStore(1:OldSize)
+    CALL MOVE_ALLOC(Tmp, KetStore)
+    KetStoreReady = .TRUE.
+
+  END FUNCTION KetStoreReady
+
+
+
+
+
   SUBROUTINE MatrixElements(mk, ik, vechLk, ml, il, vechLl, SymMatrix, &
-                            Skl, Hkl, dSk, dSl, dHk, dHl, gradflag)
+                            Skl, Hkl, dSk, dSl, dHk, dHl, gradflag, KetSlot)
     ! Symmetry adapted matrix elements in the basis of correlated Gaussians
     ! with x_i r_1^m premultipliers for N = 1 rotationally excited states,
     !   f_k = x_i * r_1^mk * exp[-r'(Lk*Lk' (x) I3) r].
@@ -81,6 +371,8 @@ CONTAINS
     !   vechLk, vechLl :: n(n+1)/2 exponent parameters (Lk, Ll lower triangular)
     !   SymMatrix      :: the symmetry permutation matrix
     !   gradflag       :: 0 no gradient; 1 dSk, dHk only; 2 also dSl, dHl
+    !   KetSlot        :: optional, the entry of KetStore for this ket term,
+    !                     (l-1)*Glob_NumYHYTerms + term (see BraPart)
     ! Output (normalized):
     !   Skl, Hkl       :: overlap and Hamiltonian matrix elements
     !   dSk, dHk       :: derivatives with respect to vech[Lk]
@@ -96,6 +388,7 @@ CONTAINS
     REAL(wp), INTENT(IN) :: SymMatrix(n, n)
     REAL(wp), INTENT(OUT) :: Skl, Hkl
     REAL(wp), INTENT(OUT) :: dSk(Glob_npt), dSl(Glob_npt), dHk(Glob_npt), dHl(Glob_npt)
+    INTEGER, OPTIONAL, INTENT(IN) :: KetSlot
 
     ! Local variables
     INTEGER :: j, t, NumKetTerms
@@ -106,7 +399,30 @@ CONTAINS
     REAL(wp) :: f, St, Ht
     LOGICAL :: IsGramPossible
     REAL(wp) :: dSkt(Glob_npt), dSlt(Glob_npt), dHkt(Glob_npt), dHlt(Glob_npt)
+    TYPE(KetPart), POINTER :: Ket  ! the ket term: KetStore(KetSlot) or KetScratch
+    LOGICAL :: InStore
 
+
+    ! The bra and ket parts of the setup, formed again only when the
+    ! parameters differ from those they were formed from
+    IF (.NOT. BraKept%Valid) THEN
+      CALL BraSetup(vechLk, BraKept)
+    ELSEIF (.NOT. SameVech(BraKept%vech, vechLk)) THEN
+      CALL BraSetup(vechLk, BraKept)
+    ENDIF
+    InStore = .FALSE.
+    IF (PRESENT(KetSlot)) InStore = KetStoreReady(KetSlot)
+    IF (InStore) THEN
+      Ket => KetStore(KetSlot)
+      IF (.NOT. Ket%Valid) THEN
+        CALL KetSetup(vechLl, SymMatrix, Ket)
+      ELSEIF (.NOT. SameVech(Ket%vech, vechLl)) THEN
+        CALL KetSetup(vechLl, SymMatrix, Ket)
+      ENDIF
+    ELSE
+      Ket => KetScratch
+      CALL KetSetup(vechLl, SymMatrix, Ket)
+    ENDIF
 
     ! The terms of the transformed prefactor: row il of SymMatrix
     NumKetTerms = 0
@@ -120,19 +436,19 @@ CONTAINS
 
     ! One term: x_il --> +-x_j
     IF ((NumKetTerms == 1) .AND. (ABS(KetWeight(1)) == ONE)) THEN
-      CALL MatrixElementsXi(mk, ik, vechLk, ml, KetIndex(1), vechLl, SymMatrix, &
+      CALL MatrixElementsXi(mk, ik, BraKept, ml, KetIndex(1), Ket, SymMatrix, &
                             Skl, Hkl, dSk, dSl, dHk, dHl, gradflag)
       IsGramPossible = (mk+ml > 0) .AND. (ik /= 1) .AND. (KetIndex(1) /= 1) .AND. (n > 2)
       IF (IsGramPossible) THEN
         IF ((n >= 5) .AND. PairedPowerSums) THEN
-          CALL GramTermCorrPairs(mk, ik, vechLk, ml, KetIndex(1), vechLl, SymMatrix, &
+          CALL GramTermCorrPairs(mk, ik, BraKept, ml, KetIndex(1), Ket, SymMatrix, &
                                  Skl, Hkl, dSk, dSl, dHk, dHl, gradflag)
         ELSE
-          CALL GramTermCorr(mk, ik, vechLk, ml, KetIndex(1), vechLl, SymMatrix, &
+          CALL GramTermCorr(mk, ik, BraKept, ml, KetIndex(1), Ket, SymMatrix, &
                             Skl, Hkl, dSk, dSl, dHk, dHl, gradflag)
         ENDIF
       ENDIF
-      IF ((mk+ml == 0) .AND. (gradflag > 0)) CALL PowerZeroGradCorr(ik, KetIndex(1), vechLk, vechLl, &
+      IF ((mk+ml == 0) .AND. (gradflag > 0)) CALL PowerZeroGradCorr(ik, KetIndex(1), BraKept, Ket, &
                                                                 SymMatrix, Skl, dHk, dHl, gradflag)
       IF (KetWeight(1) < ZERO) THEN
         Skl = -Skl
@@ -156,19 +472,19 @@ CONTAINS
     dHk = ZERO
     dHl = ZERO
     DO t = 1, NumKetTerms
-      CALL MatrixElementsXi(mk, ik, vechLk, ml, KetIndex(t), vechLl, SymMatrix, &
+      CALL MatrixElementsXi(mk, ik, BraKept, ml, KetIndex(t), Ket, SymMatrix, &
                             St, Ht, dSkt, dSlt, dHkt, dHlt, gradflag)
       IsGramPossible = (mk+ml > 0) .AND. (ik /= 1) .AND. (KetIndex(t) /= 1) .AND. (n > 2)
       IF (IsGramPossible) THEN
         IF ((n >= 5) .AND. PairedPowerSums) THEN
-          CALL GramTermCorrPairs(mk, ik, vechLk, ml, KetIndex(t), vechLl, SymMatrix, &
+          CALL GramTermCorrPairs(mk, ik, BraKept, ml, KetIndex(t), Ket, SymMatrix, &
                                  St, Ht, dSkt, dSlt, dHkt, dHlt, gradflag)
         ELSE
-          CALL GramTermCorr(mk, ik, vechLk, ml, KetIndex(t), vechLl, SymMatrix, &
+          CALL GramTermCorr(mk, ik, BraKept, ml, KetIndex(t), Ket, SymMatrix, &
                             St, Ht, dSkt, dSlt, dHkt, dHlt, gradflag)
         ENDIF
       ENDIF
-      IF ((mk+ml == 0) .AND. (gradflag > 0)) CALL PowerZeroGradCorr(ik, KetIndex(t), vechLk, vechLl, &
+      IF ((mk+ml == 0) .AND. (gradflag > 0)) CALL PowerZeroGradCorr(ik, KetIndex(t), BraKept, Ket, &
                                                                 SymMatrix, St, dHkt, dHlt, gradflag)
       f = KetWeight(t)*KetRatio(t)
       Skl = Skl+f*St
@@ -187,7 +503,7 @@ CONTAINS
 
 
 
-  SUBROUTINE MatrixElementsXi(mk, ik, vechLk, ml, jl, vechLl, SymMatrix, &
+  SUBROUTINE MatrixElementsXi(mk, ik, Bra, ml, jl, Ket, SymMatrix, &
                               Skl, Hkl, dSk, dSl, dHk, dHl, gradflag)
     ! Symmetry adapted matrix elements in the basis of correlated Gaussians
     ! with x_i r_1^m premultipliers for N = 1 rotationally excited states,
@@ -213,7 +529,8 @@ CONTAINS
     !   ik             :: pseudoparticle index i of the x_i prefactor of the bra
     !   jl             :: pseudoparticle index j of the x_j term of the
     !                     transformed ket (1 .. n)
-    !   vechLk, vechLl :: n(n+1)/2 exponent parameters (Lk, Ll lower triangular)
+    !   Bra, Ket       :: the parts of the setup that belong to the bra and to
+    !                     the ket term alone (BraSetup, KetSetup)
     !   SymMatrix      :: the symmetry permutation matrix
     !   gradflag       :: 0 no gradient; 1 dSk, dHk only; 2 also dSl, dHl
     ! Output (normalized):
@@ -225,205 +542,155 @@ CONTAINS
 
     ! Parameters
     INTEGER, PARAMETER :: n = Glob_n  ! number of pseudoparticles
+    INTEGER, PARAMETER :: nv = n*(n+1)/2  ! elements of a lower triangle (vech)
 
     INTEGER, INTENT(IN) :: mk, ik, ml, jl, gradflag
-    REAL(wp), INTENT(IN) :: vechLk(Glob_npt), vechLl(Glob_npt)
+    TYPE(BraPart), INTENT(IN) :: Bra  ! the bra part of the setup (BraSetup)
+    TYPE(KetPart), INTENT(IN) :: Ket  ! the ket term part of the setup (KetSetup)
     REAL(wp), INTENT(IN) :: SymMatrix(n, n)
     REAL(wp), INTENT(OUT) :: Skl, Hkl
     REAL(wp), INTENT(OUT) :: dSk(Glob_npt), dSl(Glob_npt), dHk(Glob_npt), dHl(Glob_npt)
 
     ! Local variables
     INTEGER :: i, j, k, m, p, q, t, ii, jj, kk, indx, Msum, MMsum, M1, M2, M3, mko2, mlo2
+    INTEGER, PARAMETER :: VR(nv) = [((i, i = j, n), j = 1, n)]  ! row of vech element e
+    INTEGER, PARAMETER :: VC(nv) = [((j, i = j, n), j = 1, n)]  ! column of vech element e
     INTEGER :: parti, partj
+    INTEGER :: Rows(3), NumRows2, NumRows3  ! distinct rows of 1, parti, partj (no gradients)
     REAL(wp) :: mkml, mkpml, temp1, temp2, temp3, temp4, temp5, temp6
     REAL(wp) :: SUM0, SUM1, SUM2, SUM3, chi1, A11, A1i, A1j, Aij, oA11
-    REAL(wp) :: detLk, detLl, detAkl, a, coabij, g1, g2, g3, g4, d, h
+    REAL(wp) :: detAkl, a, coabij, g1, g2, g3, g4, d, h
     REAL(wp) :: tau1, tau2, tau3, Tkl, Vkl, hoa
     REAL(wp) :: XMij, XM11, XM1j, XM1i, AAkMij, AAkM1j, AAkMj1, AAkMi1, AAkM11
     REAL(wp) :: AAlMji, AAlMj1, AAlM1i, AAlMi1, AAlM11
-    REAL(wp) :: Lk(n, n), Ll(n, n), Ak(n, n), Al(n, n)
-    REAL(wp) :: invAkl(n, n), PLl(n, n), invL(n, n), Akl(n, n)
+    REAL(wp) :: invAkl(n, n), invL(n, n), Akl(n, n)
     REAL(wp) :: Temp(n, n), R(n, n), b(n, n), c(n, n), coab(n, n), Vtmp(n, n)
     REAL(wp) :: fob(n, n), g5(n, n)
-    REAL(wp) :: dkhoa(n, n), dkb(n, n), dkfob(n, n), dkcoab(n, n)
+
     REAL(wp) :: dlhoa(n, n), dlb(n, n), dlfob(n, n), dlcoab(n, n)
     REAL(wp) :: dTk(Glob_npt), dTl(Glob_npt), dVk(Glob_npt), dVl(Glob_npt)
-    REAL(wp) :: ddSk(n, n), ddSl(n, n), ddTk(n, n), ddTl(n, n)
-    REAL(wp) :: ddSk_over_Skl(n, n), ddSl_over_Skl(n, n), Templ(n, n), TemplT(n, n)
-    REAL(wp) :: dRk(n, n), dRl(n, n), ddVk(n, n), ddVl(n, n)
-    REAL(wp) :: invLk(n, n), invLl(n, n), invAk(n, n), invAl(n, n), chAl(n, n)
+    REAL(wp) :: ddSl(n, n), ddTl(n, n)
+    REAL(wp) :: ddSl_over_Skl(n, n), Templ(n, n), TemplT(n, n)
+    REAL(wp) :: dRl(n, n), ddVl(n, n)
     REAL(wp) :: ALk(n, n), ALl(n, n), AAk(n, n), AAl(n, n), AlLl(n, n)
-    REAL(wp) :: dkA11(n, n), dkA1j(n, n), dkA1i(n, n), dkAij(n, n), dkApq(n, n)
+    REAL(wp) :: dkApq(n, n)
     REAL(wp) :: dlA11(n, n), dlA1j(n, n), dlA1i(n, n), dlAij(n, n), dlApq(n, n)
-    REAL(wp) :: dkA(n, n, n, n), dlA(n, n, n, n)
-    REAL(wp) :: dkAk11(n, n), dkAk1i(n, n), dkAkii(n, n)  ! ,dkAkij(n,n)
+    REAL(wp) :: dlA(n, n, n, n)
     REAL(wp) :: dlAl11(n, n), dlAl1j(n, n), dlAljj(n, n)  ! ,dlAlij(n,n)
-    REAL(wp) :: MAk(n, n), MAl(n, n), Jkk(n, n), Jll(n, n), Jklk(n, n), Jkll(n, n)
+    REAL(wp) :: Jkk(n, n), Jll(n, n), Jklk(n, n), Jkll(n, n)
     REAL(wp) :: MAlALk(n, n), AAlM(n, n)
     REAL(wp) :: MAlALl(n, n), MAkALl(n, n), MLl(n, n), AAkMAlALl(n, n)
     REAL(wp) :: AAlMAkALl(n, n), AAkMLl(n, n)
-    REAL(wp) :: dkAAlM1i(n, n), dkAAlM11(n, n), dkAAlMi1(n, n), dkAAlMj1(n, n)
-    REAL(wp) :: dkAAlMji(n, n)
-    REAL(wp) :: dkAAkMij(n, n), dkAAkM1j(n, n), dkAAkM11(n, n), dkAAkMi1(n, n)
-    REAL(wp) :: dkAAkMj1(n, n)
+
+
+
+
     REAL(wp) :: AAlMAkA(n, n), AAlMAkALk(n, n), AAkMAlA(n, n), AAkMAlALk(n, n)
-    REAL(wp) :: dkXij(n, n), dkX11(n, n), dkX1j(n, n), dkX1i(n, n), dktau1(n, n)
+
     REAL(wp) :: dlAAlM1i(n, n), dlAAlM11(n, n), dlAAlMi1(n, n), dlAAlMj1(n, n)
     REAL(wp) :: dlAAlMji(n, n)
     REAL(wp) :: dlAAkMij(n, n), dlAAkM1j(n, n), dlAAkM11(n, n), dlAAkMi1(n, n)
     REAL(wp) :: dlAAkMj1(n, n)
     REAL(wp) :: dlXij(n, n), dlX11(n, n), dlX1j(n, n), dlX1i(n, n), dltau1(n, n)
-    REAL(wp) :: AAkM(n, n), MAkALk(n, n), MLk(n, n), AAlMLk(n, n)
+    REAL(wp) :: AAkM(n, n), MAkALk(n, n), AAlMLk(n, n)
     REAL(wp) :: AAlMAl(n, n), AAkMAk(n, n), AAkMAl(n, n), AAlMAk(n, n)
     REAL(wp) :: da(n, n), db(n, n), dc(n, n), dtau1lM(n, n), dtau3lM(n, n)
     REAL(wp) :: dSkvech(Glob_npt), dSlvech(Glob_npt)
     REAL(wp) :: dtau1k(Glob_npt), dtau1l(Glob_npt)  ! ,dtau3k(NParam),dtau3l(NParam)
 
 
+    ! k-side gradient arrays, packed lower triangles (vech): element e is (VR(e), VC(e))
+    INTEGER :: e
+    REAL(wp) :: dkA11(nv), dkA1j(nv), dkA1i(nv), dkAij(nv), dkAk11(nv), dkAk1i(nv), dkAkii(nv)
+    REAL(wp) :: ddSk(nv), ddSk_over_Skl(nv), dkAAlMji(nv), dkAAlM1i(nv), dkAAlM11(nv)
+    REAL(wp) :: dkAAlMi1(nv), dkAAlMj1(nv), dkAAkMij(nv), dkAAkM1j(nv)
+    REAL(wp) :: dkAAkM11(nv), dkAAkMi1(nv), dkAAkMj1(nv), dkXij(nv), dkX11(nv), dkX1j(nv)
+    REAL(wp) :: dkX1i(nv), dktau1(nv), ddTk(nv), dkhoa(nv), dRk(nv), ddVk(nv), dkfob(nv), dkb(nv)
+    REAL(wp) :: dkcoab(nv)
+    REAL(wp) :: dkAv(nv, n, n), g5k(nv)
+    ! P8: gathered vectors of the packed k-side gradient statements
+    INTEGER :: GRole(3)
+    REAL(wp) :: IVall(nv, n), ALall(nv, n)
+    REAL(wp) :: GcAAkM(nv, 3)
+    REAL(wp) :: GcAAkMAlA(nv, 3)
+    REAL(wp) :: GcAAlM(nv, 3)
+    REAL(wp) :: GcAAlMAkA(nv, 3)
+    REAL(wp) :: GcBra_invAk(nv, 3)
+    REAL(wp) :: GcGlob_MassMatrix(nv, 3)
+    REAL(wp) :: GcinvAkl(nv, 3)
+    REAL(wp) :: GrAAkMAlALk(nv, 3)
+    REAL(wp) :: GrAAlMAkALk(nv, 3)
+    REAL(wp) :: GrAAlMLk(nv, 3)
+    REAL(wp) :: GrALk(nv, 3)
+    REAL(wp) :: GrBra_MLk(nv, 3)
+    REAL(wp) :: GrMAkALk(nv, 3)
+    REAL(wp) :: GrMAlALk(nv, 3)
+    REAL(wp) :: GtAAlM(nv, 3)
+    REAL(wp) :: GuBra_invLk(nv, 3)
+    ! products of the power sums that are the same for all pairs (see below)
+    REAL(wp) :: PwA(Glob_MaxPowerPossible), PwH(Glob_MaxPowerPossible)
+    REAL(wp) :: DkA(nv, Glob_MaxPowerPossible), DkH(nv, Glob_MaxPowerPossible)
+    REAL(wp) :: DlAm(n, n, Glob_MaxPowerPossible), DlHm(n, n, Glob_MaxPowerPossible)
+
     !***********************************************************
     ! Build intermediate results for Overlap matrix element
     ! Ak, Al, invAkl, detLk, detLl, detAkl, invAk, invAl
     !***********************************************************
 
-    ! Build the lower triangular matrices Lk and Ll from
-    ! the elements in vechLk and vechLl
-    Lk = ZERO
-    Ll = ZERO
-    indx = 0
-    DO j = 1, n
-      DO i = j, n
-        indx = indx+1
-        Lk(i, j) = vechLk(indx)
-        Ll(i, j) = vechLl(indx)
-      ENDDO
-    ENDDO
-
-    ! Apply the symmetry transformation SymMatrix to Ll  PLl=SymMatrix'*Ll
-    PLl = ZERO
-    DO j = 1, n
-      DO k = j, n
-        DO i = 1, n
-          PLl(i, j) = PLl(i, j)+SymMatrix(k, i)*Ll(k, j)
-        ENDDO
-      ENDDO
-    ENDDO
-
-    ! Build AK=LK*Lk' and AL=P'*LL*LL'*P
-    Ak = ZERO
-    Al = ZERO
-    DO j = 1, n
-      DO k = 1, n
-        DO i = 1, n
-          Ak(i, j) = Ak(i, j)+Lk(i, k)*Lk(j, k)
-          Al(i, j) = Al(i, j)+PLl(i, k)*PLl(j, k)
-        ENDDO
-      ENDDO
-    ENDDO
-
-    ! Compute Akl the upper triangle of Akl=Ak+Al is in invL
-    ! (we store the upper part of Akl for convience in the
-    ! Cholesky decomposition code below)
+    ! Akl = Ak + Al; its upper triangle in invL for the Cholesky
+    ! decomposition below (Ak, Al from BraSetup, KetSetup)
     DO j = 1, n
       DO i = 1, j-1
         invL(j, i) = ZERO
       ENDDO
       DO i = j, n
-        invL(j, i) = Ak(i, j)+Al(i, j)
+        invL(j, i) = Bra%Ak(i, j)+Ket%Al(i, j)
       ENDDO
       DO i = 1, n
-        Akl(i, j) = Ak(i, j)+Al(i, j)
+        Akl(i, j) = Bra%Ak(i, j)+Ket%Al(i, j)
       ENDDO
     ENDDO
 
-    ! compute det(LK) and det(LL)
-    detLk = ONE
-    detLl = ONE
-    DO i = 1, n
-      detLk = detLk*Lk(i, i)
-      detLl = detLl*Ll(i, i)
-    ENDDO
-
-    ! Compute the Cholesky decomposition of Akl (invL)
-    ! This code is adapted from Numerical Recipes  choldc.for
-    ! det(Akl) is computed during the decomposition and stored in
-    ! detAkl
-    !
-    ! need to do the decomp on Al too to get invAl since
-    ! Al is P'Ll*(P'Ll)' i.e. we lost the original chol decomp
-    ! we'll put it in chAl
-    chAl = Al
+    ! Cholesky decomposition of Akl (invL), adapted from Numerical Recipes
+    ! choldc.for; det(Akl) in detAkl
     detAkl = ONE
     DO i = 1, n
       DO j = i, n
         SUM0 = invL(i, j)
-        SUM1 = chAl(i, j)
         DO k = i-1, 1, -1
           SUM0 = SUM0-invL(i, k)*invL(j, k)
-          SUM1 = SUM1-chAl(i, k)*chAl(j, k)
         ENDDO
         IF (i == j) THEN
           invL(i, i) = SQRT(SUM0)
-          chAl(i, i) = SQRT(SUM1)  ! don't need the det for Al
           detAkl = detAkl*SUM0
         ELSE
           invL(j, i) = SUM0/invL(i, i)
-          chAl(j, i) = SUM1/chAl(i, i)
         ENDIF
       ENDDO
     ENDDO
 
-    ! invL now contains the Cholesky decomp,L, of Akl, where Akl=L*L'
-    ! detAkl now contains det(Akl)
-    ! chAl now contains the Cholesky decomp of Al
-    !
-    ! Compute the inverse of Akl, Ak, Al, Lk, Ll
-    !
-    ! Start with invL, invLk, invLl, chAl
-    invLk = Lk
-    invLl = Ll
-    ! [invert the lower triangle matrices]
+    ! The inverse of the Cholesky factor, then invAkl = invL'*invL
+    ! (symmetric: the lower triangle, then mirrored)
     DO i = 1, n
       invL(i, i) = ONE/invL(i, i)
-      invLk(i, i) = ONE/invLk(i, i)
-      invLl(i, i) = ONE/invLl(i, i)
-      chAl(i, i) = ONE/chAl(i, i)
       DO j = i+1, n
         SUM0 = ZERO
-        SUM1 = ZERO
-        SUM2 = ZERO
-        SUM3 = ZERO
         DO k = i, j-1
           SUM0 = SUM0-invL(j, k)*invL(k, i)
-          SUM1 = SUM1-invLk(j, k)*invLk(k, i)
-          SUM2 = SUM2-invLl(j, k)*invLl(k, i)
-          SUM3 = SUM3-chAl(j, k)*chAl(k, i)
         ENDDO
         invL(j, i) = SUM0/invL(j, j)
         invL(i, j) = ZERO  ! zero out the upper triangle for convenience
-        invLk(j, i) = SUM1/invLk(j, j)
-        invLk(i, j) = ZERO
-        invLl(j, i) = SUM2/invLl(j, j)
-        invLl(i, j) = ZERO
-        chAl(j, i) = SUM3/chAl(j, j)
-        chAl(i, j) = ZERO
       ENDDO
     ENDDO
-
-    ! We now have invLk, invLl (this is not invP'Ll), inv(chAl) invL
-    !
-    ! Now do invAkl=invL'*invL
-    !       invAk=invLk'*invLk
-    !       invAl=chAl'*chAl    NOTE that this has the SymMatrix term in it
     invAkl = ZERO
-    invAk = ZERO
-    invAl = ZERO
     DO j = 1, n
       DO k = 1, n
-        DO i = 1, n
+        DO i = j, n
           invAkl(i, j) = invAkl(i, j)+ invL(k, i)*invL(k, j)
-          invAk(i, j) = invAk(i, j)+invLk(k, i)*invLk(k, j)
-          invAl(i, j) = invAl(i, j)+chAl(k, i)*chAl(k, j)
         ENDDO
+      ENDDO
+      DO i = 1, j-1
+        invAkl(i, j) = invAkl(j, i)
       ENDDO
     ENDDO
 
@@ -447,12 +714,12 @@ CONTAINS
     A1j = invAkl(1, partj)
     Aij = invAkl(parti, partj)
 
-    Skl = Skl+(invAk(parti, parti)+(TWO*mk)/THREE*invAk(1, parti)*invAk(1, parti)/invAk(1, 1))
-    Skl = Skl*(invAl(partj, partj)+(TWO*ml)/THREE*invAl(1, partj)*invAl(1, partj)/invAl(1, 1))
+    Skl = Skl+(Bra%invAk(parti, parti)+(TWO*mk)/THREE*Bra%invAk(1, parti)*Bra%invAk(1, parti)/Bra%invAk(1, 1))
+    Skl = Skl*(Ket%invAl(partj, partj)+(TWO*ml)/THREE*Ket%invAl(1, partj)*Ket%invAl(1, partj)/Ket%invAl(1, 1))
     Skl = TWO/SQRT(Skl)
     Skl = Skl*(Aij+mkpml*ONETHIRD*A1i*A1j*oA11)
-    Skl = Skl*SQRT((ONE*(2**(3*n)))*(ABS(detLk*detLl/detAkl)**3))
-    Skl = Skl*((A11/invAk(1, 1))**(mko2))*((A11/invAl(1, 1))**(mlo2))
+    Skl = Skl*SQRT((ONE*(2**(3*n)))*(ABS(Bra%detLk*Ket%detLl/detAkl)**3))
+    Skl = Skl*((A11/Bra%invAk(1, 1))**(mko2))*((A11/Ket%invAl(1, 1))**(mlo2))
     Skl = Skl*Glob_gm1(mko2, mlo2)*Glob_gm1(mko2, mlo2)
 
     ! gm1(mk,ml) = gamma((mk+ml+3)/2) * 2^((mk+ml)/2)/
@@ -471,59 +738,66 @@ CONTAINS
       DO k = 1, n
         DO j = 1, n
           DO i = 1, n
-            ALk(i, j) = ALk(i, j) +invAkl(i, k)*Lk(k, j)
+            ALk(i, j) = ALk(i, j) +invAkl(i, k)*Bra%Lk(k, j)
           ENDDO
         ENDDO
       ENDDO
 
-      ! d(Aij)/dLk
-      DO j = 1, n
-        dkA11(1:n, j) = -TWO*invAkl(1:n, 1)*ALk(1, j)
-        dkA1j(1:n, j) = -invAkl(1:n, partj)*ALk(1, j)-invAkl(1:n, 1)*ALk(partj, j)
-        dkA1i(1:n, j) = -invAkl(1:n, 1)*ALk(parti, j)-invAkl(1:n, parti)*ALk(1, j)
-        dkAij(1:n, j) = -invAkl(1:n, partj)*ALk(parti, j)-invAkl(1:n, parti)*ALk(partj, j)
-
-        dkAk11(1:n, j) = -TWO*invAk(1:n, 1)*invLk(j, 1)
-        dkAk1i(1:n, j) = -invAk(1:n, 1)*invLk(j, parti)-invAk(1:n, parti)*invLk(j, 1)
-        dkAkii(1:n, j) = -TWO*invAk(1:n, parti)*invLk(j, parti)
+      ! the gathered columns and rows of the packed statements below (roles 1, parti, partj)
+      GRole(1) = 1
+      GRole(2) = parti
+      GRole(3) = partj
+      DO t = 1, 3
+        GcBra_invAk(:, t) = Bra%invAk(VR, GRole(t))
+        GcinvAkl(:, t) = invAkl(VR, GRole(t))
+        GrALk(:, t) = ALk(GRole(t), VC)
+        GuBra_invLk(:, t) = Bra%invLk(VC, GRole(t))
       ENDDO
 
-      DO p = 1, n
-        DO q = 1, n
-          DO j = 1, n
-            dkApq(1:n, j) = -invAkl(1:n, q)*ALk(p, j)-invAkl(1:n, p)*ALk(q, j)
-          ENDDO
-          dkA(p, q, :, :) = dkApq
+      ! d(Aij)/dLk, packed: element e is the derivative element (VR(e), VC(e)) of the lower triangle
+      ! (only that triangle enters dSk, dHk)
+      dkA11 = -TWO*GcinvAkl(:, 1)*GrALk(:, 1)
+      dkA1j = -GcinvAkl(:, 3)*GrALk(:, 1)-GcinvAkl(:, 1)*GrALk(:, 3)
+      dkA1i = -GcinvAkl(:, 1)*GrALk(:, 2)-GcinvAkl(:, 2)*GrALk(:, 1)
+      dkAij = -GcinvAkl(:, 3)*GrALk(:, 2)-GcinvAkl(:, 2)*GrALk(:, 3)
+
+      dkAk11 = -TWO*GcBra_invAk(:, 1)*GuBra_invLk(:, 1)
+      dkAk1i = -GcBra_invAk(:, 1)*GuBra_invLk(:, 2)-GcBra_invAk(:, 2)*GuBra_invLk(:, 1)
+      dkAkii = -TWO*GcBra_invAk(:, 2)*GuBra_invLk(:, 2)
+
+      ! all n columns of invAkl and rows of ALk, gathered once; dkAv for p >= q, the rest mirrored
+      ! (element (p,q) is -(x)-(y), element (q,p) -(y)-(x): the same rounded value)
+      DO q = 1, n
+        IVall(:, q) = invAkl(VR, q)
+        ALall(:, q) = ALk(q, VC)
+      ENDDO
+      DO q = 1, n
+        DO p = q, n
+          dkAv(:, p, q) = -IVall(:, q)*ALall(:, p)-IVall(:, p)*ALall(:, q)
+        ENDDO
+        DO p = 1, q-1
+          dkAv(:, p, q) = dkAv(:, q, p)
         ENDDO
       ENDDO
 
       ! dSk
-      DO j = 1, n
-        DO i = j, n
-          ddSk(i, j) = (ONE+ONEHALF)*invLk(j, i)-THREE*ALk(i, j)
-        ENDDO
+      DO e = 1, nv
+        ddSk(e) = (ONE+ONEHALF)*Bra%invLk(VC(e), VR(e))-THREE*ALk(VR(e), VC(e))
       ENDDO
-      ddSk = ddSk+(mko2+mlo2)*oA11*dkA11-mko2/invAk(1, 1)*dkAk11
+      ddSk = ddSk+(mko2+mlo2)*oA11*dkA11-mko2/Bra%invAk(1, 1)*dkAk11
       ddSk = ddSk+ONE/(Aij+mkpml*ONETHIRD*&
           A1i*A1j*oA11)*&
           (dkAij+mkpml*ONETHIRD*A1i*oA11*&
           (A1j/A1i*dkA1i+dkA1j-&
           A1j*oA11*dkA11))
-      ddSk = ddSk-ONEHALF/(invAk(parti, parti)+TWO*mk*ONETHIRD*&
-          invAk(1, parti)*invAk(1, parti)/invAk(1, 1))*&
-          (dkAkii+TWO*mk*ONETHIRD*invAk(1, parti)/invAk(1, 1)*&
-          (TWO*dkAk1i-invAk(1, parti)/invAk(1, 1)*dkAk11))
+      ddSk = ddSk-ONEHALF/(Bra%invAk(parti, parti)+TWO*mk*ONETHIRD*&
+          Bra%invAk(1, parti)*Bra%invAk(1, parti)/Bra%invAk(1, 1))*&
+          (dkAkii+TWO*mk*ONETHIRD*Bra%invAk(1, parti)/Bra%invAk(1, 1)*&
+          (TWO*dkAk1i-Bra%invAk(1, parti)/Bra%invAk(1, 1)*dkAk11))
 
       ddSk_over_Skl = ddSk
       ddSk = Skl*ddSk
-      ! load it into dSk (a vector)
-      indx = 0
-      DO j = 1, n
-        DO i = j, n
-          indx = indx+1
-          dSk(indx) = ddSk(i, j)
-        ENDDO
-      ENDDO
+      dSk = ddSk
     ENDIF
 
     IF (gradflag > 1) THEN
@@ -536,8 +810,8 @@ CONTAINS
       DO k = 1, n
         DO j = 1, n
           DO i = 1, n
-            ALl(i, j) = ALl(i, j) +invAkl(i, k)*PLl(k, j)
-            AlLl(i, j) = AlLl(i, j)+invAl(i, k)*PLl(k, j)
+            ALl(i, j) = ALl(i, j) +invAkl(i, k)*Ket%PLl(k, j)
+            AlLl(i, j) = AlLl(i, j)+Ket%invAl(i, k)*Ket%PLl(k, j)
           ENDDO
         ENDDO
       ENDDO
@@ -545,7 +819,7 @@ CONTAINS
       ! Jll = invAl*J11*invAl*Ll
       ! Jkll = invAkl*J11*invAkl*Ll
       DO j = 1, n
-        Jll(1:n, j) = invAl(1:n, 1)*AlLl(1, j)  ! using AlLl to get sym right
+        Jll(1:n, j) = Ket%invAl(1:n, 1)*AlLl(1, j)  ! using AlLl to get sym right
         Jkll(1:n, j) = invAkl(1:n, 1)*ALl(1, j)
       ENDDO
 
@@ -557,9 +831,9 @@ CONTAINS
         dlAij(1:n, j) = -invAkl(1:n, partj)*ALl(parti, j)-invAkl(1:n, parti)*ALl(partj, j)
 
         ! dlAlij(1:n,j)=-invAl(1:n,partj)*AlLl(parti,j)-invAl(1:n,parti)*AlLl(partj,j)
-        dlAl11(1:n, j) = -TWO*invAl(1:n, 1)*AlLl(1, j)
-        dlAl1j(1:n, j) = -invAl(1:n, partj)*AlLl(1, j)-invAl(1:n, 1)*AlLl(partj, j)
-        dlAljj(1:n, j) = -TWO*invAl(1:n, partj)*AlLl(partj, j)
+        dlAl11(1:n, j) = -TWO*Ket%invAl(1:n, 1)*AlLl(1, j)
+        dlAl1j(1:n, j) = -Ket%invAl(1:n, partj)*AlLl(1, j)-Ket%invAl(1:n, 1)*AlLl(partj, j)
+        dlAljj(1:n, j) = -TWO*Ket%invAl(1:n, partj)*AlLl(partj, j)
       ENDDO
 
       DO p = 1, n
@@ -576,16 +850,16 @@ CONTAINS
       ! Multiply by SymMatrix
       ddSl = ZERO
       Templ = (ONE+ONEHALF)*AlLl-THREE*ALl
-      Templ = Templ+(mko2+mlo2)*oA11*dlA11-mlo2/invAl(1, 1)*dlAl11
+      Templ = Templ+(mko2+mlo2)*oA11*dlA11-mlo2/Ket%invAl(1, 1)*dlAl11
       Templ = Templ+ONE/(Aij+mkpml*ONETHIRD*&
           A1i*A1j*oA11)*&
           (dlAij+mkpml*ONETHIRD*A1i*oA11*&
           (A1j/A1i*dlA1i+dlA1j-&
           A1j*oA11*dlA11))
-      Templ = Templ-ONEHALF/(invAl(partj, partj)+TWO*ml*ONETHIRD*&
-          invAl(1, partj)*invAl(1, partj)/invAl(1, 1))*&
-          (dlAljj+TWO*ml*ONETHIRD*invAl(1, partj)/invAl(1, 1)*&
-          (TWO*dlAl1j-invAl(1, partj)/invAl(1, 1)*dlAl11))
+      Templ = Templ-ONEHALF/(Ket%invAl(partj, partj)+TWO*ml*ONETHIRD*&
+          Ket%invAl(1, partj)*Ket%invAl(1, partj)/Ket%invAl(1, 1))*&
+          (dlAljj+TWO*ml*ONETHIRD*Ket%invAl(1, partj)/Ket%invAl(1, 1)*&
+          (TWO*dlAl1j-Ket%invAl(1, partj)/Ket%invAl(1, 1)*dlAl11))
       DO k = 1, n
         DO j = 1, n
           DO i = 1, n
@@ -611,93 +885,196 @@ CONTAINS
     ! Kinetic Specific Terms
     !**********************
 
-    ! AAk=invAkl*Ak
-    ! AAl=invAkl*Al
-    ! MAk=M*Ak
-    ! MAl=M*Al
-    AAk = ZERO
-    AAl = ZERO
-    MAk = ZERO
-    MAl = ZERO
-    DO k = 1, n
-      DO j = 1, n
-        DO i = 1, n
-          AAk(i, j) = AAk(i, j)+invAkl(i, k)*Ak(k, j)
-          AAl(i, j) = AAl(i, j)+invAkl(i, k)*Al(k, j)
-          MAk(i, j) = MAk(i, j)+Glob_MassMatrix(i, k)*Ak(k, j)
-          MAl(i, j) = MAl(i, j)+Glob_MassMatrix(i, k)*Al(k, j)
+    IF (gradflag > 0) THEN
+
+      ! AAk=invAkl*Ak
+      ! AAl=invAkl*Al
+      ! MAk=M*Ak
+      ! MAl=M*Al
+      AAk = ZERO
+      AAl = ZERO
+      DO k = 1, n
+        DO j = 1, n
+          DO i = 1, n
+            AAk(i, j) = AAk(i, j)+invAkl(i, k)*Bra%Ak(k, j)
+            AAl(i, j) = AAl(i, j)+invAkl(i, k)*Ket%Al(k, j)
+          ENDDO
         ENDDO
       ENDDO
-    ENDDO
 
-    AAkMAl = ZERO
-    AAlMAk = ZERO
-    DO k = 1, n
-      DO j = 1, n
-        DO i = 1, n
-          AAkMAl(i, j) = AAkMAl(i, j)+AAk(i, k)*MAl(k, j)
-          AAlMAk(i, j) = AAlMAk(i, j)+AAl(i, k)*MAk(k, j)
+      AAkMAl = ZERO
+      AAlMAk = ZERO
+      DO k = 1, n
+        DO j = 1, n
+          DO i = 1, n
+            AAkMAl(i, j) = AAkMAl(i, j)+AAk(i, k)*Ket%MAl(k, j)
+            AAlMAk(i, j) = AAlMAk(i, j)+AAl(i, k)*Bra%MAk(k, j)
+          ENDDO
         ENDDO
       ENDDO
-    ENDDO
 
-    ! A few kinetic energy terms (scalers)
-    ! tau1=tr[invAkl*Ak*M*Al]
+      ! A few kinetic energy terms (scalers)
+      ! tau1=tr[invAkl*Ak*M*Al]
 
-    tau1 = ZERO
-    XMij = ZERO
-    XM11 = ZERO
-    XM1i = ZERO
-    XM1j = ZERO
-    AAkMij = ZERO
-    AAkM1j = ZERO
-    AAkMj1 = ZERO
-    AAkMi1 = ZERO
-    AAkM11 = ZERO
+      tau1 = ZERO
+      XMij = ZERO
+      XM11 = ZERO
+      XM1i = ZERO
+      XM1j = ZERO
+      AAkMij = ZERO
+      AAkM1j = ZERO
+      AAkMj1 = ZERO
+      AAkMi1 = ZERO
+      AAkM11 = ZERO
 
-    AAlMji = ZERO
-    AAlMj1 = ZERO
-    AAlM1i = ZERO
-    AAlMi1 = ZERO
-    AAlM11 = ZERO
+      AAlMji = ZERO
+      AAlMj1 = ZERO
+      AAlM1i = ZERO
+      AAlMi1 = ZERO
+      AAlM11 = ZERO
 
-    DO i = 1, n
-      tau1 = tau1+AAkMAl(i, i)
-      XMij = XMij+AAkMAl(parti, i)*invAkl(i, partj)+AAkMAl(partj, i)*invAkl(i, parti)
-      XM11 = XM11+TWO*AAkMAl(1, i)*invAkl(i, 1)
-      XM1i = XM1i+AAkMAl(parti, i)*invAkl(i, 1)+AAkMAl(1, i)*invAkl(i, parti)
-      XM1j = XM1j+AAkMAl(1, i)*invAkl(i, partj)+AAkMAl(partj, i)*invAkl(i, 1)
-      AAkMij = AAkMij+AAk(parti, i)*Glob_MassMatrix(i, partj)
-      AAkM1j = AAkM1j+AAk(1, i)*Glob_MassMatrix(i, partj)
-      AAkMj1 = AAkMj1+AAk(partj, i)*Glob_MassMatrix(i, 1)
-      AAkMi1 = AAkMi1+AAk(parti, i)*Glob_MassMatrix(i, 1)
-      AAkM11 = AAkM11+AAk(1, i)*Glob_MassMatrix(i, 1)
-      AAlMji = AAlMji+AAl(partj, i)*Glob_MassMatrix(i, parti)
-      AAlM1i = AAlM1i+AAl(1, i)*Glob_MassMatrix(i, parti)
-      AAlMi1 = AAlMi1+AAl(parti, i)*Glob_MassMatrix(i, 1)
-      AAlMj1 = AAlMj1+AAl(partj, i)*Glob_MassMatrix(i, 1)
-      AAlM11 = AAlM11+AAl(1, i)*Glob_MassMatrix(i, 1)
-    ENDDO
+      DO i = 1, n
+        tau1 = tau1+AAkMAl(i, i)
+        XMij = XMij+AAkMAl(parti, i)*invAkl(i, partj)+AAkMAl(partj, i)*invAkl(i, parti)
+        XM11 = XM11+TWO*AAkMAl(1, i)*invAkl(i, 1)
+        XM1i = XM1i+AAkMAl(parti, i)*invAkl(i, 1)+AAkMAl(1, i)*invAkl(i, parti)
+        XM1j = XM1j+AAkMAl(1, i)*invAkl(i, partj)+AAkMAl(partj, i)*invAkl(i, 1)
+        AAkMij = AAkMij+AAk(parti, i)*Glob_MassMatrix(i, partj)
+        AAkM1j = AAkM1j+AAk(1, i)*Glob_MassMatrix(i, partj)
+        AAkMj1 = AAkMj1+AAk(partj, i)*Glob_MassMatrix(i, 1)
+        AAkMi1 = AAkMi1+AAk(parti, i)*Glob_MassMatrix(i, 1)
+        AAkM11 = AAkM11+AAk(1, i)*Glob_MassMatrix(i, 1)
+        AAlMji = AAlMji+AAl(partj, i)*Glob_MassMatrix(i, parti)
+        AAlM1i = AAlM1i+AAl(1, i)*Glob_MassMatrix(i, parti)
+        AAlMi1 = AAlMi1+AAl(parti, i)*Glob_MassMatrix(i, 1)
+        AAlMj1 = AAlMj1+AAl(partj, i)*Glob_MassMatrix(i, 1)
+        AAlM11 = AAlM11+AAl(1, i)*Glob_MassMatrix(i, 1)
+      ENDDO
 
-    !********************************************************
-    ! Compute Tkl
-    !********************************************************
-    mkml = mk*ml
+      !********************************************************
+      ! Compute Tkl
+      !********************************************************
+      mkml = mk*ml
 
-    AAlM = ZERO
-    AAkM = ZERO
-    AAlMAkA = ZERO
-    AAkMAlA = ZERO
-    DO k = 1, n
-      DO j = 1, n
-        DO i = 1, n
-          AAlM(i, j) = AAlM(i, j)+AAl(i, k)*Glob_MassMatrix(k, j)
-          AAkM(i, j) = AAkM(i, j)+AAk(i, k)*Glob_MassMatrix(k, j)
-          AAlMAkA(i, j) = AAlMAkA(i, j)+AAlMAk(i, k)*invAkl(k, j)
-          AAkMAlA(i, j) = AAkMAlA(i, j)+AAkMAl(i, k)*invAkl(k, j)
+      AAlM = ZERO
+      AAkM = ZERO
+      AAlMAkA = ZERO
+      AAkMAlA = ZERO
+      DO k = 1, n
+        DO j = 1, n
+          DO i = 1, n
+            AAlM(i, j) = AAlM(i, j)+AAl(i, k)*Glob_MassMatrix(k, j)
+            AAkM(i, j) = AAkM(i, j)+AAk(i, k)*Glob_MassMatrix(k, j)
+            AAlMAkA(i, j) = AAlMAkA(i, j)+AAlMAk(i, k)*invAkl(k, j)
+            AAkMAlA(i, j) = AAkMAlA(i, j)+AAkMAl(i, k)*invAkl(k, j)
+          ENDDO
         ENDDO
       ENDDO
-    ENDDO
+
+
+    ELSE
+
+      ! No gradients: Tkl needs only tau1 (the trace of AAkMAl), the sums
+      ! AAkMij, AAkM1j, AAlMji, AAlM1i, column 1 of AAlM and AAkM in the
+      ! rows 1, parti, partj and the elements (1,1), (1,parti), (1,partj),
+      ! (parti,partj) of AAlMAkA and AAkMAlA. AAk, MAk and MAl are formed
+      ! completely, AAl in the rows 1, parti, partj, AAkMAl in the rows 1,
+      ! parti and on the diagonal, AAlMAk in the rows 1, parti - every
+      ! element with the operations of the full products above.
+      ! Rows(1:NumRows3) = the distinct rows of 1, parti, partj; the
+      ! first NumRows2 of them are those of 1, parti.
+      Rows(1) = 1
+      NumRows3 = 1
+      IF (parti /= 1) THEN
+        NumRows3 = NumRows3+1
+        Rows(NumRows3) = parti
+      ENDIF
+      NumRows2 = NumRows3
+      IF ((partj /= 1) .AND. (partj /= parti)) THEN
+        NumRows3 = NumRows3+1
+        Rows(NumRows3) = partj
+      ENDIF
+
+      AAk = ZERO
+      AAl = ZERO
+      DO k = 1, n
+        DO j = 1, n
+          DO i = 1, n
+            AAk(i, j) = AAk(i, j)+invAkl(i, k)*Bra%Ak(k, j)
+          ENDDO
+          DO t = 1, NumRows3
+            i = Rows(t)
+            AAl(i, j) = AAl(i, j)+invAkl(i, k)*Ket%Al(k, j)
+          ENDDO
+        ENDDO
+      ENDDO
+
+      AAkMAl = ZERO
+      AAlMAk = ZERO
+      DO k = 1, n
+        DO j = 1, n
+          DO t = 1, NumRows2
+            i = Rows(t)
+            AAkMAl(i, j) = AAkMAl(i, j)+AAk(i, k)*Ket%MAl(k, j)
+            AAlMAk(i, j) = AAlMAk(i, j)+AAl(i, k)*Bra%MAk(k, j)
+          ENDDO
+        ENDDO
+        DO i = 1, n
+          IF ((i /= 1) .AND. (i /= parti)) AAkMAl(i, i) = AAkMAl(i, i)+AAk(i, k)*Ket%MAl(k, i)
+        ENDDO
+      ENDDO
+
+      tau1 = ZERO
+      AAkMij = ZERO
+      AAkM1j = ZERO
+      AAlMji = ZERO
+      AAlM1i = ZERO
+      DO i = 1, n
+        tau1 = tau1+AAkMAl(i, i)
+        AAkMij = AAkMij+AAk(parti, i)*Glob_MassMatrix(i, partj)
+        AAkM1j = AAkM1j+AAk(1, i)*Glob_MassMatrix(i, partj)
+        AAlMji = AAlMji+AAl(partj, i)*Glob_MassMatrix(i, parti)
+        AAlM1i = AAlM1i+AAl(1, i)*Glob_MassMatrix(i, parti)
+      ENDDO
+
+      mkml = mk*ml
+
+      DO t = 1, NumRows3
+        i = Rows(t)
+        AAlM(i, 1) = ZERO
+        AAkM(i, 1) = ZERO
+        DO k = 1, n
+          AAlM(i, 1) = AAlM(i, 1)+AAl(i, k)*Glob_MassMatrix(k, 1)
+          AAkM(i, 1) = AAkM(i, 1)+AAk(i, k)*Glob_MassMatrix(k, 1)
+        ENDDO
+      ENDDO
+
+      DO t = 1, 4
+        SELECT CASE (t)
+        CASE (1)
+          ii = 1
+          jj = 1
+        CASE (2)
+          ii = 1
+          jj = parti
+        CASE (3)
+          ii = 1
+          jj = partj
+        CASE DEFAULT
+          ii = parti
+          jj = partj
+        END SELECT
+        temp1 = ZERO
+        temp2 = ZERO
+        DO k = 1, n
+          temp1 = temp1+AAlMAk(ii, k)*invAkl(k, jj)
+          temp2 = temp2+AAkMAl(ii, k)*invAkl(k, jj)
+        ENDDO
+        AAlMAkA(ii, jj) = temp1
+        AAkMAlA(ii, jj) = temp2
+      ENDDO
+
+    ENDIF
 
     Tkl = TWO*Glob_MassMatrix(parti, partj)
     Tkl = Tkl+TWO*ONETHIRD*oA11*(ml*A1j*Glob_MassMatrix(1, parti)+&
@@ -723,15 +1100,13 @@ CONTAINS
 
       MAlALk = ZERO
       MAkALk = ZERO
-      MLk = ZERO
       AAlMAkALk = ZERO
       AAkMAlALk = ZERO
       DO k = 1, n
         DO j = 1, n
           DO i = 1, n
-            MAlALk(i, j) = MAlALk(i, j)+MAl(i, k)*ALk(k, j)
-            MAkALk(i, j) = MAkALk(i, j)+MAk(i, k)*ALk(k, j)
-            MLk(i, j) = MLk(i, j)+Glob_MassMatrix(i, k)*Lk(k, j)
+            MAlALk(i, j) = MAlALk(i, j)+Ket%MAl(i, k)*ALk(k, j)
+            MAkALk(i, j) = MAkALk(i, j)+Bra%MAk(i, k)*ALk(k, j)
             AAlMAkALk(i, j) = AAlMAkALk(i, j)+AAlMAk(i, k)*ALk(k, j)
             AAkMAlALk(i, j) = AAkMAlALk(i, j)+AAkMAl(i, k)*ALk(k, j)
           ENDDO
@@ -742,56 +1117,75 @@ CONTAINS
       DO k = 1, n
         DO j = 1, n
           DO i = 1, n
-            AAlMLk(i, j) = AAlMLk(i, j)+AAl(i, k)*MLk(k, j)
+            AAlMLk(i, j) = AAlMLk(i, j)+AAl(i, k)*Bra%MLk(k, j)
           ENDDO
         ENDDO
       ENDDO
 
-      DO j = 1, n
-        dkAAlMji(1:n, j) = -AAlM(1:n, parti)*ALk(partj, j)-invAkl(1:n, partj)*MAlALk(parti, j)
-        dkAAlM1i(1:n, j) = -AAlM(1:n, parti)*ALk(1, j)-invAkl(1:n, 1)*MAlALk(parti, j)
-        dkAAlM11(1:n, j) = -AAlM(1:n, 1)*ALk(1, j)-invAkl(1:n, 1)*MAlALk(1, j)
-        dkAAlMi1(1:n, j) = -AAlM(1:n, 1)*ALk(parti, j)-invAkl(1:n, parti)*MAlALk(1, j)
-        dkAAlMj1(1:n, j) = -AAlM(1:n, 1)*ALk(partj, j)-invAkl(1:n, partj)*MAlALk(1, j)
-
-        dkAAkMij(1:n, j) = -AAkM(1:n, partj)*ALk(parti, j)-invAkl(1:n, parti)*MAkALk(partj, j)+&
-            invAkl(1:n, parti)*MLk(partj, j)+Glob_MassMatrix(1:n, partj)*ALk(parti, j)
-        dkAAkM1j(1:n, j) = -AAkM(1:n, partj)*ALk(1, j)-invAkl(1:n, 1)*MAkALk(partj, j)+&
-            invAkl(1:n, 1)*MLk(partj, j)+Glob_MassMatrix(1:n, partj)*ALk(1, j)
-        dkAAkM11(1:n, j) = -AAkM(1:n, 1)*ALk(1, j)-invAkl(1:n, 1)*MAkALk(1, j)+&
-            invAkl(1:n, 1)*MLk(1, j)+Glob_MassMatrix(1:n, 1)*ALk(1, j)
-        dkAAkMi1(1:n, j) = -AAkM(1:n, 1)*ALk(parti, j)-invAkl(1:n, parti)*MAkALk(1, j)+&
-            invAkl(1:n, parti)*MLk(1, j)+Glob_MassMatrix(1:n, 1)*ALk(parti, j)
-        dkAAkMj1(1:n, j) = -AAkM(1:n, 1)*ALk(partj, j)-invAkl(1:n, partj)*MAkALk(1, j)+&
-            invAkl(1:n, partj)*MLk(1, j)+Glob_MassMatrix(1:n, 1)*ALk(partj, j)
-
-        dkXij(1:n, j) = -invAkl(1:n, parti)*AAlMAkALk(partj, j)-invAkl(1:n, partj)*AAlMAkALk(parti, j)-&
-            AAkMAlA(1:n, parti)*ALk(partj, j)-AAkMAlA(1:n, partj)*ALk(parti, j)+&
-            invAkl(1:n, parti)*AAlMLk(partj, j)+invAkl(1:n, partj)*AAlMLk(parti, j)+&
-            AAlM(parti, 1:n)*ALk(partj, j)+AAlM(partj, 1:n)*ALk(parti, j)-&
-            AAlMAkA(1:n, parti)*ALk(partj, j)-AAlMAkA(1:n, partj)*ALk(parti, j)-&
-            invAkl(1:n, parti)*AAkMAlALk(partj, j)-invAkl(1:n, partj)*AAkMAlALk(parti, j)
-        dkX11(1:n, j) = -invAkl(1:n, 1)*AAlMAkALk(1, j)-invAkl(1:n, 1)*AAlMAkALk(1, j)-&
-            AAkMAlA(1:n, 1)*ALk(1, j)-AAkMAlA(1:n, 1)*ALk(1, j)+&
-            invAkl(1:n, 1)*AAlMLk(1, j)+invAkl(1:n, 1)*AAlMLk(1, j)+&
-            AAlM(1, 1:n)*ALk(1, j)+AAlM(1, 1:n)*ALk(1, j)-&
-            AAlMAkA(1:n, 1)*ALk(1, j)-AAlMAkA(1:n, 1)*ALk(1, j)-&
-            invAkl(1:n, 1)*AAkMAlALk(1, j)-invAkl(1:n, 1)*AAkMAlALk(1, j)
-        dkX1j(1:n, j) = -invAkl(1:n, 1)*AAlMAkALk(partj, j)-invAkl(1:n, partj)*AAlMAkALk(1, j)-&
-            AAkMAlA(1:n, 1)*ALk(partj, j)-AAkMAlA(1:n, partj)*ALk(1, j)+&
-            invAkl(1:n, 1)*AAlMLk(partj, j)+invAkl(1:n, partj)*AAlMLk(1, j)+&
-            AAlM(1, 1:n)*ALk(partj, j)+AAlM(partj, 1:n)*ALk(1, j)-&
-            AAlMAkA(1:n, 1)*ALk(partj, j)-AAlMAkA(1:n, partj)*ALk(1, j)-&
-            invAkl(1:n, 1)*AAkMAlALk(partj, j)-invAkl(1:n, partj)*AAkMAlALk(1, j)
-        dkX1i(1:n, j) = -invAkl(1:n, parti)*AAlMAkALk(1, j)-invAkl(1:n, 1)*AAlMAkALk(parti, j)-&
-            AAkMAlA(1:n, parti)*ALk(1, j)-AAkMAlA(1:n, 1)*ALk(parti, j)+&
-            invAkl(1:n, parti)*AAlMLk(1, j)+invAkl(1:n, 1)*AAlMLk(parti, j)+&
-            AAlM(parti, 1:n)*ALk(1, j)+AAlM(1, 1:n)*ALk(parti, j)-&
-            AAlMAkA(1:n, parti)*ALk(1, j)-AAlMAkA(1:n, 1)*ALk(parti, j)-&
-            invAkl(1:n, parti)*AAkMAlALk(1, j)-invAkl(1:n, 1)*AAkMAlALk(parti, j)
+      ! the gathered columns and rows of the packed statements below (roles 1, parti, partj)
+      GRole(1) = 1
+      GRole(2) = parti
+      GRole(3) = partj
+      DO t = 1, 3
+        GcAAkM(:, t) = AAkM(VR, GRole(t))
+        GcAAkMAlA(:, t) = AAkMAlA(VR, GRole(t))
+        GcAAlM(:, t) = AAlM(VR, GRole(t))
+        GcAAlMAkA(:, t) = AAlMAkA(VR, GRole(t))
+        GcGlob_MassMatrix(:, t) = Glob_MassMatrix(VR, GRole(t))
+        GrAAkMAlALk(:, t) = AAkMAlALk(GRole(t), VC)
+        GrAAlMAkALk(:, t) = AAlMAkALk(GRole(t), VC)
+        GrAAlMLk(:, t) = AAlMLk(GRole(t), VC)
+        GrBra_MLk(:, t) = Bra%MLk(GRole(t), VC)
+        GrMAkALk(:, t) = MAkALk(GRole(t), VC)
+        GrMAlALk(:, t) = MAlALk(GRole(t), VC)
+        GtAAlM(:, t) = AAlM(GRole(t), VR)
       ENDDO
 
-      dktau1 = -AAlMAkALk-AAkMAlALk+AAlMLk+MAlALk
+      dkAAlMji = -GcAAlM(:, 2)*GrALk(:, 3)-GcinvAkl(:, 3)*GrMAlALk(:, 2)
+      dkAAlM1i = -GcAAlM(:, 2)*GrALk(:, 1)-GcinvAkl(:, 1)*GrMAlALk(:, 2)
+      dkAAlM11 = -GcAAlM(:, 1)*GrALk(:, 1)-GcinvAkl(:, 1)*GrMAlALk(:, 1)
+      dkAAlMi1 = -GcAAlM(:, 1)*GrALk(:, 2)-GcinvAkl(:, 2)*GrMAlALk(:, 1)
+      dkAAlMj1 = -GcAAlM(:, 1)*GrALk(:, 3)-GcinvAkl(:, 3)*GrMAlALk(:, 1)
+
+      dkAAkMij = -GcAAkM(:, 3)*GrALk(:, 2)-GcinvAkl(:, 2)*GrMAkALk(:, 3)+&
+          GcinvAkl(:, 2)*GrBra_MLk(:, 3)+GcGlob_MassMatrix(:, 3)*GrALk(:, 2)
+      dkAAkM1j = -GcAAkM(:, 3)*GrALk(:, 1)-GcinvAkl(:, 1)*GrMAkALk(:, 3)+&
+          GcinvAkl(:, 1)*GrBra_MLk(:, 3)+GcGlob_MassMatrix(:, 3)*GrALk(:, 1)
+      dkAAkM11 = -GcAAkM(:, 1)*GrALk(:, 1)-GcinvAkl(:, 1)*GrMAkALk(:, 1)+&
+          GcinvAkl(:, 1)*GrBra_MLk(:, 1)+GcGlob_MassMatrix(:, 1)*GrALk(:, 1)
+      dkAAkMi1 = -GcAAkM(:, 1)*GrALk(:, 2)-GcinvAkl(:, 2)*GrMAkALk(:, 1)+&
+          GcinvAkl(:, 2)*GrBra_MLk(:, 1)+GcGlob_MassMatrix(:, 1)*GrALk(:, 2)
+      dkAAkMj1 = -GcAAkM(:, 1)*GrALk(:, 3)-GcinvAkl(:, 3)*GrMAkALk(:, 1)+&
+          GcinvAkl(:, 3)*GrBra_MLk(:, 1)+GcGlob_MassMatrix(:, 1)*GrALk(:, 3)
+
+      dkXij = -GcinvAkl(:, 2)*GrAAlMAkALk(:, 3)-GcinvAkl(:, 3)*GrAAlMAkALk(:, 2)-&
+          GcAAkMAlA(:, 2)*GrALk(:, 3)-GcAAkMAlA(:, 3)*GrALk(:, 2)+&
+          GcinvAkl(:, 2)*GrAAlMLk(:, 3)+GcinvAkl(:, 3)*GrAAlMLk(:, 2)+&
+          GtAAlM(:, 2)*GrALk(:, 3)+GtAAlM(:, 3)*GrALk(:, 2)-&
+          GcAAlMAkA(:, 2)*GrALk(:, 3)-GcAAlMAkA(:, 3)*GrALk(:, 2)-&
+          GcinvAkl(:, 2)*GrAAkMAlALk(:, 3)-GcinvAkl(:, 3)*GrAAkMAlALk(:, 2)
+      dkX11 = -GcinvAkl(:, 1)*GrAAlMAkALk(:, 1)-GcinvAkl(:, 1)*GrAAlMAkALk(:, 1)-&
+          GcAAkMAlA(:, 1)*GrALk(:, 1)-GcAAkMAlA(:, 1)*GrALk(:, 1)+&
+          GcinvAkl(:, 1)*GrAAlMLk(:, 1)+GcinvAkl(:, 1)*GrAAlMLk(:, 1)+&
+          GtAAlM(:, 1)*GrALk(:, 1)+GtAAlM(:, 1)*GrALk(:, 1)-&
+          GcAAlMAkA(:, 1)*GrALk(:, 1)-GcAAlMAkA(:, 1)*GrALk(:, 1)-&
+          GcinvAkl(:, 1)*GrAAkMAlALk(:, 1)-GcinvAkl(:, 1)*GrAAkMAlALk(:, 1)
+      dkX1j = -GcinvAkl(:, 1)*GrAAlMAkALk(:, 3)-GcinvAkl(:, 3)*GrAAlMAkALk(:, 1)-&
+          GcAAkMAlA(:, 1)*GrALk(:, 3)-GcAAkMAlA(:, 3)*GrALk(:, 1)+&
+          GcinvAkl(:, 1)*GrAAlMLk(:, 3)+GcinvAkl(:, 3)*GrAAlMLk(:, 1)+&
+          GtAAlM(:, 1)*GrALk(:, 3)+GtAAlM(:, 3)*GrALk(:, 1)-&
+          GcAAlMAkA(:, 1)*GrALk(:, 3)-GcAAlMAkA(:, 3)*GrALk(:, 1)-&
+          GcinvAkl(:, 1)*GrAAkMAlALk(:, 3)-GcinvAkl(:, 3)*GrAAkMAlALk(:, 1)
+      dkX1i = -GcinvAkl(:, 2)*GrAAlMAkALk(:, 1)-GcinvAkl(:, 1)*GrAAlMAkALk(:, 2)-&
+          GcAAkMAlA(:, 2)*GrALk(:, 1)-GcAAkMAlA(:, 1)*GrALk(:, 2)+&
+          GcinvAkl(:, 2)*GrAAlMLk(:, 1)+GcinvAkl(:, 1)*GrAAlMLk(:, 2)+&
+          GtAAlM(:, 2)*GrALk(:, 1)+GtAAlM(:, 1)*GrALk(:, 2)-&
+          GcAAlMAkA(:, 2)*GrALk(:, 1)-GcAAlMAkA(:, 1)*GrALk(:, 2)-&
+          GcinvAkl(:, 2)*GrAAkMAlALk(:, 1)-GcinvAkl(:, 1)*GrAAkMAlALk(:, 2)
+
+      DO e = 1, nv
+        dktau1(e) = -AAlMAkALk(VR(e), VC(e))-AAkMAlALk(VR(e), VC(e))+AAlMLk(VR(e), VC(e))+MAlALk(VR(e), VC(e))
+      ENDDO
 
       ddTk = (-TWO/(THREE*A11*A11)*(ml*A1j*Glob_MassMatrix(1, parti)+mk*A1i*Glob_MassMatrix(1, partj))*dkA11+&
           TWO/(THREE*A11)*(ml*Glob_MassMatrix(1, parti)*dkA1j+mk*Glob_MassMatrix(1, partj)*dkA1i))
@@ -834,13 +1228,7 @@ CONTAINS
       ddTk = ddTk+(ddSk_over_Skl-(dkAij+mkpml/(THREE*A11)*&
           (dkA1i*A1j+A1i*dkA1j-A1i*A1j*dkA11/A11))/(Aij+mkpml/THREE*A1i*A1j/A11))*Tkl
 
-      indx = 0
-      DO j = 1, n
-        DO i = j, n
-          indx = indx+1
-          dTk(indx) = ddTk(i, j)
-        ENDDO
-      ENDDO
+      dTk = ddTk
 
     ENDIF
 
@@ -855,12 +1243,12 @@ CONTAINS
       DO k = 1, n
         DO j = 1, n
           DO i = 1, n
-            MAlALl(i, j) = MAlALl(i, j)+MAl(i, k)*ALl(k, j)
-            MAkALl(i, j) = MAkALl(i, j)+MAk(i, k)*ALl(k, j)
-            MLl(i, j) = MLl(i, j)+Glob_MassMatrix(i, k)*PLl(k, j)
+            MAlALl(i, j) = MAlALl(i, j)+Ket%MAl(i, k)*ALl(k, j)
+            MAkALl(i, j) = MAkALl(i, j)+Bra%MAk(i, k)*ALl(k, j)
+            MLl(i, j) = MLl(i, j)+Glob_MassMatrix(i, k)*Ket%PLl(k, j)
             AAlMAkALl(i, j) = AAlMAkALl(i, j)+AAlMAk(i, k)*ALl(k, j)
             AAkMAlALl(i, j) = AAkMAlALl(i, j)+AAkMAl(i, k)*ALl(k, j)
-            AAkMLl(i, j) = AAkMLl(i, j)+AAkM(i, k)*PLl(k, j)
+            AAkMLl(i, j) = AAkMLl(i, j)+AAkM(i, k)*Ket%PLl(k, j)
           ENDDO
         ENDDO
       ENDDO
@@ -1050,9 +1438,16 @@ CONTAINS
     ! From 6 pseudoparticles on, in double precision (PairedPowerSums),
     ! CoulombPowerSums forms the same sums for all pairs together (n and
     ! wp are constants: only one branch is compiled).
+    ! The products of the bracket that are the same for all pairs, once:
+    ! PwA(i) = (2i+3) Aij, PwH(i) = 2(m-i) hoa (used by the gradients too)
+    DO i = 1, m
+      PwA(i) = (TWO*i+THREE)*invAkl(parti, partj)
+      PwH(i) = TWO*(m-i)*hoa
+    ENDDO
+
     IF ((n >= 6) .AND. PairedPowerSums) THEN
 
-      CALL CoulombPowerSums(m, coab, fob, invAkl(parti, partj), hoa, R)
+      CALL CoulombPowerSums(m, coab, fob, PwA, PwH, R)
 
     ELSE
 
@@ -1063,8 +1458,7 @@ CONTAINS
           g3 = ZERO
           DO i = 1, m
             g2 = g2*g1
-            g3 = g3+Glob_gm3(i)*g2*((TWO*i+THREE)*invAkl(parti, partj)-&
-                (TWO*i+ONE)*fob(k, j)+TWO*(m-i)*hoa)
+            g3 = g3+Glob_gm3(i)*g2*(PwA(i)-(TWO*i+ONE)*fob(k, j)+PwH(i))
           ENDDO
           R(k, j) = g3
         ENDDO
@@ -1105,6 +1499,12 @@ CONTAINS
       ! dhoa is independent of i and j
       dkhoa = hoa*(dkA1i/A1i+dkA1j/A1j-dkA11/A11)
 
+      ! the vectors of the bracket that are the same for all pairs, once
+      DO k = 1, m-1
+        DkA(:, k) = (TWO*k+THREE)*dkAij
+        DkH(:, k) = TWO*(m-k)*dkhoa
+      ENDDO
+
       ! diagonal 1/rij terms
       ddVk = ZERO
 
@@ -1115,28 +1515,27 @@ CONTAINS
       ddVk = ddVk+dRk*Glob_ChargeMatrix(1, 1)
       ! p=q != 1
       DO p = 2, n
-        dkfob = fob(p, p)*(dkA(parti, p, :, :)/invAkl(parti, p)+dkA(partj, p, :, :)/&
-            invAkl(partj, p)-dkA(p, p, :, :)/invAkl(p, p))
-        dkb = dkA(p, p, :, :)
+        dkfob = fob(p, p)*(dkAv(:, parti, p)/invAkl(parti, p)+dkAv(:, partj, p)/&
+            invAkl(partj, p)-dkAv(:, p, p)/invAkl(p, p))
+        dkb = dkAv(:, p, p)
         dkcoab = (invAkl(1, p)*invAkl(1, p)/invAkl(1, 1)/invAkl(p, p))*&
-            (dkA(1, 1, :, :)/invAkl(1, 1)+dkA(p, p, :, :)/invAkl(p, p)-&
-            TWO*dkA(1, p, :, :)/invAkl(1, p))
+            (dkAv(:, 1, 1)/invAkl(1, 1)+dkAv(:, p, p)/invAkl(p, p)-&
+            TWO*dkAv(:, 1, p)/invAkl(1, p))
 
         q = p
         g2 = ONE
-        g5 = ZERO
+        g5k = ZERO
         DO k = 1, (m-1)
           g2 = g2*coab(p, q)
-          g5 = g5+g2*Glob_gm3(k)*(k/coab(p, q)*((TWO*k+THREE)*Aij-(TWO*k+ONE)*fob(p, q)+&
-              TWO*(m-k)*hoa)*dkcoab+(TWO*k+THREE)*dkAij-(TWO*k+ONE)*dkfob+TWO*&
-              (m-k)*dkhoa)
+          g5k = g5k+g2*Glob_gm3(k)*(k/coab(p, q)*(PwA(k)-(TWO*k+ONE)*fob(p, q)+PwH(k))*dkcoab+&
+              DkA(:, k)-(TWO*k+ONE)*dkfob+DkH(:, k))
         ENDDO
         dRk = R(p, q)*(ddSk_over_Skl-dkb/(TWO*b(p, q))-&
             (THREE*dkAij+TWO*m*dkhoa)/(THREE*Aij+TWO*m*hoa))+&
             Skl/(SQRT(b(p, q))*(THREE*Aij+TWO*m*hoa))*Glob_gm2(m)*(THREE*dkAij-&
             dkfob+TWO*m*dkhoa+Glob_gm3(m)*g2*coab(p, q)*(m/coab(p, q)*((TWO*&
             m+THREE)*Aij-(TWO*m+ONE)*fob(p, q))*dkcoab+(TWO*m+THREE)*&
-            dkAij-(TWO*m+ONE)*dkfob)+g5)
+            dkAij-(TWO*m+ONE)*dkfob)+g5k)
         ddVk = ddVk+dRk*Glob_ChargeMatrix(p, p)
       ENDDO
 
@@ -1144,46 +1543,39 @@ CONTAINS
       DO q = 1, n-1
         DO p = q+1, n
 
-          dkb = dkA(p, p, :, :)+dkA(q, q, :, :)-TWO*dkA(p, q, :, :)
+          dkb = dkAv(:, p, p)+dkAv(:, q, q)-TWO*dkAv(:, p, q)
 
           ! product forms: finite also where a factor of fob or coab is zero (for example k = l with a
           ! symmetry term that swaps p and q, invAkl(1,p) = invAkl(1,q))
-          dkfob = ((dkA(parti, p, :, :)-dkA(parti, q, :, :))*(invAkl(partj, p)-invAkl(partj, q))+&
-              (invAkl(parti, p)-invAkl(parti, q))*(dkA(partj, p, :, :)-dkA(partj, q, :, :))-&
+          dkfob = ((dkAv(:, parti, p)-dkAv(:, parti, q))*(invAkl(partj, p)-invAkl(partj, q))+&
+              (invAkl(parti, p)-invAkl(parti, q))*(dkAv(:, partj, p)-dkAv(:, partj, q))-&
               fob(p, q)*dkb)/b(p, q)
 
           dkcoab = ((invAkl(1, p)-invAkl(1, q))*(invAkl(1, p)-invAkl(1, q))*&
-              (dkA(1, 1, :, :)/invAkl(1, 1)+dkb/b(p, q))-&
-              TWO*(invAkl(1, p)-invAkl(1, q))*(dkA(1, p, :, :)-dkA(1, q, :, :)))/&
+              (dkAv(:, 1, 1)/invAkl(1, 1)+dkb/b(p, q))-&
+              TWO*(invAkl(1, p)-invAkl(1, q))*(dkAv(:, 1, p)-dkAv(:, 1, q)))/&
               (invAkl(1, 1)*b(p, q))
 
           g2 = ONE
-          g5 = ZERO
+          g5k = ZERO
           DO k = 1, (m-1)
             g2 = g2*coab(p, q)
-            g5 = g5+g2*Glob_gm3(k)*(k/coab(p, q)*((TWO*k+THREE)*Aij-(TWO*k+ONE)*fob(p, q)+&
-                TWO*(m-k)*hoa)*dkcoab+(TWO*k+THREE)*dkAij-(TWO*k+ONE)*dkfob+TWO*&
-                (m-k)*dkhoa)
+            g5k = g5k+g2*Glob_gm3(k)*(k/coab(p, q)*(PwA(k)-(TWO*k+ONE)*fob(p, q)+PwH(k))*dkcoab+&
+                DkA(:, k)-(TWO*k+ONE)*dkfob+DkH(:, k))
           ENDDO
           dRk = R(p, q)*(ddSk_over_Skl-dkb/(TWO*b(p, q))-&
               (THREE*dkAij+TWO*m*dkhoa)/(THREE*Aij+TWO*m*hoa))+&
               Skl/(SQRT(b(p, q))*(THREE*Aij+TWO*m*hoa))*Glob_gm2(m)*(THREE*dkAij-&
               dkfob+TWO*m*dkhoa+Glob_gm3(m)*g2*coab(p, q)*(m/coab(p, q)*((TWO*&
               m+THREE)*Aij-(TWO*m+ONE)*fob(p, q))*dkcoab+(TWO*m+THREE)*&
-              dkAij-(TWO*m+ONE)*dkfob)+g5)
+              dkAij-(TWO*m+ONE)*dkfob)+g5k)
           ddVk = ddVk+dRk*Glob_ChargeMatrix(p, q)
 
         ENDDO
       ENDDO
 
       ! Load it into dVk (a vector)
-      indx = 0
-      DO j = 1, n
-        DO i = j, n
-          indx = indx+1
-          dVk(indx) = ddVk(i, j)
-        ENDDO
-      ENDDO
+      dVk = ddVk
 
     ENDIF
 
@@ -1195,6 +1587,12 @@ CONTAINS
 
       ! dhoa is independent of i and j
       dlhoa = hoa*(dlA1i/A1i+dlA1j/A1j-dlA11/A11)
+
+      ! the matrices of the bracket that are the same for all pairs, once
+      DO k = 1, m-1
+        DlAm(:, :, k) = (TWO*k+THREE)*dlAij
+        DlHm(:, :, k) = TWO*(m-k)*dlhoa
+      ENDDO
 
       ! diagonal 1/rij terms
       ddVl = ZERO
@@ -1219,9 +1617,8 @@ CONTAINS
         g5 = ZERO
         DO k = 1, (m-1)
           g2 = g2*coab(p, q)
-          g5 = g5+g2*Glob_gm3(k)*(k/coab(p, q)*((TWO*k+THREE)*Aij-(TWO*k+ONE)*fob(p, q)+&
-              TWO*(m-k)*hoa)*dlcoab+(TWO*k+THREE)*dlAij-(TWO*k+ONE)*dlfob+TWO*&
-              (m-k)*dlhoa)
+          g5 = g5+g2*Glob_gm3(k)*(k/coab(p, q)*(PwA(k)-(TWO*k+ONE)*fob(p, q)+PwH(k))*dlcoab+&
+              DlAm(:, :, k)-(TWO*k+ONE)*dlfob+DlHm(:, :, k))
         ENDDO
         dRl = R(p, q)*(Templ-dlb/(TWO*b(p, q))-&
             (THREE*dlAij+TWO*m*dlhoa)/(THREE*Aij+TWO*m*hoa))+&
@@ -1253,9 +1650,8 @@ CONTAINS
           g5 = ZERO
           DO k = 1, (m-1)
             g2 = g2*coab(p, q)
-            g5 = g5+g2*Glob_gm3(k)*(k/coab(p, q)*((TWO*k+THREE)*Aij-(TWO*k+ONE)*fob(p, q)+&
-                TWO*(m-k)*hoa)*dlcoab+(TWO*k+THREE)*dlAij-(TWO*k+ONE)*dlfob+TWO*&
-                (m-k)*dlhoa)
+            g5 = g5+g2*Glob_gm3(k)*(k/coab(p, q)*(PwA(k)-(TWO*k+ONE)*fob(p, q)+PwH(k))*dlcoab+&
+                DlAm(:, :, k)-(TWO*k+ONE)*dlfob+DlHm(:, :, k))
           ENDDO
           dRl = R(p, q)*(Templ-dlb/(TWO*b(p, q))-&
               (THREE*dlAij+TWO*m*dlhoa)/(THREE*Aij+TWO*m*hoa))+&
@@ -1312,7 +1708,7 @@ CONTAINS
 
 
 
-  SUBROUTINE CoulombPowerSums(m, coab, fob, Aij, hoa, R)
+  SUBROUTINE CoulombPowerSums(m, coab, fob, PwA, PwH, R)
     ! The power sums of the Coulomb integrals of MatrixElementsXi for all
     ! pairs (k, j) of eq. (34), 2 <= k <= n, j <= k:
     !   R(k, j) = sum_{i=1}^{m} gm3(i) coab(k,j)^i ((2i+3) Aij
@@ -1321,15 +1717,12 @@ CONTAINS
     ! so they are advanced together, one element of the Pair* vectors per
     ! pair: every element gets exactly the operations of the sum done alone
     ! in MatrixElementsXi, but the chains no longer wait for each other.
-    ! Aij and hoa are copied into every element, so that the products with
-    ! them stay inside the expression as in the sum done alone. With fewer
-    ! pseudoparticles the compiler sees through the copies, or compiles
-    ! MatrixElementsXi differently, so there the sums stay in the kernel.
+    ! The products (2i+3) Aij and 2(m-i) hoa, the same for all pairs, come
+    ! formed in PwA, PwH.
     ! Input:
     !   m               :: (mk+ml)/2
     !   coab, fob       :: as in MatrixElementsXi
-    !   Aij             :: invAkl(parti, partj)
-    !   hoa             :: as in MatrixElementsXi
+    !   PwA, PwH        :: (2i+3) invAkl(parti, partj) and 2(m-i) hoa, i = 1..m
     ! Input/Output:
     !   R               :: R(k, j), k >= 2, set to the power sums
     !================================================================
@@ -1340,7 +1733,8 @@ CONTAINS
     INTEGER, PARAMETER :: NumPairs = n*(n+1)/2-1  ! the pairs (k, j), 2 <= k <= n, j <= k
 
     INTEGER, INTENT(IN) :: m
-    REAL(wp), INTENT(IN) :: coab(n, n), fob(n, n), Aij, hoa
+    REAL(wp), INTENT(IN) :: coab(n, n), fob(n, n)
+    REAL(wp), INTENT(IN) :: PwA(Glob_MaxPowerPossible), PwH(Glob_MaxPowerPossible)  ! (2i+3) Aij, 2(m-i) hoa
     REAL(wp), INTENT(INOUT) :: R(n, n)
 
     ! Local variables
@@ -1349,8 +1743,6 @@ CONTAINS
     REAL(wp) :: PairG2(NumPairs)   ! coab**i of each pair
     REAL(wp) :: PairG3(NumPairs)   ! power sum of each pair
     REAL(wp) :: PairFob(NumPairs)  ! fob of each pair
-    REAL(wp) :: PairAij(NumPairs)  ! Aij, the same for all pairs
-    REAL(wp) :: PairHoa(NumPairs)  ! hoa, the same for all pairs
 
 
     t = 0
@@ -1359,8 +1751,6 @@ CONTAINS
         t = t+1
         PairG1(t) = coab(k, j)
         PairFob(t) = fob(k, j)
-        PairAij(t) = Aij
-        PairHoa(t) = hoa
         PairG2(t) = ONE
         PairG3(t) = ZERO
       ENDDO
@@ -1369,8 +1759,7 @@ CONTAINS
     DO i = 1, m
       DO t = 1, NumPairs
         PairG2(t) = PairG2(t)*PairG1(t)
-        PairG3(t) = PairG3(t)+Glob_gm3(i)*PairG2(t)*((TWO*i+THREE)*PairAij(t)-&
-            (TWO*i+ONE)*PairFob(t)+TWO*(m-i)*PairHoa(t))
+        PairG3(t) = PairG3(t)+Glob_gm3(i)*PairG2(t)*(PwA(i)-(TWO*i+ONE)*PairFob(t)+PwH(i))
       ENDDO
     ENDDO
 
@@ -1454,13 +1843,14 @@ CONTAINS
     Gn = coab*Aij-A1i*A1j/a-di*dj/beta+c*(A1i*dj+di*A1j)/(a*beta)
 
     ! Q0 and Q1 = dQ0/dcoab; w = coab^(t-1) at the top of the loop
+    IF (.NOT. GramTablesDone) CALL GramTablesInit()
     w = ONE
     Q0 = ONE
     Q1 = ZERO
     DO t = 1, m-1
-      Q1 = Q1+(TWO*t+ONE)*Glob_gm3(t)*t*w
+      Q1 = Q1+GramW3t(t)*w
       w = w*coab
-      Q0 = Q0+(TWO*t+ONE)*Glob_gm3(t)*w
+      Q0 = Q0+GramW3(t)*w
     ENDDO
 
   END SUBROUTINE GramTermPair
@@ -1540,59 +1930,43 @@ CONTAINS
 
 
 
-  SUBROUTINE CoulombCorrSetup(vechLk, vechLl, SymMatrix, Lk, PLl, invAkl)
-    ! Lk, PLl = SymMatrix'*Ll and invAkl = inv(Lk*Lk' + PLl*PLl') as in
-    ! MatrixElementsXi (Cholesky factor of Akl), for the corrections
-    ! GramTermCorr and PowerZeroGradCorr, which recompute them so that
-    ! MatrixElementsXi stays as it was.
+  SUBROUTINE CoulombCorrSetup(Lk, PLl, invAkl)
+    ! invAkl = inv(Lk*Lk' + PLl*PLl') (through the Cholesky factor of Akl)
+    ! for the corrections GramTermCorr and PowerZeroGradCorr. Akl is summed
+    ! here in one statement per term, not as Ak + Al as in MatrixElementsXi,
+    ! so its last bits may differ from those of the kernel; the corrections
+    ! have always used this invAkl.
     ! Input:
-    !   vechLk, vechLl  :: n(n+1)/2 exponent parameters
-    !   SymMatrix       :: the symmetry permutation matrix
+    !   Lk, PLl         :: Lk and PLl = SymMatrix'*Ll (BraSetup, KetSetup)
     ! Output:
-    !   Lk, PLl, invAkl
+    !   invAkl
     !================================================================
     IMPLICIT NONE
 
     ! Parameters
     INTEGER, PARAMETER :: n = Glob_n  ! number of pseudoparticles
 
-    REAL(wp), INTENT(IN) :: vechLk(Glob_npt), vechLl(Glob_npt)
-    REAL(wp), INTENT(IN) :: SymMatrix(n, n)
-    REAL(wp), INTENT(OUT) :: Lk(n, n), PLl(n, n), invAkl(n, n)
+    REAL(wp), INTENT(IN) :: Lk(n, n), PLl(n, n)  ! Lk and SymMatrix'*Ll (BraSetup, KetSetup)
+    REAL(wp), INTENT(OUT) :: invAkl(n, n)
 
     ! Local variables
-    INTEGER :: i, j, k, indx
+    INTEGER :: i, j, k
     REAL(wp) :: SUM0
-    REAL(wp) :: Ll(n, n), invL(n, n)
+    REAL(wp) :: invL(n, n)
 
-
-    Lk = ZERO
-    Ll = ZERO
-    indx = 0
-    DO j = 1, n
-      DO i = j, n
-        indx = indx+1
-        Lk(i, j) = vechLk(indx)
-        Ll(i, j) = vechLl(indx)
-      ENDDO
-    ENDDO
-
-    PLl = ZERO
-    DO j = 1, n
-      DO k = j, n
-        DO i = 1, n
-          PLl(i, j) = PLl(i, j)+SymMatrix(k, i)*Ll(k, j)
-        ENDDO
-      ENDDO
-    ENDDO
 
     ! Akl in invL, then its Cholesky factor
+    ! (symmetric: the lower triangle, then mirrored - element (i,j) is the
+    ! sum of the products of element (j,i), in the same order)
     invL = ZERO
     DO j = 1, n
       DO k = 1, n
-        DO i = 1, n
+        DO i = j, n
           invL(i, j) = invL(i, j)+Lk(i, k)*Lk(j, k)+PLl(i, k)*PLl(j, k)
         ENDDO
+      ENDDO
+      DO i = 1, j-1
+        invL(i, j) = invL(j, i)
       ENDDO
     ENDDO
 
@@ -1625,9 +1999,12 @@ CONTAINS
     invAkl = ZERO
     DO j = 1, n
       DO k = 1, n
-        DO i = 1, n
+        DO i = j, n
           invAkl(i, j) = invAkl(i, j)+invL(k, i)*invL(k, j)
         ENDDO
+      ENDDO
+      DO i = 1, j-1
+        invAkl(i, j) = invAkl(j, i)
       ENDDO
     ENDDO
 
@@ -1637,7 +2014,7 @@ CONTAINS
 
 
 
-  SUBROUTINE CoulombCorrDerivs(invAkl, Lx, dA)
+  SUBROUTINE CoulombCorrDerivs(invAkl, Lx, side, dAv, ne)
     ! dA(p, q, :, :) = d invAkl(p, q)/d Lx for Lx = Lk or PLl, as dkA and
     ! dlA of MatrixElementsXi: with ALx = invAkl*Lx,
     !   dA(p, q, a, b) = -invAkl(a, q)*ALx(p, b) - invAkl(a, p)*ALx(q, b).
@@ -1653,10 +2030,14 @@ CONTAINS
     INTEGER, PARAMETER :: n = Glob_n  ! number of pseudoparticles
 
     REAL(wp), INTENT(IN) :: invAkl(n, n), Lx(n, n)
-    REAL(wp), INTENT(OUT) :: dA(n, n, n, n)
+    INTEGER, INTENT(IN) :: side
+    REAL(wp), INTENT(OUT) :: dAv(n*n, n, n)
+    INTEGER, INTENT(OUT) :: ne
 
     ! Local variables
-    INTEGER :: i, j, k, p, q
+    INTEGER :: i, j, k, p, q, e
+    INTEGER :: ER(n*n), EC(n*n)  ! row and column of element e
+    REAL(wp) :: IVe(n*n, n), ALe(n*n, n)  ! invAkl(ER(e), q), ALx(q, EC(e))
     REAL(wp) :: ALx(n, n)
 
 
@@ -1669,11 +2050,32 @@ CONTAINS
       ENDDO
     ENDDO
 
-    DO p = 1, n
-      DO q = 1, n
-        DO j = 1, n
-          dA(p, q, 1:n, j) = -invAkl(1:n, q)*ALx(p, j)-invAkl(1:n, p)*ALx(q, j)
-        ENDDO
+    ! the elements: side 1 the lower triangle in vech order, side 2 all, column by column
+    ne = 0
+    DO j = 1, n
+      DO i = 1, n
+        IF ((side == 2) .OR. (i >= j)) THEN
+          ne = ne+1
+          ER(ne) = i
+          EC(ne) = j
+        ENDIF
+      ENDDO
+    ENDDO
+
+    ! the columns of invAkl and rows of ALx at the elements, gathered once; dAv for p >= q,
+    ! the rest mirrored (element (p,q) is -(x)-(y), element (q,p) -(y)-(x): the same value)
+    DO q = 1, n
+      DO e = 1, ne
+        IVe(e, q) = invAkl(ER(e), q)
+        ALe(e, q) = ALx(q, EC(e))
+      ENDDO
+    ENDDO
+    DO q = 1, n
+      DO p = q, n
+        dAv(1:ne, p, q) = -IVe(1:ne, q)*ALe(1:ne, p)-IVe(1:ne, p)*ALe(1:ne, q)
+      ENDDO
+      DO p = 1, q-1
+        dAv(1:ne, p, q) = dAv(1:ne, q, p)
       ENDDO
     ENDDO
 
@@ -1683,7 +2085,7 @@ CONTAINS
 
 
 
-  SUBROUTINE GramTermCorr(mk, ik, vechLk, ml, jl, vechLl, SymMatrix, &
+  SUBROUTINE GramTermCorr(mk, ik, Bra, ml, jl, Ket, SymMatrix, &
                           Skl, Hkl, dSk, dSl, dHk, dHl, gradflag)
     ! Adds to the output of MatrixElementsXi (one ket term x_jl) the
     ! Gram-determinant term of its Coulomb integrals (see GramTermPair):
@@ -1706,9 +2108,9 @@ CONTAINS
     ! exactly as they were; this routine is called only when the term can
     ! be present (mk+ml > 0, ik /= 1, jl /= 1, n > 2).
     ! Input:
-    !   mk, ik, vechLk  :: the bra
-    !   ml, jl, vechLl  :: the ket term (power, x-index in the transformed
-    !                      ket, exponent parameters)
+    !   mk, ik, Bra     :: the bra (Bra: BraSetup)
+    !   ml, jl, Ket     :: the ket term (power, x-index in the transformed
+    !                      ket, KetSetup of its exponent parameters)
     !   SymMatrix       :: the symmetry permutation matrix
     !   Skl, dSk, dSl   :: overlap and its gradients from MatrixElementsXi
     !   gradflag        :: as in MatrixElementsXi
@@ -1721,26 +2123,27 @@ CONTAINS
     INTEGER, PARAMETER :: n = Glob_n  ! number of pseudoparticles
 
     INTEGER, INTENT(IN) :: mk, ik, ml, jl, gradflag
-    REAL(wp), INTENT(IN) :: vechLk(Glob_npt), vechLl(Glob_npt)
+    TYPE(BraPart), INTENT(IN) :: Bra  ! the bra part of the setup (BraSetup)
+    TYPE(KetPart), INTENT(IN) :: Ket  ! the ket term part of the setup (KetSetup)
     REAL(wp), INTENT(IN) :: SymMatrix(n, n)
     REAL(wp), INTENT(IN) :: Skl, dSk(Glob_npt), dSl(Glob_npt)
     REAL(wp), INTENT(INOUT) :: Hkl, dHk(Glob_npt), dHl(Glob_npt)
 
     ! Local variables
-    INTEGER :: i, j, k, p, q, m, side, parti, partj, indx
+    INTEGER :: i, j, k, p, q, m, side, parti, partj, indx, ne
     LOGICAL :: IsOn
     REAL(wp) :: Gn, Q0, Q1, Cpq, chpq, g4den
     REAL(wp) :: a, Aij, A1i, A1j, beta, c, di, dj, kappa
-    REAL(wp) :: Lk(n, n), PLl(n, n), invAkl(n, n), dA(n, n, n, n)
-    REAL(wp) :: dbeta(n, n), dc(n, n), ddi(n, n), ddj(n, n), dhoa(n, n)
-    REAL(wp) :: dG(n, n), dGn(n, n), dcoab(n, n), dCpq(n, n), dCsum(n, n), dCl(n, n)
+    REAL(wp) :: invAkl(n, n), dAv(n*n, n, n)
+    REAL(wp) :: dbeta(n*n), dc(n*n), ddi(n*n), ddj(n*n), dhoa(n*n)
+    REAL(wp) :: dG(n*n), dGn(n*n), dcoab(n*n), dCpq(n*n), dCsum(n*n), dCl(n, n)
 
 
     m = (mk+ml)/2
     parti = ik
     partj = jl
 
-    CALL CoulombCorrSetup(vechLk, vechLl, SymMatrix, Lk, PLl, invAkl)
+    CALL CoulombCorrSetup(Bra%Lk, Ket%PLl, invAkl)
 
     a = invAkl(1, 1)
     Aij = invAkl(parti, partj)
@@ -1768,16 +2171,16 @@ CONTAINS
     DO side = 1, MIN(gradflag, 2)
 
       IF (side == 1) THEN
-        CALL CoulombCorrDerivs(invAkl, Lk, dA)
+        CALL CoulombCorrDerivs(invAkl, Bra%Lk, 1, dAv, ne)
       ELSE
-        CALL CoulombCorrDerivs(invAkl, PLl, dA)
+        CALL CoulombCorrDerivs(invAkl, Ket%PLl, 2, dAv, ne)
       ENDIF
 
-      dhoa = (dA(1, parti, :, :)*A1j+A1i*dA(1, partj, :, :))/a-A1i*A1j*dA(1, 1, :, :)/(a*a)
+      dhoa(1:ne) = (dAv(1:ne, 1, parti)*A1j+A1i*dAv(1:ne, 1, partj))/a-A1i*A1j*dAv(1:ne, 1, 1)/(a*a)
 
       ! sum over the pairs of charge*Skl*dCpq in dCsum and of charge*Cpq in
       ! chpq (its product with dS is added to the vector below)
-      dCsum = ZERO
+      dCsum(1:ne) = ZERO
       chpq = ZERO
       DO p = 2, n
         DO q = 1, p
@@ -1789,37 +2192,37 @@ CONTAINS
             c = invAkl(1, p)
             di = invAkl(parti, p)
             dj = invAkl(partj, p)
-            dbeta = dA(p, p, :, :)
-            dc = dA(1, p, :, :)
-            ddi = dA(parti, p, :, :)
-            ddj = dA(partj, p, :, :)
+            dbeta(1:ne) = dAv(1:ne, p, p)
+            dc(1:ne) = dAv(1:ne, 1, p)
+            ddi(1:ne) = dAv(1:ne, parti, p)
+            ddj(1:ne) = dAv(1:ne, partj, p)
           ELSE
             beta = invAkl(p, p)+invAkl(q, q)-TWO*invAkl(p, q)
             c = invAkl(1, p)-invAkl(1, q)
             di = invAkl(parti, p)-invAkl(parti, q)
             dj = invAkl(partj, p)-invAkl(partj, q)
-            dbeta = dA(p, p, :, :)+dA(q, q, :, :)-TWO*dA(p, q, :, :)
-            dc = dA(1, p, :, :)-dA(1, q, :, :)
-            ddi = dA(parti, p, :, :)-dA(parti, q, :, :)
-            ddj = dA(partj, p, :, :)-dA(partj, q, :, :)
+            dbeta(1:ne) = dAv(1:ne, p, p)+dAv(1:ne, q, q)-TWO*dAv(1:ne, p, q)
+            dc(1:ne) = dAv(1:ne, 1, p)-dAv(1:ne, 1, q)
+            ddi(1:ne) = dAv(1:ne, parti, p)-dAv(1:ne, parti, q)
+            ddj(1:ne) = dAv(1:ne, partj, p)-dAv(1:ne, partj, q)
           ENDIF
 
           kappa = c*c/(a*beta)
           Cpq = -Gn*Q0*Glob_gm2(m)/(g4den*SQRT(beta))
 
-          dG = (beta*Aij-di*dj)*dA(1, 1, :, :)+(a*Aij-A1i*A1j)*dbeta+&
-              (a*beta-c*c)*dA(parti, partj, :, :)+(A1i*dj+di*A1j-TWO*c*Aij)*dc+&
-              (c*A1j-a*dj)*ddi+(c*A1i-a*di)*ddj+&
-              (c*dj-beta*A1j)*dA(1, parti, :, :)+(c*di-beta*A1i)*dA(1, partj, :, :)
+          dG(1:ne) = (beta*Aij-di*dj)*dAv(1:ne, 1, 1)+(a*Aij-A1i*A1j)*dbeta(1:ne)+&
+              (a*beta-c*c)*dAv(1:ne, parti, partj)+(A1i*dj+di*A1j-TWO*c*Aij)*dc(1:ne)+&
+              (c*A1j-a*dj)*ddi(1:ne)+(c*A1i-a*di)*ddj(1:ne)+&
+              (c*dj-beta*A1j)*dAv(1:ne, 1, parti)+(c*di-beta*A1i)*dAv(1:ne, 1, partj)
 
-          dGn = dG/(a*beta)-Gn*(dA(1, 1, :, :)/a+dbeta/beta)
+          dGn(1:ne) = dG(1:ne)/(a*beta)-Gn*(dAv(1:ne, 1, 1)/a+dbeta(1:ne)/beta)
 
-          dcoab = -TWO*c*dc/(a*beta)+kappa*(dA(1, 1, :, :)/a+dbeta/beta)
+          dcoab(1:ne) = -TWO*c*dc(1:ne)/(a*beta)+kappa*(dAv(1:ne, 1, 1)/a+dbeta(1:ne)/beta)
 
-          dCpq = Cpq*(-(THREE*dA(parti, partj, :, :)+TWO*m*dhoa)/g4den-dbeta/(TWO*beta))+&
-              Glob_gm2(m)/(g4den*SQRT(beta))*(-(dGn*Q0+Gn*Q1*dcoab))
+          dCpq(1:ne) = Cpq*(-(THREE*dAv(1:ne, parti, partj)+TWO*m*dhoa(1:ne))/g4den-dbeta(1:ne)/(TWO*beta))+&
+              Glob_gm2(m)/(g4den*SQRT(beta))*(-(dGn(1:ne)*Q0+Gn*Q1*dcoab(1:ne)))
 
-          dCsum = dCsum+Glob_ChargeMatrix(p, q)*Skl*dCpq
+          dCsum(1:ne) = dCsum(1:ne)+Glob_ChargeMatrix(p, q)*Skl*dCpq(1:ne)
           chpq = chpq+Glob_ChargeMatrix(p, q)*Cpq
         ENDDO
       ENDDO
@@ -1834,7 +2237,7 @@ CONTAINS
 
 
 
-  SUBROUTINE GramTermCorrPairs(mk, ik, vechLk, ml, jl, vechLl, SymMatrix, &
+  SUBROUTINE GramTermCorrPairs(mk, ik, Bra, ml, jl, Ket, SymMatrix, &
                                Skl, Hkl, dSk, dSl, dHk, dHl, gradflag)
     ! GramTermCorr for 5 or more pseudoparticles: the same operations, but
     ! the power sums Q0, Q1 of all pairs with the term are formed together
@@ -1863,9 +2266,9 @@ CONTAINS
     ! exactly as they were; this routine is called only when the term can
     ! be present (mk+ml > 0, ik /= 1, jl /= 1, n > 2).
     ! Input:
-    !   mk, ik, vechLk  :: the bra
-    !   ml, jl, vechLl  :: the ket term (power, x-index in the transformed
-    !                      ket, exponent parameters)
+    !   mk, ik, Bra     :: the bra (Bra: BraSetup)
+    !   ml, jl, Ket     :: the ket term (power, x-index in the transformed
+    !                      ket, KetSetup of its exponent parameters)
     !   SymMatrix       :: the symmetry permutation matrix
     !   Skl, dSk, dSl   :: overlap and its gradients from MatrixElementsXi
     !   gradflag        :: as in MatrixElementsXi
@@ -1878,7 +2281,8 @@ CONTAINS
     INTEGER, PARAMETER :: n = Glob_n  ! number of pseudoparticles
 
     INTEGER, INTENT(IN) :: mk, ik, ml, jl, gradflag
-    REAL(wp), INTENT(IN) :: vechLk(Glob_npt), vechLl(Glob_npt)
+    TYPE(BraPart), INTENT(IN) :: Bra  ! the bra part of the setup (BraSetup)
+    TYPE(KetPart), INTENT(IN) :: Ket  ! the ket term part of the setup (KetSetup)
     REAL(wp), INTENT(IN) :: SymMatrix(n, n)
     REAL(wp), INTENT(IN) :: Skl, dSk(Glob_npt), dSl(Glob_npt)
     REAL(wp), INTENT(INOUT) :: Hkl, dHk(Glob_npt), dHl(Glob_npt)
@@ -1887,13 +2291,13 @@ CONTAINS
     INTEGER, PARAMETER :: NumPairs = n*(n+1)/2-1  ! the pairs (p, q), 2 <= p <= n, q <= p
 
     ! Local variables
-    INTEGER :: i, j, k, p, q, m, side, parti, partj, indx, t, NumOn
+    INTEGER :: i, j, k, p, q, m, side, parti, partj, indx, t, NumOn, ne
     LOGICAL :: IsOn
     REAL(wp) :: Gn, Q0, Q1, Cpq, chpq, g4den, coab
     REAL(wp) :: a, Aij, A1i, A1j, beta, c, di, dj, kappa
-    REAL(wp) :: Lk(n, n), PLl(n, n), invAkl(n, n), dA(n, n, n, n)
-    REAL(wp) :: dbeta(n, n), dc(n, n), ddi(n, n), ddj(n, n), dhoa(n, n)
-    REAL(wp) :: dG(n, n), dGn(n, n), dcoab(n, n), dCpq(n, n), dCsum(n, n), dCl(n, n)
+    REAL(wp) :: invAkl(n, n), dAv(n*n, n, n)
+    REAL(wp) :: dbeta(n*n), dc(n*n), ddi(n*n), ddj(n*n), dhoa(n*n)
+    REAL(wp) :: dG(n*n), dGn(n*n), dcoab(n*n), dCpq(n*n), dCsum(n*n), dCl(n, n)
     INTEGER :: OnP(NumPairs)      ! p of each pair with the term
     INTEGER :: OnQ(NumPairs)      ! q of each pair with the term
     REAL(wp) :: OnGn(NumPairs)    ! Gn of each pair with the term
@@ -1907,7 +2311,7 @@ CONTAINS
     parti = ik
     partj = jl
 
-    CALL CoulombCorrSetup(vechLk, vechLl, SymMatrix, Lk, PLl, invAkl)
+    CALL CoulombCorrSetup(Bra%Lk, Ket%PLl, invAkl)
 
     a = invAkl(1, 1)
     Aij = invAkl(parti, partj)
@@ -1932,6 +2336,7 @@ CONTAINS
     ! The power sums Q0 and, for the gradients, Q1 of these pairs, advanced
     ! together (each element gets the operations of a sum done alone);
     ! OnW = coab^(t-1) at the top of the loop
+    IF (.NOT. GramTablesDone) CALL GramTablesInit()
     OnW(1:NumOn) = ONE
     OnQ0(1:NumOn) = ONE
     OnQ1(1:NumOn) = ZERO
@@ -1939,15 +2344,15 @@ CONTAINS
       DO t = 1, m-1
         DO i = 1, NumOn
           OnW(i) = OnW(i)*OnCoab(i)
-          OnQ0(i) = OnQ0(i)+(TWO*t+ONE)*Glob_gm3(t)*OnW(i)
+          OnQ0(i) = OnQ0(i)+GramW3(t)*OnW(i)
         ENDDO
       ENDDO
     ELSE
       DO t = 1, m-1
         DO i = 1, NumOn
-          OnQ1(i) = OnQ1(i)+(TWO*t+ONE)*Glob_gm3(t)*t*OnW(i)
+          OnQ1(i) = OnQ1(i)+GramW3t(t)*OnW(i)
           OnW(i) = OnW(i)*OnCoab(i)
-          OnQ0(i) = OnQ0(i)+(TWO*t+ONE)*Glob_gm3(t)*OnW(i)
+          OnQ0(i) = OnQ0(i)+GramW3(t)*OnW(i)
         ENDDO
       ENDDO
     ENDIF
@@ -1970,16 +2375,16 @@ CONTAINS
     DO side = 1, MIN(gradflag, 2)
 
       IF (side == 1) THEN
-        CALL CoulombCorrDerivs(invAkl, Lk, dA)
+        CALL CoulombCorrDerivs(invAkl, Bra%Lk, 1, dAv, ne)
       ELSE
-        CALL CoulombCorrDerivs(invAkl, PLl, dA)
+        CALL CoulombCorrDerivs(invAkl, Ket%PLl, 2, dAv, ne)
       ENDIF
 
-      dhoa = (dA(1, parti, :, :)*A1j+A1i*dA(1, partj, :, :))/a-A1i*A1j*dA(1, 1, :, :)/(a*a)
+      dhoa(1:ne) = (dAv(1:ne, 1, parti)*A1j+A1i*dAv(1:ne, 1, partj))/a-A1i*A1j*dAv(1:ne, 1, 1)/(a*a)
 
       ! sum over the pairs of charge*Skl*dCpq in dCsum and of charge*Cpq in
       ! chpq (its product with dS is added to the vector below)
-      dCsum = ZERO
+      dCsum(1:ne) = ZERO
       chpq = ZERO
       DO i = 1, NumOn
         p = OnP(i)
@@ -1993,37 +2398,37 @@ CONTAINS
           c = invAkl(1, p)
           di = invAkl(parti, p)
           dj = invAkl(partj, p)
-          dbeta = dA(p, p, :, :)
-          dc = dA(1, p, :, :)
-          ddi = dA(parti, p, :, :)
-          ddj = dA(partj, p, :, :)
+          dbeta(1:ne) = dAv(1:ne, p, p)
+          dc(1:ne) = dAv(1:ne, 1, p)
+          ddi(1:ne) = dAv(1:ne, parti, p)
+          ddj(1:ne) = dAv(1:ne, partj, p)
         ELSE
           beta = invAkl(p, p)+invAkl(q, q)-TWO*invAkl(p, q)
           c = invAkl(1, p)-invAkl(1, q)
           di = invAkl(parti, p)-invAkl(parti, q)
           dj = invAkl(partj, p)-invAkl(partj, q)
-          dbeta = dA(p, p, :, :)+dA(q, q, :, :)-TWO*dA(p, q, :, :)
-          dc = dA(1, p, :, :)-dA(1, q, :, :)
-          ddi = dA(parti, p, :, :)-dA(parti, q, :, :)
-          ddj = dA(partj, p, :, :)-dA(partj, q, :, :)
+          dbeta(1:ne) = dAv(1:ne, p, p)+dAv(1:ne, q, q)-TWO*dAv(1:ne, p, q)
+          dc(1:ne) = dAv(1:ne, 1, p)-dAv(1:ne, 1, q)
+          ddi(1:ne) = dAv(1:ne, parti, p)-dAv(1:ne, parti, q)
+          ddj(1:ne) = dAv(1:ne, partj, p)-dAv(1:ne, partj, q)
         ENDIF
 
         kappa = c*c/(a*beta)
         Cpq = -Gn*Q0*Glob_gm2(m)/(g4den*SQRT(beta))
 
-        dG = (beta*Aij-di*dj)*dA(1, 1, :, :)+(a*Aij-A1i*A1j)*dbeta+&
-            (a*beta-c*c)*dA(parti, partj, :, :)+(A1i*dj+di*A1j-TWO*c*Aij)*dc+&
-            (c*A1j-a*dj)*ddi+(c*A1i-a*di)*ddj+&
-            (c*dj-beta*A1j)*dA(1, parti, :, :)+(c*di-beta*A1i)*dA(1, partj, :, :)
+        dG(1:ne) = (beta*Aij-di*dj)*dAv(1:ne, 1, 1)+(a*Aij-A1i*A1j)*dbeta(1:ne)+&
+            (a*beta-c*c)*dAv(1:ne, parti, partj)+(A1i*dj+di*A1j-TWO*c*Aij)*dc(1:ne)+&
+            (c*A1j-a*dj)*ddi(1:ne)+(c*A1i-a*di)*ddj(1:ne)+&
+            (c*dj-beta*A1j)*dAv(1:ne, 1, parti)+(c*di-beta*A1i)*dAv(1:ne, 1, partj)
 
-        dGn = dG/(a*beta)-Gn*(dA(1, 1, :, :)/a+dbeta/beta)
+        dGn(1:ne) = dG(1:ne)/(a*beta)-Gn*(dAv(1:ne, 1, 1)/a+dbeta(1:ne)/beta)
 
-        dcoab = -TWO*c*dc/(a*beta)+kappa*(dA(1, 1, :, :)/a+dbeta/beta)
+        dcoab(1:ne) = -TWO*c*dc(1:ne)/(a*beta)+kappa*(dAv(1:ne, 1, 1)/a+dbeta(1:ne)/beta)
 
-        dCpq = Cpq*(-(THREE*dA(parti, partj, :, :)+TWO*m*dhoa)/g4den-dbeta/(TWO*beta))+&
-            Glob_gm2(m)/(g4den*SQRT(beta))*(-(dGn*Q0+Gn*Q1*dcoab))
+        dCpq(1:ne) = Cpq*(-(THREE*dAv(1:ne, parti, partj)+TWO*m*dhoa(1:ne))/g4den-dbeta(1:ne)/(TWO*beta))+&
+            Glob_gm2(m)/(g4den*SQRT(beta))*(-(dGn(1:ne)*Q0+Gn*Q1*dcoab(1:ne)))
 
-        dCsum = dCsum+Glob_ChargeMatrix(p, q)*Skl*dCpq
+        dCsum(1:ne) = dCsum(1:ne)+Glob_ChargeMatrix(p, q)*Skl*dCpq(1:ne)
         chpq = chpq+Glob_ChargeMatrix(p, q)*Cpq
       ENDDO
 
@@ -2037,7 +2442,7 @@ CONTAINS
 
 
 
-  SUBROUTINE PowerZeroGradCorr(ik, jl, vechLk, vechLl, SymMatrix, Skl, dHk, dHl, gradflag)
+  SUBROUTINE PowerZeroGradCorr(ik, jl, Bra, Ket, SymMatrix, Skl, dHk, dHl, gradflag)
     ! For mk = ml = 0 (m = 0) the Coulomb gradients of MatrixElementsXi
     ! (dRk and dRl of the pairs (p, q), p >= 2) add the term t = m of the
     ! bracket of eq. (35) separately from the term t = 0, which for m = 0
@@ -2064,16 +2469,17 @@ CONTAINS
     INTEGER, PARAMETER :: n = Glob_n  ! number of pseudoparticles
 
     INTEGER, INTENT(IN) :: ik, jl, gradflag
-    REAL(wp), INTENT(IN) :: vechLk(Glob_npt), vechLl(Glob_npt)
+    TYPE(BraPart), INTENT(IN) :: Bra  ! the bra part of the setup (BraSetup)
+    TYPE(KetPart), INTENT(IN) :: Ket  ! the ket term part of the setup (KetSetup)
     REAL(wp), INTENT(IN) :: SymMatrix(n, n)
     REAL(wp), INTENT(IN) :: Skl
     REAL(wp), INTENT(INOUT) :: dHk(Glob_npt), dHl(Glob_npt)
 
     ! Local variables
-    INTEGER :: p, q, side, parti, partj
+    INTEGER :: p, q, side, parti, partj, ne
     REAL(wp) :: Aij, beta, c, di, dj, coab, fob
-    REAL(wp) :: Lk(n, n), PLl(n, n), invAkl(n, n), dA(n, n, n, n)
-    REAL(wp) :: dbeta(n, n), ddi(n, n), ddj(n, n), dfob(n, n), dCsum(n, n)
+    REAL(wp) :: invAkl(n, n), dAv(n*n, n, n)
+    REAL(wp) :: dbeta(n*n), ddi(n*n), ddj(n*n), dfob(n*n), dCsum(n*n)
     REAL(wp) :: dSdummy(Glob_npt)
 
 
@@ -2083,18 +2489,18 @@ CONTAINS
     partj = jl
     dSdummy = ZERO
 
-    CALL CoulombCorrSetup(vechLk, vechLl, SymMatrix, Lk, PLl, invAkl)
+    CALL CoulombCorrSetup(Bra%Lk, Ket%PLl, invAkl)
     Aij = invAkl(parti, partj)
 
     DO side = 1, MIN(gradflag, 2)
 
       IF (side == 1) THEN
-        CALL CoulombCorrDerivs(invAkl, Lk, dA)
+        CALL CoulombCorrDerivs(invAkl, Bra%Lk, 1, dAv, ne)
       ELSE
-        CALL CoulombCorrDerivs(invAkl, PLl, dA)
+        CALL CoulombCorrDerivs(invAkl, Ket%PLl, 2, dAv, ne)
       ENDIF
 
-      dCsum = ZERO
+      dCsum(1:ne) = ZERO
       DO p = 2, n
         DO q = 1, p
 
@@ -2103,25 +2509,25 @@ CONTAINS
             c = invAkl(1, p)
             di = invAkl(parti, p)
             dj = invAkl(partj, p)
-            dbeta = dA(p, p, :, :)
-            ddi = dA(parti, p, :, :)
-            ddj = dA(partj, p, :, :)
+            dbeta(1:ne) = dAv(1:ne, p, p)
+            ddi(1:ne) = dAv(1:ne, parti, p)
+            ddj(1:ne) = dAv(1:ne, partj, p)
           ELSE
             beta = invAkl(p, p)+invAkl(q, q)-TWO*invAkl(p, q)
             c = invAkl(1, p)-invAkl(1, q)
             di = invAkl(parti, p)-invAkl(parti, q)
             dj = invAkl(partj, p)-invAkl(partj, q)
-            dbeta = dA(p, p, :, :)+dA(q, q, :, :)-TWO*dA(p, q, :, :)
-            ddi = dA(parti, p, :, :)-dA(parti, q, :, :)
-            ddj = dA(partj, p, :, :)-dA(partj, q, :, :)
+            dbeta(1:ne) = dAv(1:ne, p, p)+dAv(1:ne, q, q)-TWO*dAv(1:ne, p, q)
+            ddi(1:ne) = dAv(1:ne, parti, p)-dAv(1:ne, parti, q)
+            ddj(1:ne) = dAv(1:ne, partj, p)-dAv(1:ne, partj, q)
           ENDIF
 
           coab = ONE-c*c/(invAkl(1, 1)*beta)
           fob = di*dj/beta
-          dfob = (ddi*dj+di*ddj)/beta-fob*dbeta/beta
+          dfob(1:ne) = (ddi(1:ne)*dj+di*ddj(1:ne))/beta-fob*dbeta(1:ne)/beta
 
-          dCsum = dCsum-Glob_ChargeMatrix(p, q)*Skl*Glob_gm2(0)/(THREE*Aij*SQRT(beta))*&
-              coab*(THREE*dA(parti, partj, :, :)-dfob)
+          dCsum(1:ne) = dCsum(1:ne)-Glob_ChargeMatrix(p, q)*Skl*Glob_gm2(0)/(THREE*Aij*SQRT(beta))*&
+              coab*(THREE*dAv(1:ne, parti, partj)-dfob(1:ne))
         ENDDO
       ENDDO
 
@@ -2155,7 +2561,7 @@ CONTAINS
     INTEGER, PARAMETER :: n = Glob_n  ! number of pseudoparticles
 
     INTEGER, INTENT(IN) :: side
-    REAL(wp), INTENT(IN) :: SymMatrix(n, n), chpq, dCsum(n, n)
+    REAL(wp), INTENT(IN) :: SymMatrix(n, n), chpq, dCsum(n*n)
     REAL(wp), INTENT(IN) :: dSk(Glob_npt), dSl(Glob_npt)
     REAL(wp), INTENT(INOUT) :: dHk(Glob_npt), dHl(Glob_npt)
 
@@ -2169,7 +2575,7 @@ CONTAINS
       DO j = 1, n
         DO i = j, n
           indx = indx+1
-          dHk(indx) = dHk(indx)+chpq*dSk(indx)+dCsum(i, j)
+          dHk(indx) = dHk(indx)+chpq*dSk(indx)+dCsum(indx)
         ENDDO
       ENDDO
     ELSE
@@ -2178,7 +2584,7 @@ CONTAINS
       DO k = 1, n
         DO j = 1, n
           DO i = 1, n
-            dCl(i, j) = dCl(i, j)+SymMatrix(i, k)*dCsum(k, j)
+            dCl(i, j) = dCl(i, j)+SymMatrix(i, k)*dCsum(k+(j-1)*n)
           ENDDO
         ENDDO
       ENDDO
