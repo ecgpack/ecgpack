@@ -342,6 +342,10 @@ CONTAINS
     ! pair in the order j = 1, ..., Glob_NumYHYTerms. These are the
     ! operations of the sum done by one rank, so the results do not depend
     ! on the number of ranks.
+    ! KetSlot = (l-1)*Glob_NumYHYTerms+j names the entry of the ket term
+    ! (function l, term j) in the store of MatrixElements, which forms it
+    ! once and uses it again while function l is unchanged (see BraPart in
+    ! module matelem); the results do not depend on it.
 
     IMPLICIT NONE
 
@@ -370,7 +374,8 @@ CONTAINS
       Slot = Slot+1
       CALL MatrixElements(Glob_PWR(k), Glob_X_index(k), Glob_NonlinParam(1:npt, k), &
                           Glob_PWR(l), Glob_X_index(l), Glob_NonlinParam(1:npt, l), &
-                          Glob_YHYMatr(1:n, 1:n, j), ItemS(Slot), ItemH(Slot), dSk, dSl, dHk, dHl, 0)
+                          Glob_YHYMatr(1:n, 1:n, j), ItemS(Slot), ItemH(Slot), dSk, dSl, dHk, dHl, 0, &
+                          KetSlot=(l-1)*nt+j)
     ENDDO
 
     IF (np > 1) THEN
@@ -595,7 +600,7 @@ CONTAINS
     ! gives every rank the sums of all pairs (SumH, SumS, SumDk, SumDl, exact
     ! copies). The first term of pair b dealt to rank r is
     ! MOD(r-MOD((b-1)*Glob_NumYHYTerms,np)+np,np)+1, the next ones follow at
-    ! steps of np = Glob_NumOfProcs.
+    ! steps of np = Glob_NumOfProcs. KetSlot as in BatchMatElem.
 
     IMPLICIT NONE
 
@@ -642,7 +647,7 @@ CONTAINS
                               Glob_PWR(l), Glob_X_index(l), Glob_NonlinParam(1:npt, l), &
                               Glob_YHYMatr(1:n, 1:n, j), ItemS(Slot), ItemH(Slot), &
                               ItemdSk(1:npt, Slot), ItemdSl(1:npt, Slot), ItemdHk(1:npt, Slot), &
-                              ItemdHl(1:npt, Slot), gradflag)
+                              ItemdHl(1:npt, Slot), gradflag, KetSlot=(l-1)*nt+j)
         ENDDO
       ENDDO
       SendCounts(Owner+1) = Slot-SendDispls(Owner+1)
