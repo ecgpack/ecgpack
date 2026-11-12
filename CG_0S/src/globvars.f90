@@ -374,6 +374,17 @@ module globvars
   integer,parameter  :: Glob_ElimRoutPrintSpec=2
 
 !=============================================================
+!Random seed specification read from the optional RANDOM_SEED
+!line of the data file: an integer, ECG_RND_SEED (take the integer
+!from the environment variable of that name), or SYSTEM_CLOCK
+!(the default if the line is absent). Glob_IsRndSeedInput is
+!.true. if and only if the line was present, in which case
+!SaveResults writes it back. The seeding itself is done in main.
+!=============================================================
+  character(32) :: Glob_RndSeedInput='SYSTEM_CLOCK'
+  logical  ::  Glob_IsRndSeedInput=.false.
+
+!=============================================================
 !The following variables are the parameters of the random generator
 !that is used to generate new basis function candidates. For the
 !description of these see comments in random generator routine -

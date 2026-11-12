@@ -6,4 +6,4 @@ Sample file `inout.txt` in this directory provides input for generating a very s
 The calculation with this input file should take about 1 second on a single CPU core when double precision is used (gfortran compiler / AMD Ryzen AI 9 HX 370).
 At the end of the calculation the energy should reproduce three decimal figures in the exact value of -2.9033045577.
 
-Note that the end value of the energy may differ slightly from one execution to another because each execution involves stochastic selection of the basis functions.  
+The basis functions are selected stochastically. The `RANDOM_SEED` line in `inout.txt` fixes the seed of the random number generators, and the codes use their own generators, whose sequences do not depend on the compiler. Repeated runs with the same number of MPI processes therefore reproduce the same energies on any machine and with any compiler, apart from rounding differences, which the stochastic selection and the optimization can amplify (especially in longer runs). To get a different random selection in every run, remove the `RANDOM_SEED` line or replace the seed with `SYSTEM_CLOCK` (see `doc/input_file_format.md`).  

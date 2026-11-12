@@ -8,11 +8,6 @@ program main
 
 !Local variables
   integer      i,iw,Kstart,Kstop,Kstep,OpenFileErr,OptimizationType,QErrorCode
-  real(8)      r8
-
-!These variables are used to set random number generators
-  integer RNSeedSize
-  integer,allocatable :: Seed(:)
 
 !Initialize MPI
   call MPI_INIT(Glob_MPIErrCode)
@@ -33,19 +28,62 @@ program main
   if (Glob_IsOptCycleScripted) call ReadBlackList()
   call ProgramDataInit()
 
-!Seed the random number generators
-  call random_seed()
-  call random_seed(size=RNSeedSize)
-  allocate(Seed(RNSeedSize))
-  call random_seed(get=Seed(1:RNSeedSize))
-  call system_clock(count=Seed(1))
-  Seed(1:RNSeedSize)=Seed(1:RNSeedSize)+Glob_ProcID
-  call random_seed(put=Seed(1:RNSeedSize))
-  call random_number(r8)
-  call random_number(r8)
-  call random_number(r8)
-  call random_number(r8)
-  r8=drnor_start(nint(r8*25000)+Glob_ProcID)
+!Seed the random number generators. The base seed is selected by the optional
+!RANDOM_SEED line of the data file (Glob_RndSeedInput, set by ReadIOFile): the
+!integer given there, the integer held by the environment variable ECG_RND_SEED,
+!or, with SYSTEM_CLOCK (the default), the system clock. The clock count is
+!combined with the time of day from date_and_time because some compilers (e.g.
+!nvfortran) count system_clock from the start of the program, which alone would
+!give the same seed in every run. If ECG_RND_SEED is not set or does not hold an
+!integer, the clock is used instead.
+!Rank 0 determines the base seed, prints it, and broadcasts it, so that a run can
+!be repeated by setting RANDOM_SEED to the printed value (with the same number of
+!MPI processes). Every rank offsets the base seed by its rank,
+!so that the ranks drawing their own random numbers get different sequences. The
+!rank seed is computed with 64-bit integers and reduced modulo huge(0) so that
+!large base seeds cannot overflow. It initializes both of the code's own random
+!number generators, urand (uniform) and drnor (normal), whose sequences do not
+!depend on the compiler (the intrinsic random_number is not used). drnor_start
+!needs a nonzero seed, hence the substitutions of 519 for 0.
+  block
+    integer,parameter :: ik8=selected_int_kind(18)
+    integer       RndSeedBase,RndSeedErr,RndSeedStat,RndTime(8),k
+    integer(ik8)  RndClock
+    character(32) RndSeedEnv,RndSeedSource
+    real(8)       RndSeedEcho
+
+    if (Glob_ProcID==0) then
+      RndSeedErr=1
+      if (Glob_RndSeedInput=='ECG_RND_SEED') then
+        RndSeedSource='ECG_RND_SEED'
+        call get_environment_variable('ECG_RND_SEED',RndSeedEnv,status=RndSeedStat)
+        if (RndSeedStat==0) read(RndSeedEnv,*,iostat=RndSeedErr) RndSeedBase
+        if (RndSeedErr/=0) then
+          write(*,*) 'Warning: environment variable ECG_RND_SEED is not set or not an integer.'
+          write(*,*) 'The random seed is taken from the system clock instead.'
+        endif
+      elseif (Glob_RndSeedInput/='SYSTEM_CLOCK') then
+        RndSeedSource='data file'
+        read(Glob_RndSeedInput,*,iostat=RndSeedErr) RndSeedBase
+      endif
+      if (RndSeedErr/=0) then
+        RndSeedSource='SYSTEM_CLOCK'
+        call system_clock(count=RndClock)
+        call date_and_time(values=RndTime)
+        RndClock=RndClock+RndTime(8)+1000_ik8*(RndTime(7)+60_ik8*(RndTime(6)+60_ik8*(RndTime(5)+24_ik8*RndTime(3))))
+        RndSeedBase=int(mod(RndClock,int(huge(0),ik8)))
+      endif
+      if (RndSeedBase==0) RndSeedBase=519
+      write(*,'(1x,a,1x,i0,1x,a,a,a)') 'Random seed:',RndSeedBase,'(from ',trim(RndSeedSource),')'
+      write(*,*)
+    endif
+    call MPI_BCAST(RndSeedBase,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+
+    k=int(mod(int(RndSeedBase,ik8)+7919_ik8*Glob_ProcID,int(huge(0),ik8)))
+    if (k==0) k=519
+    call urand_start(k)
+    RndSeedEcho=drnor_start(k)
+  end block
 
 !Empty swap file as it may contain some garbage left
 !after last run (if there was a failure)

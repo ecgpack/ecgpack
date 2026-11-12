@@ -11,6 +11,7 @@
  LAST_EIGVAL_TOL   1.0E0
  BEST_EIGVAL_TOL   1.0E0
  WORST_EIGVAL_TOL  1.0E-30
+ RANDOM_SEED       63841
  GENERATOR_PARAM   0.7E0  1.0E0  3.0E0
  ==============================
     0  1.0E30      0      0      0

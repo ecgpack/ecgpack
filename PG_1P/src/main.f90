@@ -9,7 +9,7 @@ PROGRAM main
   ! (Kirnosov, Sharkey and Adamowicz, J. Phys. B 48, 195101 (2015)).
   ! It reads the data file, initializes the program data, seeds the random
   ! generators, executes the BBOP steps in order and empties the swap
-  ! file. The frame is that of PG_0S: ECG_RND_SEED seeding, the
+  ! file. The frame is that of PG_0S: RANDOM_SEED seeding, the
   ! ECG_EIG_IDX_TARGETING override, recovery of the last physical energy
   ! before the inverse-iteration shift, the SAVE_HS_R and OVERLAP_D steps
   ! and the FULL_OPT1 history budget test. DENSITIES computes only the
@@ -32,15 +32,6 @@ PROGRAM main
   INTEGER :: OpenFileErr           ! IOSTAT of the swap-file OPEN
   INTEGER :: OptimizationType      ! 1 = optimize the new functions, see BasisEnlG/I/Q
   INTEGER :: QErrorCode            ! status returned by the drivers of the Q method
-  REAL(8) :: r8                    ! scratch for the random generators
-
-  ! Random-generator seeding
-  INTEGER                            :: RNSeedSize
-  INTEGER, ALLOCATABLE, DIMENSION(:) :: Seed
-
-  ! Deterministic seeding (environment variable ECG_RND_SEED)
-  CHARACTER(LEN=32) :: SeedEnv
-  INTEGER           :: SeedVal, SeedStat, SeedErr
 
   ! Eigenvalue-index targeting override (environment variable ECG_EIG_IDX_TARGETING)
   CHARACTER(LEN=32) :: EigIdxEnv
@@ -84,54 +75,62 @@ PROGRAM main
   ENDIF
 
 
-  !==================================================================
-  ! Random number generators
-  !==================================================================
-  ! Seeded from the clock unless the environment variable ECG_RND_SEED
-  ! holds an integer, which makes runs reproducible for a given process
-  ! count. The seed is offset by the rank; every random choice the ranks
-  ! share (trial functions, the order of the premultiplier scan) is drawn
-  ! on rank 0 and broadcast. DRNOR_START needs a nonzero seed, hence the
-  ! two substitutions.
-  !------------------------------------------------------------------
-  CALL GET_ENVIRONMENT_VARIABLE('ECG_RND_SEED', SeedEnv, STATUS=SeedStat)
-  SeedErr = 1
-  IF (SeedStat == 0) READ(SeedEnv, *, IOSTAT=SeedErr) SeedVal
+!Seed the random number generators. The base seed is selected by the optional
+!RANDOM_SEED line of the data file (Glob_RndSeedInput, set by ReadIOFile): the
+!integer given there, the integer held by the environment variable ECG_RND_SEED,
+!or, with SYSTEM_CLOCK (the default), the system clock. The clock count is
+!combined with the time of day from date_and_time because some compilers (e.g.
+!nvfortran) count system_clock from the start of the program, which alone would
+!give the same seed in every run. If ECG_RND_SEED is not set or does not hold an
+!integer, the clock is used instead.
+!Rank 0 determines the base seed, prints it, and broadcasts it, so that a run can
+!be repeated by setting RANDOM_SEED to the printed value (with the same number of
+!MPI processes). Every rank offsets the base seed by its rank,
+!so that the ranks drawing their own random numbers get different sequences. The
+!rank seed is computed with 64-bit integers and reduced modulo huge(0) so that
+!large base seeds cannot overflow. It initializes both of the code's own random
+!number generators, urand (uniform) and drnor (normal), whose sequences do not
+!depend on the compiler (the intrinsic random_number is not used). drnor_start
+!needs a nonzero seed, hence the substitutions of 519 for 0.
+  block
+    integer,parameter :: ik8=selected_int_kind(18)
+    integer       RndSeedBase,RndSeedErr,RndSeedStat,RndTime(8),k
+    integer(ik8)  RndClock
+    character(32) RndSeedEnv,RndSeedSource
+    real(8)       RndSeedEcho
 
-  CALL RANDOM_SEED(SIZE=RNSeedSize)
-  ALLOCATE(Seed(RNSeedSize))
+    if (Glob_ProcID==0) then
+      RndSeedErr=1
+      if (Glob_RndSeedInput=='ECG_RND_SEED') then
+        RndSeedSource='ECG_RND_SEED'
+        call get_environment_variable('ECG_RND_SEED',RndSeedEnv,status=RndSeedStat)
+        if (RndSeedStat==0) read(RndSeedEnv,*,iostat=RndSeedErr) RndSeedBase
+        if (RndSeedErr/=0) then
+          write(*,*) 'Warning: environment variable ECG_RND_SEED is not set or not an integer.'
+          write(*,*) 'The random seed is taken from the system clock instead.'
+        endif
+      elseif (Glob_RndSeedInput/='SYSTEM_CLOCK') then
+        RndSeedSource='data file'
+        read(Glob_RndSeedInput,*,iostat=RndSeedErr) RndSeedBase
+      endif
+      if (RndSeedErr/=0) then
+        RndSeedSource='SYSTEM_CLOCK'
+        call system_clock(count=RndClock)
+        call date_and_time(values=RndTime)
+        RndClock=RndClock+RndTime(8)+1000_ik8*(RndTime(7)+60_ik8*(RndTime(6)+60_ik8*(RndTime(5)+24_ik8*RndTime(3))))
+        RndSeedBase=int(mod(RndClock,int(huge(0),ik8)))
+      endif
+      if (RndSeedBase==0) RndSeedBase=519
+      write(*,'(1x,a,1x,i0,1x,a,a,a)') 'Random seed:',RndSeedBase,'(from ',trim(RndSeedSource),')'
+      write(*,*)
+    endif
+    call MPI_BCAST(RndSeedBase,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
-  IF (SeedErr == 0) THEN
-
-    IF (SeedVal == 0) SeedVal = 519
-    DO i = 1, RNSeedSize
-      Seed(i) = SeedVal+37*(i-1)+7919*Glob_ProcID
-    ENDDO
-    CALL RANDOM_SEED(PUT=Seed(1:RNSeedSize))
-    r8 = drnor_start(SeedVal+7919*Glob_ProcID)
-    IF (Glob_ProcID == 0) THEN
-      WRITE(*, *) 'Random generators seeded from ECG_RND_SEED = ', SeedVal
-      WRITE(*, *)
-    ENDIF
-
-  ELSE
-
-    CALL RANDOM_SEED()
-    CALL RANDOM_SEED(GET=Seed(1:RNSeedSize))
-    CALL SYSTEM_CLOCK(COUNT=Seed(1))
-    Seed(1:RNSeedSize) = Seed(1:RNSeedSize)+Glob_ProcID
-    CALL RANDOM_SEED(PUT=Seed(1:RNSeedSize))
-    CALL RANDOM_NUMBER(r8)
-    CALL RANDOM_NUMBER(r8)
-    CALL RANDOM_NUMBER(r8)
-    CALL RANDOM_NUMBER(r8)
-    SeedVal = NINT(r8*25000)+Glob_ProcID
-    IF (SeedVal == 0) SeedVal = 519
-    r8 = drnor_start(SeedVal)
-
-  ENDIF
-
-  DEALLOCATE(Seed)
+    k=int(mod(int(RndSeedBase,ik8)+7919_ik8*Glob_ProcID,int(huge(0),ik8)))
+    if (k==0) k=519
+    call urand_start(k)
+    RndSeedEcho=drnor_start(k)
+  end block
 
 
   !==================================================================

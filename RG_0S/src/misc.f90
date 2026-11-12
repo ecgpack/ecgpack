@@ -33,6 +33,17 @@ module misc
   integer, private, save :: II = 17
   integer, private, save :: JJ = 5
 
+  !State of the uniform random-number generator urand() (MRG32k3a, see
+  !urand), shared with its initializer urand_start(). The two component
+  !recurrences are kept in 64-bit integers. The default values are the
+  !standard seed of the generator; they are used in case the user forgets
+  !to call urand_start.
+  integer, parameter, private :: Urand_ik = selected_int_kind(18)
+  integer(Urand_ik), parameter, private :: Urand_M1 = 4294967087_Urand_ik
+  integer(Urand_ik), parameter, private :: Urand_M2 = 4294944443_Urand_ik
+  integer(Urand_ik), private, save :: Urand_S1(3) = 12345_Urand_ik
+  integer(Urand_ik), private, save :: Urand_S2(3) = 12345_Urand_ik
+
   !Working-kind coefficient tables for the modified Bessel K routines
   !DBESK, DBSKNU, and DASYIK (see below).
   !
@@ -459,6 +470,70 @@ contains
     return
 
   end function drnor_start
+
+  function urand()
+!Returns a uniformly distributed pseudo-random number in the open
+!interval (0,1). This is the combined multiple recursive generator
+!MRG32k3a of P. L'Ecuyer, Operations Research 47, 159-164 (1999), with
+!a period of about 2^191. It is used instead of the intrinsic subroutine
+!random_number, whose sequence for a given seed differs from compiler to
+!compiler. Here all of the arithmetic is exact 64-bit integer arithmetic
+!(the products stay below 2^53), and the result is a single product of
+!two double precision numbers, so the sequence is the same with every
+!compiler. The state is initialized by urand_start.
+    real(8)  urand
+    integer(Urand_ik),parameter :: A12=1403580_Urand_ik,A13N=810728_Urand_ik
+    integer(Urand_ik),parameter :: A21=527612_Urand_ik,A23N=1370589_Urand_ik
+    real(8),parameter :: NORM=2.328306549295727688D-10  !1/(Urand_M1+1)
+    integer(Urand_ik) P1,P2
+
+!First component: x(n)=(1403580*x(n-2)-810728*x(n-3)) mod M1
+    P1=modulo(A12*Urand_S1(2)-A13N*Urand_S1(1),Urand_M1)
+    Urand_S1(1)=Urand_S1(2)
+    Urand_S1(2)=Urand_S1(3)
+    Urand_S1(3)=P1
+!Second component: y(n)=(527612*y(n-1)-1370589*y(n-3)) mod M2
+    P2=modulo(A21*Urand_S2(3)-A23N*Urand_S2(1),Urand_M2)
+    Urand_S2(1)=Urand_S2(2)
+    Urand_S2(2)=Urand_S2(3)
+    Urand_S2(3)=P2
+!Combination
+    if (P1>P2) then
+      urand=real(P1-P2,8)*NORM
+    else
+      urand=real(P1-P2+Urand_M1,8)*NORM
+    endif
+
+  end function urand
+
+  subroutine urand_start(ISEED)
+!Initializes the state of urand() from an integer seed. Any value of
+!ISEED is accepted, including zero and negative values. The six state
+!words are filled from a 32-bit linear congruential sequence started at
+!ISEED and reduced modulo the moduli of the two components. The first
+!few numbers are then discarded, so that nearby seeds (such as those of
+!neighboring MPI processes) give unrelated sequences.
+    integer  ISEED
+    integer(Urand_ik),parameter :: LCGM=4294967296_Urand_ik  !2^32
+    integer(Urand_ik) X
+    integer  i
+    real(8)  r
+
+    X=modulo(int(ISEED,Urand_ik),LCGM)
+    do i=1,3
+      X=modulo(69069_Urand_ik*X+1_Urand_ik,LCGM)
+      Urand_S1(i)=modulo(X,Urand_M1)
+      X=modulo(69069_Urand_ik*X+1_Urand_ik,LCGM)
+      Urand_S2(i)=modulo(X,Urand_M2)
+    enddo
+!Each component must not be in the all-zero state
+    if (all(Urand_S1==0)) Urand_S1=12345_Urand_ik
+    if (all(Urand_S2==0)) Urand_S2=12345_Urand_ik
+    do i=1,10
+      r=urand()
+    enddo
+
+  end subroutine urand_start
 
   subroutine DA17LSM(F,XGUESS,STEP,EPS,MAXFNEVAL,ACTFNEVAL,XMIN,FMIN)
 !This is modified subroutine A17LS by J.S.Nash. I slightly

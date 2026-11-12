@@ -390,6 +390,38 @@ contains
     call MPI_BCAST(Glob_WorstEigvalTol,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
+      !Optional RANDOM_SEED line. Read one record into a buffer and parse it
+      !internally (see the comment in the repulsion-scaling block above) so that
+      !backspace 1 is portable. The value is checked here but used in main.
+      read(1,'(A)',iostat=ReadLineErr) ReadLine
+      ReadChar=' '
+      if (ReadLineErr==0) read(ReadLine,*,iostat=ReadErr) ReadChar
+      if ((ReadLineErr/=0).or.(ReadChar/='RANDOM_SEED')) then
+        Glob_RndSeedInput='SYSTEM_CLOCK'
+        Glob_IsRndSeedInput=.false.
+        if (ReadLineErr==0) backspace 1
+      else
+        Line=Line+1
+        read(ReadLine,*,iostat=ReadErr) ReadChar,Glob_RndSeedInput
+        if ((ReadErr==0).and.(Glob_RndSeedInput/='SYSTEM_CLOCK').and. &
+            (Glob_RndSeedInput/='ECG_RND_SEED')) read(Glob_RndSeedInput,*,iostat=ReadErr) ReadInt
+        if (ReadErr/=0) then
+          write(*,*) 'Error EC0108 in data file, line ',Line
+          write(*,*) 'RANDOM_SEED must be followed by an integer, ECG_RND_SEED, or SYSTEM_CLOCK'
+          ErrorInDataFile=.true.
+        else
+          Glob_IsRndSeedInput=.true.
+          write(*,'(1x,a11,2x,a)') 'RANDOM_SEED',trim(Glob_RndSeedInput)
+        endif
+      endif
+    endif
+    call MPI_BCAST(ErrorInDataFile,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    if (ErrorInDataFile) call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
+    call MPI_BCAST(Glob_IsRndSeedInput,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+    call MPI_BCAST(Glob_RndSeedInput,len(Glob_RndSeedInput),MPI_CHARACTER,0, &
+                   MPI_COMM_WORLD,Glob_MPIErrCode)
+
+    if (Glob_ProcID==0) then
       read(1,*) ReadChar(1:15),Glob_RG_p1,Glob_RG_s1,Glob_RG_s2
       write(*,'(1x,a15)',advance='no') ReadChar(1:15)
       call writereal(6,Glob_RG_p1)
@@ -766,6 +798,7 @@ contains
       call writerealadv(1,Glob_BestEigvalTol)
       write(1,'(1x,a16)',advance='no') 'WORST_EIGVAL_TOL'
       call writerealadv(1,Glob_WorstEigvalTol)
+      if (Glob_IsRndSeedInput) write(1,'(1x,a11,2x,a)') 'RANDOM_SEED',trim(Glob_RndSeedInput)
       write(1,'(1x,a15)',advance='no') 'GENERATOR_PARAM'
       call writereal(1,Glob_RG_p1)
       call writereal(1,Glob_RG_s1)
@@ -1905,11 +1938,11 @@ contains
     if (Glob_CurrBasisSize==0) then !making uniform distribution
       do i=1,nfun
         do j=1,Glob_np
-          call random_number(r)
+          r=urand()
           x(j,i)=r*(Lmax-Lmin)+Lmin
         enddo
-        call random_number(r)
-        call random_number(r1)
+        r=urand()
+        r1=urand()
         r=r*Glob_n
         r1=r1*Glob_n
         m(i,1)=1+int(r)
@@ -1930,16 +1963,16 @@ contains
       k=0
     else
       if (Glob_CurrBasisSize<nfun) then
-        call random_number(r)
+        r=urand()
         if (r<GLob_RG_p1) then
           !method 1
           do i=1,nfun
-            call random_number(r)
+            r=urand()
             k=int(r*(Glob_CurrBasisSize))+1
             do j=1,Glob_npt
               x(j,i)=(Glob_RG_s1*drnor()+ONE)*Glob_NonlinParam(j,k)
             enddo
-            call random_number(r)
+            r=urand()
             if (r>IndexChangeProb) then
               m(i,1)=Glob_Index(k,1)
               m(i,2)=Glob_Index(k,2)
@@ -1949,10 +1982,10 @@ contains
               m(i,1)=j
               m(i,2)=jj
               do while (m(i,1)==j .and. m(i,2)==jj .and. m(i,1)==m(i,2)) !change  .and. m(i,1)==m(i,2)
-                call random_number(r)
+                r=urand()
                 r=r*Glob_n
                 m(i,1)=1+int(r)
-                call random_number(r)
+                r=urand()
                 r=r*Glob_n
                 m(i,2)=1+int(r)
               enddo
@@ -1962,7 +1995,7 @@ contains
         else
           !method 2
           do i=1,nfun
-            call random_number(r)
+            r=urand()
             k=int(r*(Glob_CurrBasisSize))+1
             r=Glob_RG_s2*drnor()+ONE
             do while ((abs(r)>0.8E0_wp).and.(abs(r)<1.2E0_wp))
@@ -1977,16 +2010,16 @@ contains
           method_used=2
         endif
       else
-        call random_number(r)
+        r=urand()
         k=int(r*(Glob_CurrBasisSize-nfun+1))+1
-        call random_number(r)
+        r=urand()
         if (r<GLob_RG_p1) then
           !method 1
           do i=1,nfun
             do j=1,Glob_npt
               x(j,i)=(Glob_RG_s1*drnor()+ONE)*Glob_NonlinParam(j,k+i-1)
             enddo
-            call random_number(r)
+            r=urand()
             if ((r>IndexChangeProb).or.(Glob_n==1)) then
               m(i,1)=Glob_Index(k+i-1,1)
               m(i,2)=Glob_Index(k+i-1,2)
@@ -1996,10 +2029,10 @@ contains
               m(i,1)=j
               m(i,2)=jj
               do while (m(i,1)==j .and. m(i,2)==jj .and. m(i,1)==m(i,2)) !change  .and. m(i,1)==m(i,2)
-                call random_number(r)
+                r=urand()
                 r=r*Glob_n
                 m(i,1)=1+int(r)
-                call random_number(r)
+                r=urand()
                 r=r*Glob_n
                 m(i,2)=1+int(r)
               enddo
@@ -3853,7 +3886,7 @@ contains
         s(i)=i
       enddo
       do i=1,n
-        call random_number(r8)
+        r8=urand()
         j=int(r8*i)+1
         k=s(i); s(i)=s(j); s(j)=k
       enddo
@@ -11291,7 +11324,7 @@ contains
     do i=1,cbs
       if (MaskArray(i)>0) then
         do j=1,npt
-          call random_number(r8)
+          r8=urand()
           r=TWO*(r8-ONEHALF)*SeparationParam
           Glob_NonlinParam(j,i)=Glob_NonlinParam(j,i)*(1+r)
         enddo
@@ -11619,7 +11652,7 @@ contains
     do i=1,cbs
       if (abs(Glob_c(i))>LCThreshold) then
         do j=1,npt
-          call random_number(r8)
+          r8=urand()
           r=(r8-ONEHALF)*2*SeparationParam
           Glob_NonlinParam(j,i)=Glob_NonlinParam(j,i)*(1+r)
         enddo

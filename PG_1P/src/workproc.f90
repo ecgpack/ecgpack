@@ -747,6 +747,48 @@ CONTAINS
 
 
     !==================================================================
+    ! Optional RANDOM_SEED line
+    !==================================================================
+    ! May appear just before GENERATOR_PARAM. Its value is an integer,
+    ! ECG_RND_SEED or SYSTEM_CLOCK (the default if the line is absent);
+    ! it is checked here and used by main to seed the random generators.
+    !------------------------------------------------------------------
+    IF (Glob_ProcID == 0) THEN
+
+      READ(1, '(A)', IOSTAT=ReadLineErr) ReadLine
+      ReadChar = ' '
+      IF (ReadLineErr == 0) READ(ReadLine, *, IOSTAT=ReadErr) ReadChar
+
+      IF ((ReadLineErr == 0) .AND. (ReadChar == 'RANDOM_SEED')) THEN
+
+        Line = Line + 1
+        READ(ReadLine, *, IOSTAT=ReadErr) ReadChar, Glob_RndSeedInput
+        IF ((ReadErr == 0) .AND. (Glob_RndSeedInput /= 'SYSTEM_CLOCK') .AND. &
+            (Glob_RndSeedInput /= 'ECG_RND_SEED')) READ(Glob_RndSeedInput, *, IOSTAT=ReadErr) ReadInt
+
+        IF (ReadErr /= 0) THEN
+          WRITE(*, *) 'Error EC0108 in data file, line ', Line
+          IF (Verbose >= 1) WRITE(*, *) 'RANDOM_SEED must be followed by an integer, ECG_RND_SEED, or SYSTEM_CLOCK'
+          ErrorInDataFile = .TRUE.
+        ELSE
+          Glob_IsRndSeedInput = .TRUE.
+          IF (Verbose >= 0) WRITE(*, '(1x,a11,2x,a)') 'RANDOM_SEED', TRIM(Glob_RndSeedInput)
+        ENDIF
+
+      ELSE
+        ! Not a RANDOM_SEED line - push the record back.
+        Glob_RndSeedInput = 'SYSTEM_CLOCK'
+        Glob_IsRndSeedInput = .FALSE.
+        IF (ReadLineErr == 0) BACKSPACE 1
+      ENDIF
+
+    ENDIF
+
+    CALL MPI_BCAST(Glob_IsRndSeedInput, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+    CALL MPI_BCAST(Glob_RndSeedInput, LEN(Glob_RndSeedInput), MPI_CHARACTER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+
+
+    !==================================================================
     ! GENERATOR_PARAM - random trial-function generator parameters
     !==================================================================
     ! Control how GenerateTrialParam draws candidate basis functions:
@@ -1633,6 +1675,12 @@ CONTAINS
 
       WRITE(1, '(1x,a16)', ADVANCE='no') 'WORST_EIGVAL_TOL'
       CALL writerealadv(1, Glob_WorstEigvalTol)
+
+
+      !==================================================================
+      ! RANDOM_SEED - optional, written back only if it was read
+      !==================================================================
+      IF (Glob_IsRndSeedInput) WRITE(1, '(1x,a11,2x,a)') 'RANDOM_SEED', TRIM(Glob_RndSeedInput)
 
 
       !==================================================================
@@ -3284,15 +3332,15 @@ CONTAINS
       DO i = 1, nfun
 
         DO j = 1, Glob_np
-          CALL RANDOM_NUMBER(r)
+          r = urand()
           x(j, i) = r*(Lmax-Lmin)+Lmin
         ENDDO
 
-        CALL RANDOM_NUMBER(r)
+        r = urand()
         m(i) = 2*INT(r*NumOfPowers)
         IF (m(i) > PWRMax) m(i) = PWRMax
 
-        CALL RANDOM_NUMBER(r)
+        r = urand()
         xind(i) = 1+INT(r*Glob_n)
         IF (xind(i) > Glob_n) xind(i) = Glob_n
 
@@ -3312,14 +3360,14 @@ CONTAINS
         ! of nfun, so each trial function draws its own prototype index k.
         ! On return k therefore holds the LAST prototype used.
         !------------------------------------------------------------------
-        CALL RANDOM_NUMBER(r)
+        r = urand()
 
         IF (r < GLob_RG_p1) THEN
 
           ! method 1
           DO i = 1, nfun
 
-            CALL RANDOM_NUMBER(r)
+            r = urand()
             k = INT(r*(Glob_CurrBasisSize))+1
 
             DO j = 1, Glob_npt
@@ -3337,7 +3385,7 @@ CONTAINS
           ! method 2
           DO i = 1, nfun
 
-            CALL RANDOM_NUMBER(r)
+            r = urand()
             k = INT(r*(Glob_CurrBasisSize))+1
 
             ! Redraw until the scale factor is far enough from 1
@@ -3367,10 +3415,10 @@ CONTAINS
         ! k is drawn once and indexes the FIRST function of the run, so the
         ! batch perturbs functions k, k+1, ... k+nfun-1.
         !------------------------------------------------------------------
-        CALL RANDOM_NUMBER(r)
+        r = urand()
         k = INT(r*(Glob_CurrBasisSize-nfun+1))+1
 
-        CALL RANDOM_NUMBER(r)
+        r = urand()
 
         IF (r < GLob_RG_p1) THEN
 
@@ -3439,7 +3487,7 @@ CONTAINS
       INTEGER, INTENT(OUT) :: Power        ! power of the trial function
       INTEGER, INTENT(OUT) :: XIndex       ! x-index of the trial function
 
-      CALL RANDOM_NUMBER(r)
+      r = urand()
 
       ! With fewer than two powers to choose from the redraw loop below
       ! could not terminate; the prototype's power is kept then.
@@ -3448,18 +3496,18 @@ CONTAINS
       ELSE
         Power = ProtoPower
         DO WHILE (Power == ProtoPower)
-          CALL RANDOM_NUMBER(r)
+          r = urand()
           Power = 2*INT(r*NumOfPowers)
           IF (Power > PWRMax) Power = PWRMax
         ENDDO
       ENDIF
 
-      CALL RANDOM_NUMBER(r)
+      r = urand()
 
       IF ((r > XIndexChangeProb) .OR. (Glob_n == 1)) THEN
         XIndex = ProtoXIndex
       ELSE
-        CALL RANDOM_NUMBER(r)
+        r = urand()
         XIndex = 1+INT(r*Glob_n)
         IF (XIndex > Glob_n) XIndex = Glob_n
       ENDIF
@@ -6758,7 +6806,7 @@ CONTAINS
 
         ! Shuffle it
         DO i = 1, n
-          CALL RANDOM_NUMBER(r8)
+          r8 = urand()
           j = INT(r8*i)+1
           k = s(i); s(i) = s(j); s(j) = k
         ENDDO
@@ -17174,7 +17222,7 @@ CONTAINS
     DO i = 1, cbs
       IF (MaskArray(i) > 0) THEN
         DO j = 1, npt
-          CALL RANDOM_NUMBER(r8)
+          r8 = urand()
           r = TWO*(r8-ONEHALF)*SeparationParam
           Glob_NonlinParam(j, i) = Glob_NonlinParam(j, i)*(1+r)
         ENDDO
@@ -17508,7 +17556,7 @@ CONTAINS
     DO i = 1, cbs
       IF (ABS(Glob_c(i)) > LCThreshold) THEN
         DO j = 1, npt
-          CALL RANDOM_NUMBER(r8)
+          r8 = urand()
           r = (r8-ONEHALF)*2*SeparationParam
           Glob_NonlinParam(j, i) = Glob_NonlinParam(j, i)*(1+r)
         ENDDO
