@@ -6632,6 +6632,11 @@ CONTAINS
     ! s(i), s(j) - a valid Fisher-Yates shuffle (every permutation equally
     ! likely; the i=1 pass is a no-op). REAL(8) is used for the draw like
     ! the other random numbers in this module.
+    !
+    ! Every rank calls it, but only rank 0 shuffles and broadcasts the
+    ! result: the ranks have differently seeded generators, and they must
+    ! visit the functions in the same order (they compute the matrix
+    ! elements of one basis together).
     !==================================================================
 
     !------------------------------------------------------------------
@@ -6658,17 +6663,23 @@ CONTAINS
 
     ELSE
 
-      ! Start from the identity
-      DO i = 1, n
-        s(i) = i
-      ENDDO
+      IF (Glob_ProcID == 0) THEN
 
-      ! Shuffle it
-      DO i = 1, n
-        r8 = urand()
-        j = INT(r8*i)+1
-        k = s(i); s(i) = s(j); s(j) = k
-      ENDDO
+        ! Start from the identity
+        DO i = 1, n
+          s(i) = i
+        ENDDO
+
+        ! Shuffle it
+        DO i = 1, n
+          r8 = urand()
+          j = INT(r8*i)+1
+          k = s(i); s(i) = s(j); s(j) = k
+        ENDDO
+
+      ENDIF
+
+      CALL MPI_BCAST(s, n, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
 
     ENDIF
 

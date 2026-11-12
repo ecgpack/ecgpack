@@ -3787,7 +3787,11 @@ contains
 
   subroutine GenerateRndIntSeq(n,s)
 !Routine GenerateRndIntSeq generates a random sequence (permutation)
-!of integers from 1 to n. The result is returned in array s(1:n)
+!of integers from 1 to n. The result is returned in array s(1:n).
+!Every rank calls it, but only rank 0 shuffles and broadcasts the
+!result: the ranks have differently seeded generators, and they must
+!visit the functions in the same order (they compute the matrix
+!elements of one basis together).
 !Arguments:
     integer      n,s(n)
 !Local variables:
@@ -3797,14 +3801,17 @@ contains
     if (n==1) then
       s(1)=1
     else
-      do i=1,n
-        s(i)=i
-      enddo
-      do i=1,n
-        r8=urand()
-        j=int(r8*i)+1
-        k=s(i); s(i)=s(j); s(j)=k
-      enddo
+      if (Glob_ProcID==0) then
+        do i=1,n
+          s(i)=i
+        enddo
+        do i=1,n
+          r8=urand()
+          j=int(r8*i)+1
+          k=s(i); s(i)=s(j); s(j)=k
+        enddo
+      endif
+      call MPI_BCAST(s,n,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
     endif
 
   end subroutine GenerateRndIntSeq
