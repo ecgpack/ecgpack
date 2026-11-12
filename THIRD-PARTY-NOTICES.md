@@ -182,9 +182,11 @@ FOR ANY PARTICULAR PURPOSE.
 
 ## SLATEC modified Bessel K routines
 
-**Files:** `bessel.f90` and its coefficient tables in `bessel_coeff.f90`,
-present (identical) in each of `RG_0S/src/`, `RG_1P/src/`, `RG_2D/src/`, and
-`RG_2P/src/`. The development notes in
+**Files:** the routines `DBESK`, `DBSKNU`, and `DASYIK` and their coefficient
+tables `Bessel_DebyeC` and `Bessel_RecipGammaC`, all in the module `misc` of
+`misc.f90`, present (identical) in the `src/` directory of each energy code
+(`RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, `PG_0S`, `PG_1P`, and `CG_0S`); currently
+only the four `RG_*` energy codes call them. The development notes in
 `doc/devnotes/mod_Bessel_high_precision/` document the adaptation and provide
 a test program comparing it with independent reference values.
 

@@ -8603,10 +8603,10 @@ contains
           if (SymmAdaptMethod==1) then
             do k=1,Glob_NumYHYTerms
               call MatrixElementsAll_CG_0S(Glob_NonlinParam(1:npt,i),Glob_NonlinParam(1:npt,j), &
-                                             IdentityPerm,Glob_YHYMatr(1:n,1:n,k),Hkl,Skl,Tkl,Vkl,rm2kl,rmkl,rkl,r2kl,         &
-                                             deltarkl,drach_deltarkl,MVkl,drach_MVkl,Darwinkl,drach_Darwinkl,OOkl,             &
-                                             NumCFGridPoints,CFGrid,CFkl,NumDensGridPoints,DensGrid,Denskl,                    &
-                                             AreCorrFuncNeeded,ArePartDensNeeded)
+                     IdentityPerm,Glob_YHYMatr(1:n,1:n,k),Hkl,Skl,Tkl,Vkl,rm2kl,rmkl,rkl,r2kl, &
+                     deltarkl,drach_deltarkl,MVkl,drach_MVkl,Darwinkl,drach_Darwinkl,OOkl, &
+                     NumCFGridPoints,CFGrid,CFkl,NumDensGridPoints,DensGrid,Denskl, &
+                     AreCorrFuncNeeded,ArePartDensNeeded)
               c=0
               do a=1,n
                 do b=a,n
@@ -8687,10 +8687,10 @@ contains
             do k=1,Glob_NumYTerms
               do kk=1,Glob_NumYTerms
                 call MatrixElementsAll_CG_0S(Glob_NonlinParam(1:npt,i),Glob_NonlinParam(1:npt,j), &
-                                               Glob_YMatr(1:n,1:n,k),Glob_YMatr(1:n,1:n,kk),Hkl,Skl,Tkl,Vkl,rm2kl,rmkl,rkl,r2kl, &
-                                               deltarkl,drach_deltarkl,MVkl,drach_MVkl,Darwinkl,drach_Darwinkl,OOkl,             &
-                                               NumCFGridPoints,CFGrid,CFkl,NumDensGridPoints,DensGrid,Denskl,                    &
-                                               AreCorrFuncNeeded,ArePartDensNeeded)
+                       Glob_YMatr(1:n,1:n,k),Glob_YMatr(1:n,1:n,kk),Hkl,Skl,Tkl,Vkl,rm2kl,rmkl,rkl,r2kl, &
+                       deltarkl,drach_deltarkl,MVkl,drach_MVkl,Darwinkl,drach_Darwinkl,OOkl, &
+                       NumCFGridPoints,CFGrid,CFkl,NumDensGridPoints,DensGrid,Denskl, &
+                       AreCorrFuncNeeded,ArePartDensNeeded)
                 c=0
                 do a=1,n
                   do b=a,n

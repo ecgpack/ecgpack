@@ -1,16 +1,16 @@
 ! Compare the working-kind DBESK implementation against independent mpmath
 ! reference values for K_0(x), K_1(x), EXP(x)*K_0(x), and EXP(x)*K_1(x).
 !
-! The routines tested are those of the ECGPACK module bessel
-! (RG_0S/src/bessel.f90 and bessel_coeff.f90, identical in RG_1P, RG_2D, and
-! RG_2P); the working kind is the one selected by RG_0S/src/wp_def_<PREC>.f90.
+! The routines tested are the Bessel routines of the ECGPACK module misc
+! (RG_0S/src/misc.f90, identical in all energy codes); the working kind is
+! the one selected by RG_0S/src/wp_def_<PREC>.f90.
 !
 ! By default the program reads bessel_k01_mpmath_reference.dat from the
 ! current directory.  A different path may be supplied as the first command-
 ! line argument.
 program test_bessel_k01_wp
   use globvars, only: wp
-  use bessel, only: DBESK
+  use misc, only: DBESK
   implicit none
 
   integer :: Failures,IOStat,KODE,NZ,ReferenceUnit,Tests

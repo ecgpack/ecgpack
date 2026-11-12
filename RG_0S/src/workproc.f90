@@ -12272,10 +12272,10 @@ AreMomDensNeeded   = .false.
           if (SymmAdaptMethod==1) then
             do k=1,Glob_NumYHYTerms
               call MatrixElementsAll_RG_0S(Lh(1,1,i),Lh(1,1,j),Ah(1,1,i),Ah(1,1,j), &
-                                             IdentityPerm,Glob_YHYMatr(1:n,1:n,k),Hkl,Skl,Tkl,Trkl,Vkl,rm2kl,rmkl,rkl,r2kl,          &
-                           deltarkl,drach_deltarkl,MVkl,drach_MVkl1,drach_MVkl2,drach_MVkl3,Darwinkl,drach_Darwinkl,OOkl,rmrmkl,   &
-                                             del2kl,prvalkl,wf2originkl,NumCFGridPoints,CFGrid,CFkl,NumDensGridPoints,DensGrid, &
-                                             Denskl,AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMomDensNeeded)
+                     IdentityPerm,Glob_YHYMatr(1:n,1:n,k),Hkl,Skl,Tkl,Trkl,Vkl,rm2kl,rmkl,rkl,r2kl, &
+                     deltarkl,drach_deltarkl,MVkl,drach_MVkl1,drach_MVkl2,drach_MVkl3,Darwinkl,drach_Darwinkl,OOkl,rmrmkl, &
+                     del2kl,prvalkl,wf2originkl,NumCFGridPoints,CFGrid,CFkl,NumDensGridPoints,DensGrid, &
+                     Denskl,AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMomDensNeeded)
               c=0
               do a=1,n
                 do b=a,n
@@ -12431,10 +12431,10 @@ AreMomDensNeeded   = .false.
             do k=1,Glob_NumYTerms
               do kk=1,Glob_NumYTerms
                 call MatrixElementsAll_RG_0S(Lh(1,1,i),Lh(1,1,j),Ah(1,1,i),Ah(1,1,j), &
-                                               Glob_YMatr(1:n,1:n,k),Glob_YMatr(1:n,1:n,kk),Hkl,Skl,Tkl,Trkl,Vkl,rm2kl,rmkl,rkl,r2kl,  &
-                            deltarkl,drach_deltarkl,MVkl,drach_MVkl1,drach_MVkl2,drach_MVkl3,Darwinkl,drach_Darwinkl,OOkl,rmrmkl,  &
-                                               del2kl,prvalkl,wf2originkl,NumCFGridPoints,CFGrid,CFkl,NumDensGridPoints,DensGrid, &
-                                               Denskl,AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMomDensNeeded)
+                       Glob_YMatr(1:n,1:n,k),Glob_YMatr(1:n,1:n,kk),Hkl,Skl,Tkl,Trkl,Vkl,rm2kl,rmkl,rkl,r2kl, &
+                       deltarkl,drach_deltarkl,MVkl,drach_MVkl1,drach_MVkl2,drach_MVkl3,Darwinkl,drach_Darwinkl,OOkl,rmrmkl, &
+                       del2kl,prvalkl,wf2originkl,NumCFGridPoints,CFGrid,CFkl,NumDensGridPoints,DensGrid, &
+                       Denskl,AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMomDensNeeded)
                 c=0
                 do a=1,n
                   do b=a,n

@@ -17,11 +17,11 @@ and its exponentially scaled form
 \widehat K_\nu(x)=e^xK_\nu(x).
 \]
 
-The implementation is the module `bessel` in
-[`RG_0S/src/bessel.f90`](../../../RG_0S/src/bessel.f90), with its coefficient
-tables in the module `bessel_coeff` in
-[`RG_0S/src/bessel_coeff.f90`](../../../RG_0S/src/bessel_coeff.f90). Identical
-copies of both files are compiled into `RG_1P`, `RG_2D`, and `RG_2P`. The
+The implementation, together with its coefficient tables, is part of the
+module `misc` in [`RG_0S/src/misc.f90`](../../../RG_0S/src/misc.f90).
+Identical copies of that file are compiled into every energy code (`RG_1P`,
+`RG_2D`, `RG_2P`, `PG_0S`, `PG_1P`, `CG_0S`); currently only the four `RG_*`
+codes call the Bessel routines. The
 public entry point is `DBESK(X,FNU,KODE,N,Y,NZ[,F1MinusOne])`. `KODE=1` returns the unscaled function and
 `KODE=2` returns the scaled function. The output sequence is
 
@@ -58,10 +58,10 @@ of the build (`PREC`), taken from `src/wp_def_<PREC>.f90` through `globvars`.
 
 The relevant files are:
 
-- [`RG_0S/src/bessel_coeff.f90`](../../../RG_0S/src/bessel_coeff.f90)
-  (module `bessel_coeff`): regenerated Debye and reciprocal-gamma coefficient
-  tables;
-- [`RG_0S/src/bessel.f90`](../../../RG_0S/src/bessel.f90) (module `bessel`):
+- [`RG_0S/src/misc.f90`](../../../RG_0S/src/misc.f90) (module `misc`, which
+  also holds unrelated auxiliary routines):
+  - `Bessel_DebyeC`, `Bessel_RecipGammaC`: regenerated Debye and
+    reciprocal-gamma coefficient tables, in the module specification part;
   - `DBESK`: public sequence driver, range checks, large-order routing, and
     forward order recurrence;
   - `DBSKNU`: small-order starting values from a power series, Miller
@@ -529,14 +529,13 @@ build_dir=/tmp/ecgpack_bessel_p$PREC
 mkdir -p "$build_dir"
 
 for f in RG_0S/src/wp_def_$PREC.f90 RG_0S/src/X1MACH.f90 \
-         RG_0S/src/globvars.f90 RG_0S/src/bessel_coeff.f90 \
-         RG_0S/src/bessel.f90 \
+         RG_0S/src/globvars.f90 RG_0S/src/misc.f90 \
          doc/devnotes/mod_Bessel_high_precision/test_bessel_k01_wp.f90; do
   mpif90 -cpp -O2 -J"$build_dir" -I"$build_dir" \
     -c "$f" -o "$build_dir/$(basename "$f" .f90).o"
 done
 
-mpif90 "$build_dir"/{wp_def_$PREC,X1MACH,globvars,bessel_coeff,bessel,test_bessel_k01_wp}.o \
+mpif90 "$build_dir"/{wp_def_$PREC,X1MACH,globvars,misc,test_bessel_k01_wp}.o \
   -o "$build_dir/test_bessel_k01_wp"
 ```
 

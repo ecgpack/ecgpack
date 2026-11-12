@@ -176,7 +176,7 @@ The `RG_*` density examples cover both coordinate space (`DENSITIES`) and moment
 In the four real-ECG energy codes and the two PG codes, which have the fullest source set, module order is:
 
 ```text
-wp_def_<PREC> -> globvars -> misc, linalg, spin, bessel_coeff -> bessel (RG_* only) -> matelem -> matform -> qrupdate -> qrlinalg -> workproc -> main
+wp_def_<PREC> -> globvars -> misc, linalg, spin -> matelem -> matform -> qrupdate -> qrlinalg -> workproc -> main
 ```
 
 CUDA builds (`USE_CUDA=yes`) add `gpu_backend` after `matelem`, ahead of `matform`, `workproc`, and `main`.
@@ -192,12 +192,11 @@ Important files:
 
 - `wp_def_<PREC>.f90`: working precision kind, MPI real type, and `Glob_AllowedNumOfParticles`
 - `globvars.f90`: global state, physical constants, numerical constants, basis/matrix storage; this includes both `Glob_PseudoChargeMatrix` and the pre-scaled `Glob_ScaledPseudoChargeMatrix`. Particle-count-derived sizes are compile-time constants; see the dimension and interface rules below
-- `misc.f90`: miscellaneous helper routines
+- `misc.f90`: auxiliary numerical routines: the `drnor` normal random-number generator, the one-dimensional minimizers `DA17LSM` and `DFMINM`, and working-kind ports of the SLATEC modified Bessel K routines (`DBESK`, `DBSKNU`, `DASYIK`) with their coefficient tables (`Bessel_DebyeC`, `Bessel_RecipGammaC`). `misc.f90` is byte-identical in all seven energy codes (`RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, `PG_0S`, `PG_1P`, `CG_0S`); keep it that way, even though some codes do not reference every routine (provenance in `THIRD-PARTY-NOTICES.md`; development notes in `doc/devnotes/mod_Bessel_high_precision/`); `MatrixElementsAll_<BASIS>` uses the Bessel routines for the semi-relativistic kinetic energy `sqrt(m^2c^4+p^2c^2)-mc^2`, printed as `semi_rel_T` by `EXPC_VALS`
 - `linalg.f90`: linear-algebra wrappers over BLAS/LAPACK, including performance-aware serial/MPI routing and cache-blocked LDL factorization paths
 - `BLAS.f`, `LAPACK.f`: bundled modified reference sources used with `LINALG=netlib`
 - `dmng.f`, `X1MACH.f90`: nonlinear optimizer support and machine constants
 - `spin.f90`: spin algebra and permutation-symmetry projection
-- `bessel.f90`, `bessel_coeff.f90`: working-kind ports of the SLATEC modified Bessel K routines (`DBESK`, `DBSKNU`, `DASYIK`) and their coefficient tables, identical in the four real-ECG energy codes (provenance in `THIRD-PARTY-NOTICES.md`; development notes in `doc/devnotes/mod_Bessel_high_precision/`); `MatrixElementsAll_<BASIS>` uses them for the semi-relativistic kinetic energy `sqrt(m^2c^4+p^2c^2)-mc^2`, printed as `semi_rel_T` by `EXPC_VALS`
 - `matelem.f90`: matrix elements between individual basis functions
 - `matform.f90`: assembly of Hamiltonian and overlap matrices
 - `qrlinalg.f90` and `qrupdate/`: QR factorization/update state used by method `Q` in the four real-ECG energy codes and the two PG codes. `qrlinalg.f90` is identical in `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, and `PG_0S` and nearly so in `PG_1P`, so a Q-solver fix normally goes into all six

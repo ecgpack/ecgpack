@@ -1619,13 +1619,13 @@ contains
           !print*, "factor = ", factor
           do k=1,nFactorial
                                         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            call MatrixElementsAll_RG_1P(Glob_Index0(i),Glob_Index1(j),            &
-                                             Glob_NonlinParam0(1:npt,i),Glob_NonlinParam1(1:npt,j),                     &
-                                             IdentityPerm,ketYMatrix(1:n,1:n,k),Hkl,Skl,Tkl,Vkl,                    &
-                                             rm2kl,rmkl,rkl,r2kl,deltarkl,drach_deltarkl,MVkl,drach_MVkl,             &
-                                             Darwinkl,drach_Darwinkl,OOkl,rmrmkl,prvalkl,NumCFGridPoints,CFGrid,CFkl, &
-                                             NumDensGridPoints,DensGrid,Denskl,.false.,.false., &
-                                             .false.,.false.)
+            call MatrixElementsAll_RG_1P(Glob_Index0(i),Glob_Index1(j), &
+                   Glob_NonlinParam0(1:npt,i),Glob_NonlinParam1(1:npt,j), &
+                   IdentityPerm,ketYMatrix(1:n,1:n,k),Hkl,Skl,Tkl,Vkl, &
+                   rm2kl,rmkl,rkl,r2kl,deltarkl,drach_deltarkl,MVkl,drach_MVkl, &
+                   Darwinkl,drach_Darwinkl,OOkl,rmrmkl,prvalkl,NumCFGridPoints,CFGrid,CFkl, &
+                   NumDensGridPoints,DensGrid,Denskl,.false.,.false., &
+                   .false.,.false.)
 
             c=0
             do a=1,n

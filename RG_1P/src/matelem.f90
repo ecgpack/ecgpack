@@ -2,7 +2,7 @@ module matelem
 !Module matelem contains subroutines for computing
 !matrix elements with real L=1 Gaussians without normalization
   use globvars
-  use bessel
+  use misc
   implicit none
 
 contains

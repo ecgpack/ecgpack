@@ -45,7 +45,7 @@ PREC=8
 # quadruple precision. For PREC=10 and PREC=16 the value of LINALG must be netlib.
 LINALG=netlib
 
-# Native CUDA Fortran backend. Requires NVHPC nvfortran and PREC=8.
+# Native CUDA Fortran matrix assembly. Requires NVHPC nvfortran and PREC=8.
 USE_CUDA ?= no
 # CUDA_ARCH is the GPU compute capability (CC 8.0 -> sm_80 -> nvfortran -gpu=cc80).
 # Find the GPU model with nvidia-smi on a compute node, then look up its CC at
@@ -246,7 +246,7 @@ endif
 export OBJS_LPKBLS=$(addprefix $(BUILD_DIR)/,$(BARE_OBJS_LPKBLS))
 
 export BARE_OBJS=wp_def_$(PREC).o X1MACH.o dmng.o globvars.o misc.o linalg.o \
-              bessel_coeff.o bessel.o matelem.o matform.o \
+              matelem.o matform.o \
               qrupdate_linalg.o qrupdate_error.o \
               qrupdate_real.o qrupdate_complex.o qrupdate.o qrlinalg.o \
               workproc.o main.o spin.o
@@ -344,13 +344,7 @@ $(BUILD_DIR)/spin.o: $(SRC_DIR)/spin.f90 $(BUILD_DIR)/globvars.o
 $(BUILD_DIR)/misc.o: $(SRC_DIR)/misc.f90 $(BUILD_DIR)/globvars.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/misc.f90 -o $(BUILD_DIR)/misc.o
 
-$(BUILD_DIR)/bessel_coeff.o: $(SRC_DIR)/bessel_coeff.f90 $(BUILD_DIR)/globvars.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/bessel_coeff.f90 -o $(BUILD_DIR)/bessel_coeff.o
-
-$(BUILD_DIR)/bessel.o: $(SRC_DIR)/bessel.f90 $(BUILD_DIR)/bessel_coeff.o $(BUILD_DIR)/globvars.o
-	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/bessel.f90 -o $(BUILD_DIR)/bessel.o
-
-$(BUILD_DIR)/matelem.o: $(SRC_DIR)/matelem.f90 $(BUILD_DIR)/globvars.o $(BUILD_DIR)/spin.o $(BUILD_DIR)/bessel.o
+$(BUILD_DIR)/matelem.o: $(SRC_DIR)/matelem.f90 $(BUILD_DIR)/globvars.o $(BUILD_DIR)/spin.o $(BUILD_DIR)/misc.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/matelem.f90 -o $(BUILD_DIR)/matelem.o
 
 $(BUILD_DIR)/gpu_backend.o: $(SRC_DIR)/gpu_backend.f90 $(BUILD_DIR)/globvars.o $(BUILD_DIR)/matelem.o

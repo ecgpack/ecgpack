@@ -13010,13 +13010,13 @@ contains
           if (SymmAdaptMethod==1) then
             do k=1,Glob_NumYHYTerms
              !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-              call MatrixElementsAll_RG_2D(Glob_Index(i,1),Glob_Index(i,2),Glob_Index(j,1),Glob_Index(j,2),  &
-                                                Lh(1,1,i),Lh(1,1,j),Ah(1,1,i),Ah(1,1,j),                                 &
-                                                IdentityPerm,Glob_YHYMatr(1:n,1:n,k),Hkl,Skl,Tkl,Trkl,Vkl,               &
-                                                rm2kl,rmkl,rkl,r2kl,deltarkl,drach_deltarkl,MVkl,drach_MVkl1,drach_MVkl2,   &
-                                                Darwinkl,drach_Darwinkl,OOkl,rmrmkl,prvalkl,NumCFGridPoints,CFGrid, &
-                                                CFkl,NumDensGridPoints,DensGrid,Denskl, &
-                                                AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMomDensNeeded)
+              call MatrixElementsAll_RG_2D(Glob_Index(i,1),Glob_Index(i,2),Glob_Index(j,1),Glob_Index(j,2), &
+                     Lh(1,1,i),Lh(1,1,j),Ah(1,1,i),Ah(1,1,j), &
+                     IdentityPerm,Glob_YHYMatr(1:n,1:n,k),Hkl,Skl,Tkl,Trkl,Vkl, &
+                     rm2kl,rmkl,rkl,r2kl,deltarkl,drach_deltarkl,MVkl,drach_MVkl1,drach_MVkl2, &
+                     Darwinkl,drach_Darwinkl,OOkl,rmrmkl,prvalkl,NumCFGridPoints,CFGrid, &
+                     CFkl,NumDensGridPoints,DensGrid,Denskl, &
+                     AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMomDensNeeded)
               c=0
               do a=1,n
                 do b=a,n
@@ -13160,13 +13160,13 @@ contains
 
             do k=1,Glob_NumYTerms
               do kk=1,Glob_NumYTerms
-                call MatrixElementsAll_RG_2D(Glob_Index(i,1),Glob_Index(i,2),Glob_Index(j,1), Glob_Index(j,2),  &
-                                                  Lh(1,1,i),Lh(1,1,j),Ah(1,1,i),Ah(1,1,j),                                 &
-                                                  Glob_YMatr(1:n,1:n,k),Glob_YMatr(1:n,1:n,kk),Hkl,Skl,Tkl,Trkl,Vkl,       &
-                                                  rm2kl,rmkl,rkl,r2kl,deltarkl,drach_deltarkl,MVkl,drach_MVkl1, drach_MVkl2,  &
-                                                  Darwinkl,drach_Darwinkl,OOkl,rmrmkl,prvalkl,NumCFGridPoints,CFGrid, &
-                                                  CFkl,NumDensGridPoints,DensGrid,Denskl, &
-                                                  AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMomDensNeeded)
+                call MatrixElementsAll_RG_2D(Glob_Index(i,1),Glob_Index(i,2),Glob_Index(j,1), Glob_Index(j,2), &
+                       Lh(1,1,i),Lh(1,1,j),Ah(1,1,i),Ah(1,1,j), &
+                       Glob_YMatr(1:n,1:n,k),Glob_YMatr(1:n,1:n,kk),Hkl,Skl,Tkl,Trkl,Vkl, &
+                       rm2kl,rmkl,rkl,r2kl,deltarkl,drach_deltarkl,MVkl,drach_MVkl1, drach_MVkl2, &
+                       Darwinkl,drach_Darwinkl,OOkl,rmrmkl,prvalkl,NumCFGridPoints,CFGrid, &
+                       CFkl,NumDensGridPoints,DensGrid,Denskl, &
+                       AreCorrFuncNeeded,ArePartDensNeeded,AreMCorrFuncNeeded,AreMomDensNeeded)
                 c=0
                 do a=1,n
                   do b=a,n
