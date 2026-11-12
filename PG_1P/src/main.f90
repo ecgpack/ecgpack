@@ -56,6 +56,7 @@ PROGRAM main
 
   IF (Glob_ProcID == 0) THEN
     WRITE(*, '(1x,a,1x,a,1x,a)') 'Program', Glob_BasisType, 'started'
+    WRITE(*, '(1x,a,1x,i0)') 'Working precision (wp):', wp
     WRITE(*, '(1x,a,1x,i0)') 'Number of parallel MPI processes running:', Glob_NumOfProcs
     WRITE(*, *)
   ENDIF

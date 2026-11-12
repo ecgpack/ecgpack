@@ -17,6 +17,7 @@ program main
 
   if (Glob_ProcID==0) then
     write (*,*) 'Program RG_1P-2P started'
+    write (*,'(1x,a,1x,i0)') 'Working precision (wp):',wp
     write (*,'(1x,a,1x,i0)') 'Number of parallel MPI processes running:',Glob_NumOfProcs
     write(*,*)
     write(*,'(2X,A)')'Transition under consideration:'

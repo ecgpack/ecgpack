@@ -1,15 +1,15 @@
 #!/bin/bash
 
-# This script is used to monitor the progress of calculations on clusters such as Shabyt, Muon, and others
+# This script is used to monitor the progress of calculations on clusters such as Shabyt, Irgetas, and others
 # that are using SLURM for job scheduling. The script will print the current state of each job specified
 # in the script (some minimal and straightforward manual adjustments are needed by the user), such as the
 # current energy, basis size, number of optimization steps made, energy, excitation energy, SLURM status,
 # JoBID, run time, and health status of the job. The script will print the output in a table format with
-# columns separated by spaces. Depending on how things are setup, the output may be up to 140 characters
+# columns separated by spaces. Depending on how things are setup, the output may be up to 156 characters
 # wide.
 
 # Full path to the directory where all individual job directories are located
-JOBSDIR="/shared/home/sergiy.bubin/ecg/jobs"
+JOBSDIR="/shared/home/sergiy.bubin/ecgpack/jobs"
 
 # Flag to toggle between automatic and manual directory list mode (set true of false).
 # In the automatic mode, the script will search for directories with the prefix specified by JOBPREFIX.
@@ -18,7 +18,25 @@ USE_MANUAL_DIR_LIST=true
 
 # Manual list of directories (space-separated, only needed if USE_MANUAL_DIR_LIST=true; 
 # if any item begins with "-" then a ruler in the form of a dashed line will be printed)
-MANUAL_DIR_LIST=("B-_3Pe-01" "B-_1De-01" "---" "C_3Pe-01" "C_1Se-01" "C_3Se-01" "C_1Se-02" "C_3Se-02" "C_1Se-03" "---" "O_1De-01" "O_1Se-01")
+MANUAL_DIR_LIST=(
+  "B_2Po-01"
+  "---"
+  "C+_2Po-01"
+  "---"
+  # "B-_3Pe-01"
+  # "B-_1De-01"
+  # "---"
+  "C_3Pe-01"
+  "C_1Se-01"
+  "C_1Pe-01"
+  "C_3Se-01"
+  "C_3Pe-02"
+  "C_1Se-02"
+  "C_1Pe-02"
+  "C_3Se-02"
+  "C_3Pe-03"
+  "C_1Se-03"
+)
 
 # Prefix for the job directories (if not using manual list and doing auto-search, it is only needed when USE_MANUAL_DIR_LIST=false).
 # For example, if "C_" is used then all directories with the names beginning with "C_" will be processed.
@@ -47,6 +65,11 @@ GROUND_STATE_ENERGY="-0.3784318600795520E+02"
 # If the flag is set to false, the script will skip printing the columns showing the SLURM status.
 SHOW_JOB_SLURM_STATUS=true
 
+# Flag to show the list of nodes allocated to the job (set true or false). The node list is taken from the
+# last column of the squeue output. This flag only has an effect when SHOW_JOB_SLURM_STATUS=true, in which
+# case the column named NODELIST is printed right after the column named CPUS.
+SHOW_NODELIST=true
+
 # Flag to show the execution time of the job in a SLURM queue (set true or false).
 SHOW_JOB_RUNTIME=true
 
@@ -72,9 +95,9 @@ export TITLE+="@"
 export TITLE+=$HOSTNAME
 
 # Construct separator lines (their length depends on how many columns are shown)
-SEPLINE_DOUBLE="══════════════════"
-SEPLINE_SINGLE="──────────────────"
-SEPLINE_DASHED="------------------"
+SEPLINE_DOUBLE="═════════════════════"
+SEPLINE_SINGLE="─────────────────────"
+SEPLINE_DASHED="---------------------"
 if [ "$SHOW_LIST_ITEM_NUMBER" = true ]; then
     export SEPLINE_DOUBLE+="════"
     export SEPLINE_SINGLE+="────"
@@ -91,9 +114,9 @@ if [ "$SHOW_OPTSTP" = true ]; then
     export SEPLINE_DASHED+="----------"
 fi
 if [ "$SHOW_ENERGY" = true ]; then
-    export SEPLINE_DOUBLE+="═════════════════════"
-    export SEPLINE_SINGLE+="─────────────────────"
-    export SEPLINE_DASHED+="---------------------"
+    export SEPLINE_DOUBLE+="══════════════════════"
+    export SEPLINE_SINGLE+="──────────────────────"
+    export SEPLINE_DASHED+="----------------------"
 fi
 if [ "$SHOW_EXCITATION_ENERY" = true ]; then
     export SEPLINE_DOUBLE+="════════════════════"
@@ -104,6 +127,11 @@ if [ "$SHOW_JOB_SLURM_STATUS" = true ]; then
     export SEPLINE_DOUBLE+="══════════════════════════════════"
     export SEPLINE_SINGLE+="──────────────────────────────────"
     export SEPLINE_DASHED+="----------------------------------"
+    if [ "$SHOW_NODELIST" = true ]; then
+        export SEPLINE_DOUBLE+="═══════════"
+        export SEPLINE_SINGLE+="───────────"
+        export SEPLINE_DASHED+="-----------"
+    fi
 fi
 if [ "$SHOW_JOB_RUNTIME" = true ]; then
     export SEPLINE_DOUBLE+="════════════"
@@ -135,7 +163,7 @@ fi
 #Create a file with the current state of the queue
 if [ "$SHOW_JOB_SLURM_STATUS" = true ]; then
     SQUEUEOUTPUT=temp_file_scr_output_squeue.txt
-    squeue -o "%.6i %.6P %.12j %.19u %.2t %.11M %.8Q %.5D %.4C %.11R" -u $USERNAME > $SQUEUEOUTPUT
+    squeue -o "%.6i %.6P %.15j %.19u %.2t %.11M %.8Q %.5D %.4C %.11R" -u $USERNAME > $SQUEUEOUTPUT
 fi
 
 # Loop over wanted job directories
@@ -145,7 +173,7 @@ printf "%s\n" "$SEPLINE_SINGLE"
 if [ "$SHOW_LIST_ITEM_NUMBER" = true ]; then
     printf "%-4s" "#"
 fi
-printf "%-12s" "STATE"
+printf "%-15s" "STATE"
 if [ "$SHOW_EIGENVALUE_NUMBER" = true ]; then
     printf " %-2s" "EV"
 fi
@@ -154,13 +182,16 @@ if [ "$SHOW_OPTSTP" = true ]; then
     printf " %9s" "O_CYC_STP"
 fi
 if [ "$SHOW_ENERGY" = true ]; then
-    printf " %20s" "CURRENT_ENERGY"
+    printf " %21s" "CURRENT_ENERGY"
 fi
 if [ "$SHOW_EXCITATION_ENERY" = true ]; then
     printf " %18s" "EXCITATION_ENERGY"
 fi
 if [ "$SHOW_JOB_SLURM_STATUS" = true ]; then
     printf " %5s %6s %8s %5s %5s" "QSTAT" "JOBID" "PARTIT" "NODES" "CPUS"
+    if [ "$SHOW_NODELIST" = true ]; then
+        printf " %10s" "NODELIST"
+    fi
 fi
 if [ "$SHOW_JOB_RUNTIME" = true ]; then
     printf " %11s" "RUN_TIME"
@@ -189,7 +220,7 @@ for STATEFULLDIR in "${DIRS[@]}"; do
     if [ "$SHOW_LIST_ITEM_NUMBER" = true ]; then
         printf "%-4s" "$ITEM_NUM"
     fi
-    printf "%-12s" "$STATEDIR"
+    printf "%-15s" "$STATEDIR"
     # Extract the data from the job input and screen output files, if they exists
     if [[ -f $INOUTFILE ]]; then
         if [ "$SHOW_EIGENVALUE_NUMBER" = true ]; then
@@ -210,7 +241,7 @@ for STATEFULLDIR in "${DIRS[@]}"; do
         if [ "$SHOW_ENERGY" = true ]; then
             CURRENERGY_UNFORMATTED=$(grep 'CURRENT_ENERGY' "$INOUTFILE" | awk '{print $2}')
             CURRENERGY=$(printf "%.15f" "$CURRENERGY_UNFORMATTED")
-            printf " %20s" "$CURRENERGY"
+            printf " %21s" "$CURRENERGY"
         fi
         EXCITATION_ENERGY=""
         if [ "$SHOW_EXCITATION_ENERY" = true ]; then
@@ -223,6 +254,7 @@ for STATEFULLDIR in "${DIRS[@]}"; do
         PARTITION=""
         NODES=""
         CPUS=""
+        NODELIST=""
         if [ "$SHOW_JOB_SLURM_STATUS" = true ]; then
             if grep -q "$STATEDIR.*R\|R.*$STATEDIR" "$SQUEUEOUTPUT"; then
                 STATUS="R"
@@ -230,6 +262,7 @@ for STATEFULLDIR in "${DIRS[@]}"; do
                 PARTITION=$(grep "$STATEDIR" "$SQUEUEOUTPUT" | awk '{print $2}')
                 NODES=$(grep "$STATEDIR" "$SQUEUEOUTPUT" | awk '{print $8}')
                 CPUS=$(grep "$STATEDIR" "$SQUEUEOUTPUT" | awk '{print $9}')
+                NODELIST=$(grep "$STATEDIR" "$SQUEUEOUTPUT" | awk '{print $10}')
             fi
             if grep -q "$STATEDIR.*PD\|PD.*$STATEDIR" "$SQUEUEOUTPUT"; then
                 STATUS="PD"
@@ -237,8 +270,12 @@ for STATEFULLDIR in "${DIRS[@]}"; do
                 PARTITION=$(grep "$STATEDIR" "$SQUEUEOUTPUT" | awk '{print $2}')
                 NODES=$(grep "$STATEDIR" "$SQUEUEOUTPUT" | awk '{print $8}')
                 CPUS=$(grep "$STATEDIR" "$SQUEUEOUTPUT" | awk '{print $9}')
+                NODELIST=$(grep "$STATEDIR" "$SQUEUEOUTPUT" | awk '{print $10}')
             fi
             printf " %5s %6s %8s %5s %5s" "$STATUS" "$JOBID" "$PARTITION" "$NODES" "$CPUS"
+            if [ "$SHOW_NODELIST" = true ]; then
+                printf " %10s" "$NODELIST"
+            fi
         fi
         if [ "$SHOW_JOB_RUNTIME" = true ]; then
             RUNTIME=""

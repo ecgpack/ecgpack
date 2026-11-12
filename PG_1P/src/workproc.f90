@@ -10688,8 +10688,8 @@ CONTAINS
       ELSE
         WRITE(*, *) 'Initial energy                            ', Glob_CurrEnergy
       ENDIF
-      IF (Verbose >= 1) WRITE(*, *) 'Maximal overlap                           ', MaxAbsOverlap
-      IF (Verbose >= 1) WRITE(*, *) 'Minimal overlap                           ', MinAbsOverlap
+      IF (Verbose >= 1) WRITE(*, *) 'Maximum overlap                           ', MaxAbsOverlap
+      IF (Verbose >= 1) WRITE(*, *) 'Minimum overlap                           ', MinAbsOverlap
       IF (Verbose >= 1) WRITE(*, *) 'Average abs value of overlap              ', AverageAbsOverlap
     ENDIF
     CALL CPU_TIME(Glob_TimeSinceStart)
@@ -10799,8 +10799,8 @@ CONTAINS
               ELSE
                 WRITE(*, *) 'Energy                            ', Evalue
               ENDIF
-              IF (Verbose >= 1) WRITE(*, *) 'Maximal overlap                   ', MaxAbsOverlap
-              IF (Verbose >= 1) WRITE(*, *) 'Minimal overlap                   ', MinAbsOverlap
+              IF (Verbose >= 1) WRITE(*, *) 'Maximum overlap                   ', MaxAbsOverlap
+              IF (Verbose >= 1) WRITE(*, *) 'Minimum overlap                   ', MinAbsOverlap
               IF (Verbose >= 1) WRITE(*, *) 'Average abs value of overlap      ', AverageAbsOverlap
               TimeOfLastSave = Glob_TimeSinceStart
             ENDIF
@@ -10906,8 +10906,8 @@ CONTAINS
       ELSE
         IF (Verbose >= 1) WRITE(*, *) 'Energy                            ', Evalue
       ENDIF
-      IF (Verbose >= 1) WRITE(*, *) 'Maximal overlap                   ', MaxAbsOverlap
-      IF (Verbose >= 1) WRITE(*, *) 'Minimal overlap                   ', MinAbsOverlap
+      IF (Verbose >= 1) WRITE(*, *) 'Maximum overlap                   ', MaxAbsOverlap
+      IF (Verbose >= 1) WRITE(*, *) 'Minimum overlap                   ', MinAbsOverlap
       IF (Verbose >= 1) WRITE(*, *) 'Average abs value of overlap      ', AverageAbsOverlap
       ! Verbose 0: the energy and whether the parameters were optimized
       IF (Verbose < 1) THEN
@@ -15320,8 +15320,8 @@ CONTAINS
       ELSE
         WRITE(*, *) 'Initial energy                            ', Glob_CurrEnergy
       ENDIF
-      IF (Verbose >= 1) WRITE(*, *) 'Maximal overlap                           ', MaxAbsOverlap
-      IF (Verbose >= 1) WRITE(*, *) 'Minimal overlap                           ', MinAbsOverlap
+      IF (Verbose >= 1) WRITE(*, *) 'Maximum overlap                           ', MaxAbsOverlap
+      IF (Verbose >= 1) WRITE(*, *) 'Minimum overlap                           ', MinAbsOverlap
       IF (Verbose >= 1) WRITE(*, *) 'Average abs value of overlap              ', AverageAbsOverlap
     ENDIF
 
@@ -15476,8 +15476,8 @@ CONTAINS
               ELSE
                 WRITE(*, *) 'Energy                            ', Evalue
               ENDIF
-              IF (Verbose >= 1) WRITE(*, *) 'Maximal overlap                   ', MaxAbsOverlap
-              IF (Verbose >= 1) WRITE(*, *) 'Minimal overlap                   ', MinAbsOverlap
+              IF (Verbose >= 1) WRITE(*, *) 'Maximum overlap                   ', MaxAbsOverlap
+              IF (Verbose >= 1) WRITE(*, *) 'Minimum overlap                   ', MinAbsOverlap
               IF (Verbose >= 1) WRITE(*, *) 'Average abs value of overlap      ', AverageAbsOverlap
               TimeOfLastSave = Glob_TimeSinceStart
             ENDIF
@@ -15603,8 +15603,8 @@ CONTAINS
       ELSE
         IF (Verbose >= 1) WRITE(*, *) 'Energy                            ', Evalue
       ENDIF
-      IF (Verbose >= 1) WRITE(*, *) 'Maximal overlap                   ', MaxAbsOverlap
-      IF (Verbose >= 1) WRITE(*, *) 'Minimal overlap                   ', MinAbsOverlap
+      IF (Verbose >= 1) WRITE(*, *) 'Maximum overlap                   ', MaxAbsOverlap
+      IF (Verbose >= 1) WRITE(*, *) 'Minimum overlap                   ', MinAbsOverlap
       IF (Verbose >= 1) WRITE(*, *) 'Average abs value of overlap      ', AverageAbsOverlap
       ! Verbose 0: the energy and whether the parameters were optimized
       IF (Verbose < 1) THEN
@@ -15983,8 +15983,8 @@ CONTAINS
       ELSE
         WRITE(*, *) 'Initial energy                            ', Glob_CurrEnergy
       ENDIF
-      IF (Verbose >= 1) WRITE(*, *) 'Maximal overlap                           ', MaxAbsOverlap
-      IF (Verbose >= 1) WRITE(*, *) 'Minimal overlap                           ', MinAbsOverlap
+      IF (Verbose >= 1) WRITE(*, *) 'Maximum overlap                           ', MaxAbsOverlap
+      IF (Verbose >= 1) WRITE(*, *) 'Minimum overlap                           ', MinAbsOverlap
       IF (Verbose >= 1) WRITE(*, *) 'Average abs value of overlap              ', AverageAbsOverlap
     ENDIF
 
@@ -16155,8 +16155,8 @@ CONTAINS
               ELSE
                 WRITE(*, *) 'Energy                            ', Evalue
               ENDIF
-              IF (Verbose >= 1) WRITE(*, *) 'Maximal overlap                   ', MaxAbsOverlap
-              IF (Verbose >= 1) WRITE(*, *) 'Minimal overlap                   ', MinAbsOverlap
+              IF (Verbose >= 1) WRITE(*, *) 'Maximum overlap                   ', MaxAbsOverlap
+              IF (Verbose >= 1) WRITE(*, *) 'Minimum overlap                   ', MinAbsOverlap
               IF (Verbose >= 1) WRITE(*, *) 'Average abs value of overlap      ', AverageAbsOverlap
               TimeOfLastSave = Glob_TimeSinceStart
             ENDIF
@@ -16281,8 +16281,8 @@ CONTAINS
       ELSE
         IF (Verbose >= 1) WRITE(*, *) 'Energy                            ', Evalue
       ENDIF
-      IF (Verbose >= 1) WRITE(*, *) 'Maximal overlap                   ', MaxAbsOverlap
-      IF (Verbose >= 1) WRITE(*, *) 'Minimal overlap                   ', MinAbsOverlap
+      IF (Verbose >= 1) WRITE(*, *) 'Maximum overlap                   ', MaxAbsOverlap
+      IF (Verbose >= 1) WRITE(*, *) 'Minimum overlap                   ', MinAbsOverlap
       IF (Verbose >= 1) WRITE(*, *) 'Average abs value of overlap      ', AverageAbsOverlap
       ! Verbose 0: the energy and whether the parameters were optimized
       IF (Verbose < 1) THEN
@@ -16810,11 +16810,11 @@ CONTAINS
     IF (Glob_ProcID == 0) THEN
       WRITE(*, *)
       WRITE(*, *) '========== Summary before elimination: =========='
-      WRITE(*, *) 'Maximal by magnitude overlap         =', MaxOverlap
-      WRITE(*, *) 'Minimal by magnitude overlap         =', MinOverlap
+      WRITE(*, *) 'Maximum by magnitude overlap         =', MaxOverlap
+      WRITE(*, *) 'Minimum by magnitude overlap         =', MinOverlap
       WRITE(*, *) 'Average absolute value of overlap    =', AverOverlap
-      WRITE(*, *) 'Maximal by magnitude lin. coeff.     =', Max_c
-      WRITE(*, *) 'Minimal by magnitude lin. coeff.     =', Min_c
+      WRITE(*, *) 'Maximum by magnitude lin. coeff.     =', Max_c
+      WRITE(*, *) 'Minimum by magnitude lin. coeff.     =', Min_c
       WRITE(*, *) 'Average absolute value of lin. coeff.=', Average_c
       WRITE(*, *) 'Basis size before elimination =', cbs
       WRITE(*, *) 'Energy before elimination     =', Evalue
@@ -16909,11 +16909,11 @@ CONTAINS
       IF (Verbose >= 2) WRITE(*, *) ' done'
       WRITE(*, *)
       WRITE(*, *) '========== Summary after elimination: =========='
-      WRITE(*, *) 'Maximal by magnitude overlap         =', MaxOverlap
-      WRITE(*, *) 'Minimal by magnitude overlap         =', MinOverlap
+      WRITE(*, *) 'Maximum by magnitude overlap         =', MaxOverlap
+      WRITE(*, *) 'Minimum by magnitude overlap         =', MinOverlap
       WRITE(*, *) 'Average absolute value of overlap    =', AverOverlap
-      WRITE(*, *) 'Maximal by magnitude lin. coeff.     =', Max_c
-      WRITE(*, *) 'Minimal by magnitude lin. coeff.     =', Min_c
+      WRITE(*, *) 'Maximum by magnitude lin. coeff.     =', Max_c
+      WRITE(*, *) 'Minimum by magnitude lin. coeff.     =', Min_c
       WRITE(*, *) 'Average absolute value of lin. coeff.=', Average_c
       WRITE(*, *) 'Basis size after elimination  =', cbs
       WRITE(*, *) 'Energy after elimination      =', Evalue
@@ -17124,11 +17124,11 @@ CONTAINS
     IF (Glob_ProcID == 0) THEN
       WRITE(*, *)
       WRITE(*, *) '========== Summary before separation: =========='
-      WRITE(*, *) 'Maximal by magnitude overlap         =', MaxOverlap
-      WRITE(*, *) 'Minimal by magnitude overlap         =', MinOverlap
+      WRITE(*, *) 'Maximum by magnitude overlap         =', MaxOverlap
+      WRITE(*, *) 'Minimum by magnitude overlap         =', MinOverlap
       WRITE(*, *) 'Average absolute value of overlap    =', AverOverlap
-      WRITE(*, *) 'Maximal by magnitude lin. coeff.     =', Max_c
-      WRITE(*, *) 'Minimal by magnitude lin. coeff.     =', Min_c
+      WRITE(*, *) 'Maximum by magnitude lin. coeff.     =', Max_c
+      WRITE(*, *) 'Minimum by magnitude lin. coeff.     =', Min_c
       WRITE(*, *) 'Average absolute value of lin. coeff.=', Average_c
       WRITE(*, *) 'Basis size before separation =', cbs
       WRITE(*, *) 'Energy before separation     =', Evalue
@@ -17238,11 +17238,11 @@ CONTAINS
       IF (Verbose >= 2) WRITE(*, *) ' done'
       WRITE(*, *)
       WRITE(*, *) '========== Summary after separation: ==========='
-      WRITE(*, *) 'Maximal by magnitude overlap         =', MaxOverlap
-      WRITE(*, *) 'Minimal by magnitude overlap         =', MinOverlap
+      WRITE(*, *) 'Maximum by magnitude overlap         =', MaxOverlap
+      WRITE(*, *) 'Minimum by magnitude overlap         =', MinOverlap
       WRITE(*, *) 'Average absolute value of overlap    =', AverOverlap
-      WRITE(*, *) 'Maximal by magnitude lin. coeff.     =', Max_c
-      WRITE(*, *) 'Minimal by magnitude lin. coeff.     =', Min_c
+      WRITE(*, *) 'Maximum by magnitude lin. coeff.     =', Max_c
+      WRITE(*, *) 'Minimum by magnitude lin. coeff.     =', Min_c
       WRITE(*, *) 'Average absolute value of lin. coeff.=', Average_c
       WRITE(*, *) 'Basis size after separation  =', cbs
       WRITE(*, *) 'Energy after separation      =', Evalue
@@ -17493,11 +17493,11 @@ CONTAINS
 
     IF (Glob_ProcID == 0) THEN
       WRITE(*, *) '========== Summary before separation: =========='
-      WRITE(*, *) 'Maximal by magnitude overlap         =', MaxOverlap
-      WRITE(*, *) 'Minimal by magnitude overlap         =', MinOverlap
+      WRITE(*, *) 'Maximum by magnitude overlap         =', MaxOverlap
+      WRITE(*, *) 'Minimum by magnitude overlap         =', MinOverlap
       WRITE(*, *) 'Average absolute value of overlap    =', AverOverlap
-      WRITE(*, *) 'Maximal by magnitude lin. coeff.     =', Max_c
-      WRITE(*, *) 'Minimal by magnitude lin. coeff.     =', Min_c
+      WRITE(*, *) 'Maximum by magnitude lin. coeff.     =', Max_c
+      WRITE(*, *) 'Minimum by magnitude lin. coeff.     =', Min_c
       WRITE(*, *) 'Average absolute value of lin. coeff.=', Average_c
       WRITE(*, *) 'Basis size before separation =', cbs
       WRITE(*, *) 'Energy before separation     =', Evalue
@@ -17570,11 +17570,11 @@ CONTAINS
     IF (Glob_ProcID == 0) THEN
       IF (Verbose >= 2) WRITE(*, *) ' done'
       WRITE(*, *) '========== Summary after separation: ==========='
-      WRITE(*, *) 'Maximal by magnitude overlap         =', MaxOverlap
-      WRITE(*, *) 'Minimal by magnitude overlap         =', MinOverlap
+      WRITE(*, *) 'Maximum by magnitude overlap         =', MaxOverlap
+      WRITE(*, *) 'Minimum by magnitude overlap         =', MinOverlap
       WRITE(*, *) 'Average absolute value of overlap    =', AverOverlap
-      WRITE(*, *) 'Maximal by magnitude lin. coeff.     =', Max_c
-      WRITE(*, *) 'Minimal by magnitude lin. coeff.     =', Min_c
+      WRITE(*, *) 'Maximum by magnitude lin. coeff.     =', Max_c
+      WRITE(*, *) 'Minimum by magnitude lin. coeff.     =', Min_c
       WRITE(*, *) 'Average absolute value of lin. coeff.=', Average_c
       WRITE(*, *) 'Basis size after separation', cbs
       WRITE(*, *) 'Energy after separation    ', Evalue

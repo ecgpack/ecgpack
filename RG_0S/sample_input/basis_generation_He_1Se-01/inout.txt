@@ -17,7 +17,6 @@
  ==============================
  BASIS_ENL  G        1      5      1    500    200   0.95    3.0
  FULL_OPT1  G        5      1      5 999999   0.95    3.0     60     60      none
- FULL_OPT1  G        5      1      5 999999   0.95    3.0     60     60      none
  OPT_CYCLE  G        5      1      5      1      1     10    130   0.95    3.0     10
  SAVE_FILE  5      inout_He_1Se-01-00005.txt
  BASIS_ENL  I        6     10      1    500    200   0.95    3.0

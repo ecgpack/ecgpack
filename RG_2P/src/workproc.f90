@@ -6654,8 +6654,8 @@ contains
       else
         write(*,*) 'Initial energy                            ',Glob_CurrEnergy
       endif
-      write(*,*) 'Maximal overlap                           ',MaxAbsOverlap
-      write(*,*) 'Minimal overlap                           ',MinAbsOverlap
+      write(*,*) 'Maximum overlap                           ',MaxAbsOverlap
+      write(*,*) 'Minimum overlap                           ',MinAbsOverlap
       write(*,*) 'Average abs value of overlap              ',AverageAbsOverlap
     endif
 
@@ -6748,8 +6748,8 @@ contains
               else
                 write(*,*) 'Energy                            ',Evalue
               endif
-              write(*,*) 'Maximal overlap                   ',MaxAbsOverlap
-              write(*,*) 'Minimal overlap                   ',MinAbsOverlap
+              write(*,*) 'Maximum overlap                   ',MaxAbsOverlap
+              write(*,*) 'Minimum overlap                   ',MinAbsOverlap
               write(*,*) 'Average abs value of overlap      ',AverageAbsOverlap
               TimeOfLastSave=Glob_TimeSinceStart
             endif
@@ -6823,8 +6823,8 @@ contains
       else
         write(*,*) 'Energy                            ',Evalue
       endif
-      write(*,*) 'Maximal overlap                   ',MaxAbsOverlap
-      write(*,*) 'Minimal overlap                   ',MinAbsOverlap
+      write(*,*) 'Maximum overlap                   ',MaxAbsOverlap
+      write(*,*) 'Minimum overlap                   ',MinAbsOverlap
       write(*,*) 'Average abs value of overlap      ',AverageAbsOverlap
     endif
 
@@ -9571,8 +9571,8 @@ contains
       else
         write(*,*) 'Initial energy                            ',Glob_CurrEnergy
       endif
-      write(*,*)   'Maximal overlap                           ',MaxAbsOverlap
-      write(*,*)   'Minimal overlap                           ',MinAbsOverlap
+      write(*,*)   'Maximum overlap                           ',MaxAbsOverlap
+      write(*,*)   'Minimum overlap                           ',MinAbsOverlap
       write(*,*)   'Average abs value of overlap              ',AverageAbsOverlap
     endif
 
@@ -9689,8 +9689,8 @@ contains
               else
                 write(*,*) 'Energy                            ',Evalue
               endif
-              write(*,*)   'Maximal overlap                   ',MaxAbsOverlap
-              write(*,*)   'Minimal overlap                   ',MinAbsOverlap
+              write(*,*)   'Maximum overlap                   ',MaxAbsOverlap
+              write(*,*)   'Minimum overlap                   ',MinAbsOverlap
               write(*,*)   'Average abs value of overlap      ',AverageAbsOverlap
               TimeOfLastSave=Glob_TimeSinceStart
             endif
@@ -9796,8 +9796,8 @@ contains
       else
         write(*,*) 'Energy                            ',Evalue
       endif
-      write(*,*)   'Maximal overlap                   ',MaxAbsOverlap
-      write(*,*)   'Minimal overlap                   ',MinAbsOverlap
+      write(*,*)   'Maximum overlap                   ',MaxAbsOverlap
+      write(*,*)   'Minimum overlap                   ',MinAbsOverlap
       write(*,*)   'Average abs value of overlap      ',AverageAbsOverlap
     endif
 
@@ -10060,8 +10060,8 @@ contains
       else
         write(*,*) 'Initial energy                            ',Glob_CurrEnergy
       endif
-      write(*,*)   'Maximal overlap                           ',MaxAbsOverlap
-      write(*,*)   'Minimal overlap                           ',MinAbsOverlap
+      write(*,*)   'Maximum overlap                           ',MaxAbsOverlap
+      write(*,*)   'Minimum overlap                           ',MinAbsOverlap
       write(*,*)   'Average abs value of overlap              ',AverageAbsOverlap
     endif
 
@@ -10178,8 +10178,8 @@ contains
               else
                 write(*,*) 'Energy                            ',Evalue
               endif
-              write(*,*)   'Maximal overlap                   ',MaxAbsOverlap
-              write(*,*)   'Minimal overlap                   ',MinAbsOverlap
+              write(*,*)   'Maximum overlap                   ',MaxAbsOverlap
+              write(*,*)   'Minimum overlap                   ',MinAbsOverlap
               write(*,*)   'Average abs value of overlap      ',AverageAbsOverlap
 
               TimeOfLastSave=Glob_TimeSinceStart
@@ -10261,8 +10261,8 @@ contains
       else
         write(*,*) 'Energy                            ',Evalue
       endif
-      write(*,*)   'Maximal overlap                   ',MaxAbsOverlap
-      write(*,*)   'Minimal overlap                   ',MinAbsOverlap
+      write(*,*)   'Maximum overlap                   ',MaxAbsOverlap
+      write(*,*)   'Minimum overlap                   ',MinAbsOverlap
       write(*,*)   'Average abs value of overlap      ',AverageAbsOverlap
     endif
 
@@ -10933,11 +10933,11 @@ contains
     if (Glob_ProcID==0) then
       write(*,*)
       write(*,*) '========== Summary before elimination: =========='
-      write(*,*) 'Maximal by magnitude overlap         =',MaxOverlap
-      write(*,*) 'Minimal by magnitude overlap         =',MinOverlap
+      write(*,*) 'Maximum by magnitude overlap         =',MaxOverlap
+      write(*,*) 'Minimum by magnitude overlap         =',MinOverlap
       write(*,*) 'Average absolute value of overlap    =',AverOverlap
-      write(*,*) 'Maximal by magnitude lin. coeff.     =',Max_c
-      write(*,*) 'Minimal by magnitude lin. coeff.     =',Min_c
+      write(*,*) 'Maximum by magnitude lin. coeff.     =',Max_c
+      write(*,*) 'Minimum by magnitude lin. coeff.     =',Min_c
       write(*,*) 'Average absolute value of lin. coeff.=',Average_c
       write(*,*) 'Basis size before elimination =',cbs
       write(*,*) 'Energy before elimination     =',Evalue
@@ -11032,11 +11032,11 @@ contains
       write(*,*) ' done'
       write(*,*)
       write(*,*) '========== Summary after elimination: =========='
-      write(*,*) 'Maximal by magnitude overlap         =',MaxOverlap
-      write(*,*) 'Minimal by magnitude overlap         =',MinOverlap
+      write(*,*) 'Maximum by magnitude overlap         =',MaxOverlap
+      write(*,*) 'Minimum by magnitude overlap         =',MinOverlap
       write(*,*) 'Average absolute value of overlap    =',AverOverlap
-      write(*,*) 'Maximal by magnitude lin. coeff.     =',Max_c
-      write(*,*) 'Minimal by magnitude lin. coeff.     =',Min_c
+      write(*,*) 'Maximum by magnitude lin. coeff.     =',Max_c
+      write(*,*) 'Minimum by magnitude lin. coeff.     =',Min_c
       write(*,*) 'Average absolute value of lin. coeff.=',Average_c
       write(*,*) 'Basis size after elimination  =',cbs
       write(*,*) 'Energy after elimination      =',Evalue
@@ -11241,11 +11241,11 @@ contains
     if (Glob_ProcID==0) then
       write(*,*)
       write(*,*) '========== Summary before separation: =========='
-      write(*,*) 'Maximal by magnitude overlap         =',MaxOverlap
-      write(*,*) 'Minimal by magnitude overlap         =',MinOverlap
+      write(*,*) 'Maximum by magnitude overlap         =',MaxOverlap
+      write(*,*) 'Minimum by magnitude overlap         =',MinOverlap
       write(*,*) 'Average absolute value of overlap    =',AverOverlap
-      write(*,*) 'Maximal by magnitude lin. coeff.     =',Max_c
-      write(*,*) 'Minimal by magnitude lin. coeff.     =',Min_c
+      write(*,*) 'Maximum by magnitude lin. coeff.     =',Max_c
+      write(*,*) 'Minimum by magnitude lin. coeff.     =',Min_c
       write(*,*) 'Average absolute value of lin. coeff.=',Average_c
       write(*,*) 'Basis size before separation =',cbs
       write(*,*) 'Energy before separation     =',Evalue
@@ -11355,11 +11355,11 @@ contains
       write(*,*) ' done'
       write(*,*)
       write(*,*) '========== Summary after separation: ==========='
-      write(*,*) 'Maximal by magnitude overlap         =',MaxOverlap
-      write(*,*) 'Minimal by magnitude overlap         =',MinOverlap
+      write(*,*) 'Maximum by magnitude overlap         =',MaxOverlap
+      write(*,*) 'Minimum by magnitude overlap         =',MinOverlap
       write(*,*) 'Average absolute value of overlap    =',AverOverlap
-      write(*,*) 'Maximal by magnitude lin. coeff.     =',Max_c
-      write(*,*) 'Minimal by magnitude lin. coeff.     =',Min_c
+      write(*,*) 'Maximum by magnitude lin. coeff.     =',Max_c
+      write(*,*) 'Minimum by magnitude lin. coeff.     =',Min_c
       write(*,*) 'Average absolute value of lin. coeff.=',Average_c
       write(*,*) 'Basis size after separation  =',cbs
       write(*,*) 'Energy after separation      =',Evalue
@@ -11604,11 +11604,11 @@ contains
 
     if (Glob_ProcID==0) then
       write(*,*) '========== Summary before separation: =========='
-      write(*,*) 'Maximal by magnitude overlap         =',MaxOverlap
-      write(*,*) 'Minimal by magnitude overlap         =',MinOverlap
+      write(*,*) 'Maximum by magnitude overlap         =',MaxOverlap
+      write(*,*) 'Minimum by magnitude overlap         =',MinOverlap
       write(*,*) 'Average absolute value of overlap    =',AverOverlap
-      write(*,*) 'Maximal by magnitude lin. coeff.     =',Max_c
-      write(*,*) 'Minimal by magnitude lin. coeff.     =',Min_c
+      write(*,*) 'Maximum by magnitude lin. coeff.     =',Max_c
+      write(*,*) 'Minimum by magnitude lin. coeff.     =',Min_c
       write(*,*) 'Average absolute value of lin. coeff.=',Average_c
       write(*,*) 'Basis size before separation =',cbs
       write(*,*) 'Energy before separation     =',Evalue
@@ -11681,11 +11681,11 @@ contains
     if (Glob_ProcID==0) then
       write(*,*) ' done'
       write(*,*) '========== Summary after separation: ==========='
-      write(*,*) 'Maximal by magnitude overlap         =',MaxOverlap
-      write(*,*) 'Minimal by magnitude overlap         =',MinOverlap
+      write(*,*) 'Maximum by magnitude overlap         =',MaxOverlap
+      write(*,*) 'Minimum by magnitude overlap         =',MinOverlap
       write(*,*) 'Average absolute value of overlap    =',AverOverlap
-      write(*,*) 'Maximal by magnitude lin. coeff.     =',Max_c
-      write(*,*) 'Minimal by magnitude lin. coeff.     =',Min_c
+      write(*,*) 'Maximum by magnitude lin. coeff.     =',Max_c
+      write(*,*) 'Minimum by magnitude lin. coeff.     =',Min_c
       write(*,*) 'Average absolute value of lin. coeff.=',Average_c
       write(*,*) 'Basis size after separation',cbs
       write(*,*) 'Energy after separation    ',Evalue

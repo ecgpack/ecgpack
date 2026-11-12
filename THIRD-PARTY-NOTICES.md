@@ -128,8 +128,9 @@ four vendored directories.
 
 ## PORT optimization routines (David M. Gay, Bell Laboratories)
 
-**Files:** `CG_0S/src/dmng.f`, `RG_0S/src/dmng.f`, `RG_1P/src/dmng.f`,
-`RG_2D/src/dmng.f`, `RG_2P/src/dmng.f` (five identical copies)
+**Files:** `dmng.f` in the `src/` directory of each energy code
+(`RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, `PG_0S`, `PG_1P`, and `CG_0S`; seven
+identical copies)
 
 **Origin:** the unconstrained minimization routines of the PORT
 Mathematical Subroutine Library, written by David M. Gay at Bell
@@ -157,8 +158,12 @@ precision `mng`) belong to the publicly available subset.
 selectable — `DOUBLE PRECISION` declarations were replaced by
 `REAL(wp)` and each routine obtains the kind parameter `wp` from module
 `wp_def`, so that the minimizer can be built in double (fp64), extended
-(fp80), or quadruple (fp128) precision. The numerical algorithms are
-otherwise unchanged. Problems observed in this copy should be reported
+(fp80), or quadruple (fp128) precision. In addition, the iteration
+summary printed by `DITSUM` shows the function value with as many
+significant digits as the working precision warrants (17, 21, or 36 for
+`wp` = 8, 10, or 16), always separated from the preceding column by a
+blank, under right-justified column headings. The numerical algorithms
+are otherwise unchanged. Problems observed in this copy should be reported
 to the ECGPACK authors rather than to Netlib or the original author.
 
 ### Copyright and permission notice

@@ -6083,10 +6083,10 @@ contains
         write(*,*) 'Initial energy                             ',Glob_CurrEnergy
       endif
       write(*,'(1x,a18,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal overlap  (',real(MaxAbsOverlap),',',imag(MaxAbsOverlap),')  |S|=', &
+        'Maximum overlap  (',real(MaxAbsOverlap),',',imag(MaxAbsOverlap),')  |S|=', &
         abs(MaxAbsOverlap)
       write(*,'(1x,a18,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal overlap  (',real(MinAbsOverlap),',',imag(MinAbsOverlap),')  |S|=', &
+        'Minimum overlap  (',real(MinAbsOverlap),',',imag(MinAbsOverlap),')  |S|=', &
         abs(MinAbsOverlap)
       write(*,*) 'Average abs value of overlap ',AverageAbsOverlap
     endif
@@ -6198,10 +6198,10 @@ contains
                 write(*,*) 'Energy                            ',Evalue
               endif
               write(*,'(1x,a18,e16.9,a1,e16.9,a7,f16.9)') &
-                'Maximal overlap  (',real(MaxAbsOverlap),',',imag(MaxAbsOverlap),')  |S|=', &
+                'Maximum overlap  (',real(MaxAbsOverlap),',',imag(MaxAbsOverlap),')  |S|=', &
                 abs(MaxAbsOverlap)
               write(*,'(1x,a18,e16.9,a1,e16.9,a7,f16.9)') &
-                'Minimal overlap  (',real(MinAbsOverlap),',',imag(MinAbsOverlap),')  |S|=', &
+                'Minimum overlap  (',real(MinAbsOverlap),',',imag(MinAbsOverlap),')  |S|=', &
                 abs(MinAbsOverlap)
               write(*,*) 'Average abs value of overlap ',AverageAbsOverlap
               TimeOfLastSave=Glob_TimeSinceStart
@@ -6355,10 +6355,10 @@ contains
         write(*,*) 'Energy                            ',Evalue
       endif
       write(*,'(1x,a18,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal overlap  (',real(MaxAbsOverlap),',',imag(MaxAbsOverlap),')  |S|=', &
+        'Maximum overlap  (',real(MaxAbsOverlap),',',imag(MaxAbsOverlap),')  |S|=', &
         abs(MaxAbsOverlap)
       write(*,'(1x,a18,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal overlap  (',real(MinAbsOverlap),',',imag(MinAbsOverlap),')  |S|=', &
+        'Minimum overlap  (',real(MinAbsOverlap),',',imag(MinAbsOverlap),')  |S|=', &
         abs(MinAbsOverlap)
       write(*,*) 'Average abs value of overlap ',AverageAbsOverlap
     endif
@@ -6630,10 +6630,10 @@ contains
         write(*,*) 'Initial energy                            ',Glob_CurrEnergy
       endif
       write(*,'(1x,a18,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal overlap  (',real(MaxAbsOverlap),',',imag(MaxAbsOverlap),')  |S|=', &
+        'Maximum overlap  (',real(MaxAbsOverlap),',',imag(MaxAbsOverlap),')  |S|=', &
         abs(MaxAbsOverlap)
       write(*,'(1x,a18,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal overlap  (',real(MinAbsOverlap),',',imag(MinAbsOverlap),')  |S|=', &
+        'Minimum overlap  (',real(MinAbsOverlap),',',imag(MinAbsOverlap),')  |S|=', &
         abs(MinAbsOverlap)
       write(*,*) 'Average abs value of overlap ',AverageAbsOverlap
     endif
@@ -6745,10 +6745,10 @@ contains
                 write(*,*) 'Energy                            ',Evalue
               endif
               write(*,'(1x,a18,e16.9,a1,e16.9,a7,f16.9)') &
-                'Maximal overlap  (',real(MaxAbsOverlap),',',imag(MaxAbsOverlap),')  |S|=', &
+                'Maximum overlap  (',real(MaxAbsOverlap),',',imag(MaxAbsOverlap),')  |S|=', &
                 abs(MaxAbsOverlap)
               write(*,'(1x,a18,e16.9,a1,e16.9,a7,f16.9)') &
-                'Minimal overlap  (',real(MinAbsOverlap),',',imag(MinAbsOverlap),')  |S|=', &
+                'Minimum overlap  (',real(MinAbsOverlap),',',imag(MinAbsOverlap),')  |S|=', &
                 abs(MinAbsOverlap)
               write(*,*) 'Average abs value of overlap ',AverageAbsOverlap
               TimeOfLastSave=Glob_TimeSinceStart
@@ -6831,10 +6831,10 @@ contains
         write(*,*) 'Energy                            ',Evalue
       endif
       write(*,'(1x,a18,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal overlap  (',real(MaxAbsOverlap),',',imag(MaxAbsOverlap),')  |S|=', &
+        'Maximum overlap  (',real(MaxAbsOverlap),',',imag(MaxAbsOverlap),')  |S|=', &
         abs(MaxAbsOverlap)
       write(*,'(1x,a18,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal overlap  (',real(MinAbsOverlap),',',imag(MinAbsOverlap),')  |S|=', &
+        'Minimum overlap  (',real(MinAbsOverlap),',',imag(MinAbsOverlap),')  |S|=', &
         abs(MinAbsOverlap)
       write(*,*) 'Average abs value of overlap ',AverageAbsOverlap
     endif
@@ -7367,14 +7367,14 @@ contains
       write(*,*)
       write(*,*) '========== Summary before elimination: =========='
       write(*,'(1x,a20,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal overlap is (',real(MaxOverlap),',',imag(MaxOverlap),')  |S|=',abs(MaxOverlap)
+        'Maximum overlap is (',real(MaxOverlap),',',imag(MaxOverlap),')  |S|=',abs(MaxOverlap)
       write(*,'(1x,a20,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal overlap is (',real(MinOverlap),',',imag(MinOverlap),')  |S|=',abs(MinOverlap)
+        'Minimum overlap is (',real(MinOverlap),',',imag(MinOverlap),')  |S|=',abs(MinOverlap)
       write(*,'(1x,a37,e16.9)') 'Average absolute value of overlap is ',AverOverlap
       write(*,'(1x,a22,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal lin coeff is (',real(Max_c),',',imag(Max_c),')  |c|=',abs(Max_c)
+        'Maximum lin coeff is (',real(Max_c),',',imag(Max_c),')  |c|=',abs(Max_c)
       write(*,'(1x,a22,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal lin coeff is (',real(Min_c),',',imag(Min_c),')  |c|=',abs(Min_c)
+        'Minimum lin coeff is (',real(Min_c),',',imag(Min_c),')  |c|=',abs(Min_c)
       write(*,'(1x,a41,e16.9)') 'Average absolute value of lin. coeff. is ',Average_c
       write(*,*) 'Basis size before elimination ',cbs
       write(*,*) 'Energy before elimination     ',Evalue
@@ -7475,14 +7475,14 @@ contains
       write(*,*)
       write(*,*) '========== Summary after elimination: ==========='
       write(*,'(1x,a20,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal overlap is (',real(MaxOverlap),',',imag(MaxOverlap),')  |S|=',abs(MaxOverlap)
+        'Maximum overlap is (',real(MaxOverlap),',',imag(MaxOverlap),')  |S|=',abs(MaxOverlap)
       write(*,'(1x,a20,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal overlap is (',real(MinOverlap),',',imag(MinOverlap),')  |S|=',abs(MinOverlap)
+        'Minimum overlap is (',real(MinOverlap),',',imag(MinOverlap),')  |S|=',abs(MinOverlap)
       write(*,'(1x,a37,e16.9)') 'Average absolute value of overlap is ',AverOverlap
       write(*,'(1x,a22,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal lin coeff is (',real(Max_c),',',imag(Max_c),')  |c|=',abs(Max_c)
+        'Maximum lin coeff is (',real(Max_c),',',imag(Max_c),')  |c|=',abs(Max_c)
       write(*,'(1x,a22,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal lin coeff is (',real(Min_c),',',imag(Min_c),')  |c|=',abs(Min_c)
+        'Minimum lin coeff is (',real(Min_c),',',imag(Min_c),')  |c|=',abs(Min_c)
       write(*,'(1x,a41,e16.9)') 'Average absolute value of lin. coeff. is ',Average_c
       write(*,*) 'Basis size after elimination  ',cbs
       write(*,*) 'Energy after elimination      ',Evalue
@@ -7718,14 +7718,14 @@ contains
       write(*,*)
       write(*,*) '========== Summary before separation: =========='
       write(*,'(1x,a20,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal overlap is (',real(MaxOverlap),',',imag(MaxOverlap),')  |S|=',abs(MaxOverlap)
+        'Maximum overlap is (',real(MaxOverlap),',',imag(MaxOverlap),')  |S|=',abs(MaxOverlap)
       write(*,'(1x,a20,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal overlap is (',real(MinOverlap),',',imag(MinOverlap),')  |S|=',abs(MinOverlap)
+        'Minimum overlap is (',real(MinOverlap),',',imag(MinOverlap),')  |S|=',abs(MinOverlap)
       write(*,'(1x,a37,e16.9)') 'Average absolute value of overlap is ',AverOverlap
       write(*,'(1x,a22,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal lin coeff is (',real(Max_c),',',imag(Max_c),')  |c|=',abs(Max_c)
+        'Maximum lin coeff is (',real(Max_c),',',imag(Max_c),')  |c|=',abs(Max_c)
       write(*,'(1x,a22,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal lin coeff is (',real(Min_c),',',imag(Min_c),')  |c|=',abs(Min_c)
+        'Minimum lin coeff is (',real(Min_c),',',imag(Min_c),')  |c|=',abs(Min_c)
       write(*,'(1x,a41,e16.9)') 'Average absolute value of lin. coeff. is ',Average_c
       write(*,*) 'Basis size before separation ',cbs
       write(*,*) 'Energy before separation     ',Evalue
@@ -7825,14 +7825,14 @@ contains
       write(*,*)
       write(*,*) '========== Summary after separation: ==========='
       write(*,'(1x,a20,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal overlap is (',real(MaxOverlap),',',imag(MaxOverlap),')  |S|=',abs(MaxOverlap)
+        'Maximum overlap is (',real(MaxOverlap),',',imag(MaxOverlap),')  |S|=',abs(MaxOverlap)
       write(*,'(1x,a20,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal overlap is (',real(MinOverlap),',',imag(MinOverlap),')  |S|=',abs(MinOverlap)
+        'Minimum overlap is (',real(MinOverlap),',',imag(MinOverlap),')  |S|=',abs(MinOverlap)
       write(*,'(1x,a37,e16.9)') 'Average absolute value of overlap is ',AverOverlap
       write(*,'(1x,a22,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal lin coeff is (',real(Max_c),',',imag(Max_c),')  |c|=',abs(Max_c)
+        'Maximum lin coeff is (',real(Max_c),',',imag(Max_c),')  |c|=',abs(Max_c)
       write(*,'(1x,a22,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal lin coeff is (',real(Min_c),',',imag(Min_c),')  |c|=',abs(Min_c)
+        'Minimum lin coeff is (',real(Min_c),',',imag(Min_c),')  |c|=',abs(Min_c)
       write(*,'(1x,a41,e16.9)') 'Average absolute value of lin. coeff. is ',Average_c
       write(*,*) 'Basis size after separation  ',cbs
       write(*,*) 'Energy after separation      ',Evalue
@@ -8067,14 +8067,14 @@ contains
       write(*,*)
       write(*,*) '========== Summary before separation: =========='
       write(*,'(1x,a20,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal overlap is (',real(MaxOverlap),',',imag(MaxOverlap),')  |S|=',abs(MaxOverlap)
+        'Maximum overlap is (',real(MaxOverlap),',',imag(MaxOverlap),')  |S|=',abs(MaxOverlap)
       write(*,'(1x,a20,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal overlap is (',real(MinOverlap),',',imag(MinOverlap),')  |S|=',abs(MinOverlap)
+        'Minimum overlap is (',real(MinOverlap),',',imag(MinOverlap),')  |S|=',abs(MinOverlap)
       write(*,'(1x,a37,e16.9)') 'Average absolute value of overlap is ',AverOverlap
       write(*,'(1x,a22,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal lin coeff is (',real(Max_c),',',imag(Max_c),')  |c|=',abs(Max_c)
+        'Maximum lin coeff is (',real(Max_c),',',imag(Max_c),')  |c|=',abs(Max_c)
       write(*,'(1x,a22,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal lin coeff is (',real(Min_c),',',imag(Min_c),')  |c|=',abs(Min_c)
+        'Minimum lin coeff is (',real(Min_c),',',imag(Min_c),')  |c|=',abs(Min_c)
       write(*,'(1x,a41,e16.9)') 'Average absolute value of lin. coeff. is ',Average_c
       write(*,*) 'Basis size before separation',cbs
       write(*,*) 'Energy before separation    ',Evalue
@@ -8165,14 +8165,14 @@ contains
       write(*,*)
       write(*,*) '========== Summary after separation: ==========='
       write(*,'(1x,a20,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal overlap is (',real(MaxOverlap),',',imag(MaxOverlap),')  |S|=',abs(MaxOverlap)
+        'Maximum overlap is (',real(MaxOverlap),',',imag(MaxOverlap),')  |S|=',abs(MaxOverlap)
       write(*,'(1x,a20,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal overlap is (',real(MinOverlap),',',imag(MinOverlap),')  |S|=',abs(MinOverlap)
+        'Minimum overlap is (',real(MinOverlap),',',imag(MinOverlap),')  |S|=',abs(MinOverlap)
       write(*,'(1x,a37,e16.9)') 'Average absolute value of overlap is ',AverOverlap
       write(*,'(1x,a22,e16.9,a1,e16.9,a7,f16.9)') &
-        'Maximal lin coeff is (',real(Max_c),',',imag(Max_c),')  |c|=',abs(Max_c)
+        'Maximum lin coeff is (',real(Max_c),',',imag(Max_c),')  |c|=',abs(Max_c)
       write(*,'(1x,a22,e16.9,a1,e16.9,a7,f16.9)') &
-        'Minimal lin coeff is (',real(Min_c),',',imag(Min_c),')  |c|=',abs(Min_c)
+        'Minimum lin coeff is (',real(Min_c),',',imag(Min_c),')  |c|=',abs(Min_c)
       write(*,'(1x,a41,e16.9)') 'Average absolute value of lin. coeff. is ',Average_c
       write(*,*) 'Basis size after separation',cbs
       write(*,*) 'Energy after separation    ',Evalue

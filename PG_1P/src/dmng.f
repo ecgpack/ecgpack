@@ -52,9 +52,13 @@ C  real kind: DOUBLE PRECISION declarations were replaced by REAL(wp)
 C  and each routine now obtains the kind parameter wp from module
 C  wp_def, so that the minimizer can be built in double (fp64),
 C  extended (fp80), or quadruple (fp128) precision.  The numerical
-C  algorithms themselves are unchanged.  Bugs in this copy should be
-C  reported to the ECGPACK authors, not to Netlib or the original
-C  author.
+C  algorithms themselves are unchanged.  In addition, the iteration
+C  summary printed by DITSUM shows the function value F with as many
+C  significant digits as the working precision warrants (17, 21, or 36
+C  for wp = 8, 10, or 16), always separated from the preceding NF
+C  column by a blank; its column headings are right-justified over
+C  their columns.  Bugs in this copy should be reported to the ECGPACK
+C  authors, not to Netlib or the original author.
 C
 C  See THIRD-PARTY-NOTICES.md in the root of the ECGPACK repository.
 C=====================================================================
@@ -847,6 +851,22 @@ C/7S
 C/
       REAL(wp) NRELDF, OLDF, PRELDF, RELDF, ZERO
 C
+C  ***  ECGPACK: F IS PRINTED AS 1X,ESw.FD WITH w = FW-1 = FD+7, THE
+C  ***  WIDTH OF A NEGATIVE NUMBER WITH A TWO-DIGIT EXPONENT, SO THAT
+C  ***  ITS FD+1 SIGNIFICANT DIGITS SUIT THE WORKING PRECISION AND IT
+C  ***  IS ALWAYS PRECEDED BY A BLANK.  THE FORMATS CONTAINING F AND
+C  ***  THE COLUMN HEADINGS ARE BUILT AT RUN TIME IN THE CHARACTER
+C  ***  VARIABLES BELOW.
+C
+      INTEGER FD, FW
+      PARAMETER (FD = MERGE(16, MERGE(20, 35, wp .EQ. 10), wp .EQ. 8))
+      PARAMETER (FW = FD + 8)
+      CHARACTER*12 FFMT
+      CHARACTER*16 FHFMT
+      CHARACTER*40 FMT0
+      CHARACTER*80 FMT100, FMT110
+      CHARACTER*120 HDR30, HDR40, HDR70, HDR80
+C
 C  ***  NO EXTERNAL FUNCTIONS OR SUBROUTINES  ***
 C
 C  ***  SUBSCRIPTS FOR IV AND V  ***
@@ -896,6 +916,27 @@ C-------------------------------  BODY  --------------------------------
 C
       PU = IV(PRUNIT)
       IF (PU .EQ. 0) GO TO 999
+C
+C  ***  ECGPACK: BUILD THE FORMATS AND HEADINGS CONTAINING F  ***
+C
+      WRITE(FFMT,'(A,I0,A,I0)') '1X,ES', FW-1, '.', FD
+      WRITE(FHFMT,'(A,I0,A,I0,A)') 'A', FW/2+1, ',', FW-FW/2-1, 'X'
+      FMT0 = '(/''     0'',I5,' // TRIM(FFMT) // ')'
+      FMT100 = '(I6,I5,' // TRIM(FFMT) //
+     1         ',2E9.2,E8.1,A3,A4,2E8.1,E9.2)'
+      FMT110 = '(I6,I5,' // TRIM(FFMT) // ',2E10.2,3E9.1,E10.2)'
+      WRITE(HDR30,'(A6,A5,' // TRIM(FHFMT) // ',2A9,A8,A7,A8)')
+     1      'IT', 'NF', 'F', 'RELDF', 'PRELDF', 'RELDX', 'MODEL',
+     2      'STPPAR'
+      WRITE(HDR70,'(A6,A5,' // TRIM(FHFMT) // ',2A9,A8,A7,2A8,A9)')
+     1      'IT', 'NF', 'F', 'RELDF', 'PRELDF', 'RELDX', 'MODEL',
+     2      'STPPAR', 'D*STEP', 'NPRELDF'
+      WRITE(HDR40,'(A6,A5,' // TRIM(FHFMT) // ',2A10,2A9)')
+     1      'IT', 'NF', 'F', 'RELDF', 'PRELDF', 'RELDX', 'STPPAR'
+      WRITE(HDR80,'(A6,A5,' // TRIM(FHFMT) // ',2A10,3A9,A10)')
+     1      'IT', 'NF', 'F', 'RELDF', 'PRELDF', 'RELDX', 'STPPAR',
+     2      'D*STEP', 'NPRELDF'
+C
       IV1 = IV(1)
       IF (IV1 .GT. 62) IV1 = IV1 - 51
       OL = IV(OUTLEV)
@@ -920,44 +961,38 @@ C
 C
 C        ***  PRINT SHORT SUMMARY LINE  ***
 C
-         IF (IV(NEEDHD) .EQ. 1 .AND. ALG .EQ. 1) WRITE(PU,30)
- 30   FORMAT(/10H   IT   NF,6X,1HF,7X,5HRELDF,3X,6HPRELDF,3X,5HRELDX,
-     1       2X,13HMODEL  STPPAR)
-         IF (IV(NEEDHD) .EQ. 1 .AND. ALG .EQ. 2) WRITE(PU,40)
- 40   FORMAT(/11H    IT   NF,11X,1HF,14X,5HRELDF,5X,6HPRELDF,4X,5HRELDX,
-     1       3X,6HSTPPAR)
+         IF (IV(NEEDHD) .EQ. 1 .AND. ALG .EQ. 1)
+     1      WRITE(PU,'(/A)') TRIM(HDR30)
+         IF (IV(NEEDHD) .EQ. 1 .AND. ALG .EQ. 2)
+     1      WRITE(PU,'(/A)') TRIM(HDR40)
          IV(NEEDHD) = 0
          IF (ALG .EQ. 2) GO TO 50
          M = IV(SUSED)
-         WRITE(PU,100) IV(NITER), NF, V(F), RELDF, PRELDF, V(RELDX),
-     1                 MODEL1(M), MODEL2(M), V(STPPAR)
+         WRITE(PU,FMT100) IV(NITER), NF, V(F), RELDF, PRELDF,
+     1                 V(RELDX), MODEL1(M), MODEL2(M), V(STPPAR)
          GO TO 120
 C
- 50      WRITE(PU,110) IV(NITER), NF, V(F), RELDF, PRELDF, V(RELDX),
-     1                 V(STPPAR)
+ 50      WRITE(PU,FMT110) IV(NITER), NF, V(F), RELDF, PRELDF,
+     1                 V(RELDX), V(STPPAR)
          GO TO 120
 C
 C     ***  PRINT LONG SUMMARY LINE  ***
 C
- 60   IF (IV(NEEDHD) .EQ. 1 .AND. ALG .EQ. 1) WRITE(PU,70)
- 70   FORMAT(/11H    IT   NF,6X,1HF,7X,5HRELDF,3X,6HPRELDF,3X,5HRELDX,
-     1       2X,13HMODEL  STPPAR,2X,6HD*STEP,2X,7HNPRELDF)
-      IF (IV(NEEDHD) .EQ. 1 .AND. ALG .EQ. 2) WRITE(PU,80)
- 80   FORMAT(/11H    IT   NF,7X,1HF,8X,5HRELDF,4X,6HPRELDF,4X,5HRELDX,
-     1       3X,6HSTPPAR,3X,6HD*STEP,3X,7HNPRELDF)
+ 60   IF (IV(NEEDHD) .EQ. 1 .AND. ALG .EQ. 1)
+     1   WRITE(PU,'(/A)') TRIM(HDR70)
+      IF (IV(NEEDHD) .EQ. 1 .AND. ALG .EQ. 2)
+     1   WRITE(PU,'(/A)') TRIM(HDR80)
       IV(NEEDHD) = 0
       NRELDF = ZERO
       IF (OLDF .GT. ZERO) NRELDF = V(NREDUC) / OLDF
       IF (ALG .EQ. 2) GO TO 90
       M = IV(SUSED)
-      WRITE(PU,100) IV(NITER), NF, V(F), RELDF, PRELDF, V(RELDX),
+      WRITE(PU,FMT100) IV(NITER), NF, V(F), RELDF, PRELDF, V(RELDX),
      1             MODEL1(M), MODEL2(M), V(STPPAR), V(DSTNRM), NRELDF
       GO TO 120
 C
- 90   WRITE(PU,110) IV(NITER), NF, V(F), RELDF, PRELDF,
+ 90   WRITE(PU,FMT110) IV(NITER), NF, V(F), RELDF, PRELDF,
      1             V(RELDX), V(STPPAR), V(DSTNRM), NRELDF
- 100  FORMAT(I6,I5,E27.20,2E9.2,E8.1,A3,A4,2E8.1,E9.2)
- 110  FORMAT(I6,I5,E27.20,2E10.2,3E9.1,E10.2)
 C
  120  IF (IV1 .LE. 2) GO TO 999
       I = IV(STATPR)
@@ -1035,14 +1070,11 @@ C     *** FUNCTION EVALUATION LIMIT IS 1...
       IV(NEEDHD) = 0
       IV(PRNTIT) = 0
       IF (OL .EQ. 0) GO TO 999
-      IF (OL .LT. 0 .AND. ALG .EQ. 1) WRITE(PU,30)
-      IF (OL .LT. 0 .AND. ALG .EQ. 2) WRITE(PU,40)
-      IF (OL .GT. 0 .AND. ALG .EQ. 1) WRITE(PU,70)
-      IF (OL .GT. 0 .AND. ALG .EQ. 2) WRITE(PU,80)
-      IF (ALG .EQ. 1) WRITE(PU,410) IV(NFCALL), V(F)
-      IF (ALG .EQ. 2) WRITE(PU,420) IV(NFCALL), V(F)
- 410  FORMAT(/6H     0,I5,E27.20)
- 420  FORMAT(/6H     0,I5,E27.20)
+      IF (OL .LT. 0 .AND. ALG .EQ. 1) WRITE(PU,'(/A)') TRIM(HDR30)
+      IF (OL .LT. 0 .AND. ALG .EQ. 2) WRITE(PU,'(/A)') TRIM(HDR40)
+      IF (OL .GT. 0 .AND. ALG .EQ. 1) WRITE(PU,'(/A)') TRIM(HDR70)
+      IF (OL .GT. 0 .AND. ALG .EQ. 2) WRITE(PU,'(/A)') TRIM(HDR80)
+      WRITE(PU,FMT0) IV(NFCALL), V(F)
       GO TO 999
 C
 C  ***  PRINT VARIOUS INFORMATION REQUESTED ON SOLUTION  ***

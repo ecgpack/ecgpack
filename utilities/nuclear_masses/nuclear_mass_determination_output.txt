@@ -1,0 +1,85 @@
+This script calculates masses of light nuclei (in atomic units, i.e. in the electron masses) including error estimates.
+The values of the fundamental constants are taken from CODATA 2022 recommended values:
+    P. Mohr, D. Newell, B. Taylor, and E. Tiesinga
+    CODATA Recommended Values of the Fundamental Physical Constants: 2022
+    arXiv:2409.03787 [hep-ph]
+    https://arxiv.org/abs/2409.03787
+Atomic weights are taken from AME 2020 atomic mass evaluation
+    Wang et al., Chin. Physics C 45, 030003 (2021)
+    https://dx.doi.org/10.1088/1674-1137/abddaf
+Most common isotopic compositions are avaialble at this NIST website
+    https://physics.nist.gov/cgi-bin/Compositions/stand_alone.pl
+
+Masses of most common nuclear isotopes:
+
+M(1H)  =  1836.15267344
+            ±0.00000006
+
+M(1H)  =  1836.152673426(32)  [CODATA 2022]
+
+M(2H)  =  3670.48296764
+            ±0.00000009
+
+M(2H)  =  3670.482967655(63)  [CODATA 2022]
+
+M(3H)  =  5496.92153559
+            ±0.00000024
+
+M(3H)  =  5496.92153551(21)  [CODATA 2022]
+
+M(3He) =  5495.88527989
+            ±0.00000021
+
+M(3He) =  5495.88527984(16)  [CODATA 2022]
+
+M(4He) =  7294.29954170
+            ±0.00000042
+
+M(4He) =  7294.29954171(17)  [CODATA 2022]
+
+M(6Li) = 10961.89865320
+            ±0.00000293
+
+M(7Li) = 12786.39227775
+            ±0.00000752
+
+M(9Be) = 16424.20551744
+            ±0.00014615
+
+M(10B) = 18247.46863262
+            ±0.00002954
+
+M(11B) = 20063.73694390
+            ±0.00002411
+
+M(12C) = 21868.66385131
+            ±0.00000065
+
+M(13C) = 23697.66782831
+            ±0.00000114
+
+M(14C) = 25520.35060830
+            ±0.00000801
+
+M(14N) = 25519.04528337
+            ±0.00000142
+
+M(15N) = 27336.52871215
+            ±0.00000211
+
+M(16O) = 29148.94969878
+            ±0.00000213
+
+M(17O) = 30979.52555500
+            ±0.00000289
+
+M(18O) = 32802.46481984
+            ±0.00000292
+
+Masses of some exotic particles:
+
+M(muon)  = 206.7682827(46)  [CODATA 2022]
+
+M(tauon) = 3477.23(23)  [CODATA 2022]
+
+M(pion±) = 273.13287(47)  [Phys. Lett. B 796, 11 (2019)]
