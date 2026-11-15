@@ -25,7 +25,7 @@ The relevant arguments are:
 | `H_full.txt` | Hamiltonian matrix of the normalized basis functions (one element per line, preceded by its two indices) |
 | `S_full.txt` | Overlap matrix of the normalized basis functions (same layout) |
 | `eigvec.txt` | Linear coefficients of the normalized basis functions |
-| `wavefunction.txt` | Wave function: the system header, then one line per basis function with its linear coefficient, the power $2m_k$ of $r_1$, and its nonlinear parameters |
+| `wavefunction.txt` | Wave function: the system header, then one line per basis function with its linear coefficient, the power $m_k$ of $r_1$, and its nonlinear parameters |
 
 Any of the four file names may be set to `none` to skip that file.
 The basis-set size given in the `SAVE_HSWF` instruction must match the size of the wave function being saved.

@@ -111,9 +111,9 @@ CONTAINS
     ! broadcasts everything. The file is also the RESTART file written by
     ! SaveResults, so the record order here and there must agree.
     !
-    ! Record layout: BASIS_TYPE (optional), PARTICLES, FIXED_INDEX
-    ! (optional), MASSES, CHARGES, REPULSION_SCALING_PARAM[_PLUS|_MINUS]
-    ! (optional, up to 3), ATTRACTION_SCALING_PARAM (optional), SYMMETRY,
+    ! Record layout: BASIS_TYPE (optional), PARTICLES, MASSES, CHARGES,
+    ! REPULSION_SCALING_PARAM[_PLUS|_MINUS] (optional, up to 3),
+    ! ATTRACTION_SCALING_PARAM (optional), SYMMETRY,
     ! BASIS_SIZE, CURRENT_ENERGY, WHICH_EIGENVALUE, EIGVAL_TOLERANCE,
     ! INV_IT_PARAM, LAST/BEST/WORST_EIGVAL_TOL, GENERATOR_PARAM, then the
     ! BBOP script, the optimization history and the nonlinear parameters,
@@ -267,46 +267,6 @@ CONTAINS
     CALL MPI_BCAST(Glob_BasisTypeSupplied, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
     CALL MPI_BCAST(ErrorInDataFile, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
     IF (ErrorInDataFile) CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
-
-
-    !==================================================================
-    ! Optional FIXED_INDEX line
-    !==================================================================
-    ! May appear between PARTICLES and MASSES. When present, every basis
-    ! function keeps the same z-index (r-premultiplier power) instead of
-    ! having one generated and optimized per function.
-    !------------------------------------------------------------------
-    IF (Glob_ProcID == 0) THEN
-
-      READ(1, '(A)', IOSTAT=ReadLineErr) ReadLine
-      IF (ReadLineErr == 0) READ(ReadLine, *, IOSTAT=ReadErr) ReadChar(1:11), ReadInt
-
-      IF ((ReadLineErr == 0) .AND. (ReadErr == 0) .AND. (ReadChar(1:11) == 'FIXED_INDEX')) THEN
-
-        Glob_IsIndexFixed = .TRUE.
-        Glob_IndexFixedValue = ReadInt
-
-        IF (Verbose >= 2) WRITE(*, '(1x,a11,1x,i6)') ReadChar(1:11), Glob_IndexFixedValue
-        Line = Line + 1
-
-        IF ((Glob_IndexFixedValue < 1) .OR. (Glob_IndexFixedValue > Glob_n)) THEN
-          WRITE(*, *) 'Error EC0103 in data file, line ', Line
-          IF (Verbose >= 2) WRITE(*, *) 'FIXED_INDEX value must be in the range from 1 to', Glob_n
-          ErrorInDataFile = .TRUE.
-        ENDIF
-
-      ELSE
-        ! Not a FIXED_INDEX line - push the record back.
-        IF (ReadLineErr == 0) BACKSPACE 1
-      ENDIF
-
-    ENDIF
-
-    CALL MPI_BCAST(ErrorInDataFile, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
-    IF (ErrorInDataFile) CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
-
-    CALL MPI_BCAST(Glob_IsIndexFixed, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
-    CALL MPI_BCAST(Glob_IndexFixedValue, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
 
 
     !==================================================================
@@ -1206,7 +1166,7 @@ CONTAINS
     !==================================================================
     !   Glob_History     optimization history, one record per function
     !   Glob_FuncNum     function numbering
-    !   Glob_PWR         r-premultiplier power (z-index) per function
+    !   Glob_PWR         premultiplier power per function
     !   Glob_NonlinParam Cholesky elements of L_k, shape (npt x N)
     !------------------------------------------------------------------
     ALLOCATE(Glob_History(Glob_CurrBasisSize))
@@ -1391,7 +1351,7 @@ CONTAINS
           WRITE(*, *) 'Error EC0234 in data file: nonlinear parameter block'
           IF (Verbose >= 2) WRITE(*, *) 'Record', i, 'carries', NumOfValues, 'values but', &
             ValuesExpected, 'are expected:'
-          IF (Verbose >= 2) WRITE(*, *) 'function number, z-index, and', Glob_npt, 'nonlinear parameters.'
+          IF (Verbose >= 2) WRITE(*, *) 'function number, premultiplier power, and', Glob_npt, 'nonlinear parameters.'
           IF (Verbose >= 2) WRITE(*, *) 'This file was most likely written for a different particle number.'
           ErrorInDataFile = .TRUE.
           EXIT
@@ -1413,13 +1373,14 @@ CONTAINS
           ErrorInDataFile = .TRUE.
         ENDIF
 
-        ! The z-index indexes the precomputed gamma tables in globvars.f90
+        ! The premultiplier power indexes the precomputed gamma tables in
+        ! globvars.f90
         ! (0-based: a power of 0 is a plain Gaussian).
         ! Out of range it reads past the end of those tables, which surfaces
         ! far away inside MatrixElementsOpt instead of here.
         IF ((Glob_PWR(i) < 0) .OR. (Glob_PWR(i) > Glob_MaxPowerAllowed)) THEN
           WRITE(*, *) 'Error EC0237 in data file: nonlinear parameter block'
-          IF (Verbose >= 2) WRITE(*, *) 'Record', i, 'has z-index', Glob_PWR(i), &
+          IF (Verbose >= 2) WRITE(*, *) 'Record', i, 'has premultiplier power', Glob_PWR(i), &
             'outside the allowed range 0 ..', Glob_MaxPowerAllowed
           ErrorInDataFile = .TRUE.
         ENDIF
@@ -1477,7 +1438,7 @@ CONTAINS
     !              function numbers and needs Glob_IntWorkArrForSaveResults
     !              (>= Glob_CurrBasisSize entries) allocated by the caller.
     !
-    ! Optional records (BASIS_TYPE, FIXED_INDEX, the scaling parameters) are
+    ! Optional records (BASIS_TYPE, the scaling parameters) are
     ! written only when the file that was read carried them. Guards: the
     ! CURRENT_ENERGY failure sentinel is never written, Glob_History(0) is
     ! not indexed for an empty basis, and an unknown BBOP action stops the
@@ -1519,16 +1480,14 @@ CONTAINS
 
 
       !==================================================================
-      ! Physical system: BASIS_TYPE, PARTICLES, FIXED_INDEX
+      ! Physical system: BASIS_TYPE, PARTICLES
       !==================================================================
-      ! The two optional records are written only if the file that was
-      ! read carried them, so that a round trip does not invent records.
+      ! The optional BASIS_TYPE record is written only if the file that
+      ! was read carried it, so that a round trip does not invent records.
       !------------------------------------------------------------------
       IF (Glob_BasisTypeSupplied) WRITE(1, '(1x,a10,1x,a5)') 'BASIS_TYPE', Glob_BasisType
 
       WRITE(1, '(1x,a9,1x,i6)') 'PARTICLES', Glob_n+1
-
-      IF (Glob_IsIndexFixed) WRITE(1, '(1x,a11,1x,i6)') 'FIXED_INDEX', Glob_IndexFixedValue
 
 
       !==================================================================
@@ -3230,8 +3189,7 @@ CONTAINS
     ! Powers are EVEN and lie in 2..PWRMax (PWRMax = largest even value
     ! <= Glob_MaxPowerAllowed). Method 1 keeps the prototype's power with
     ! probability PWRChangeProb, else draws a different even one; method 2
-    ! always inherits it. Glob_IsIndexFixed overrides both with
-    ! Glob_IndexFixedValue.
+    ! always inherits it.
     ! Input:  nfun - number of trial functions.
     ! Output: x(1:Glob_npt,1:nfun), m(1:nfun); k - the (first) prototype
     !         function, 0 for an empty basis; method_used - 1, 2, or 0 for
@@ -3450,13 +3408,6 @@ CONTAINS
       ENDIF
 
     ENDIF
-
-
-    !==================================================================
-    ! A fixed power overrides everything generated above
-    !==================================================================
-    ! If the power is fixed then we set it to the fixed value
-    IF (Glob_IsIndexFixed) m(1:nfun) = Glob_IndexFixedValue
 
 
   END SUBROUTINE GenerateTrialParam
@@ -6314,7 +6265,7 @@ CONTAINS
     ! Gather into the workspace at the destination slot, then copy the
     ! whole block back.
     !------------------------------------------------------------------
-    ! First we sort out nonlinear parameters and Z-indices
+    ! First we sort out nonlinear parameters and premultiplier powers
     DO i = fb, fe
       NonlinParamTemp(1:Glob_npt, nfco+mf-Glob_FuncNum(i)) = Glob_NonlinParam(1:Glob_npt, i)
     ENDDO
@@ -6732,7 +6683,7 @@ CONTAINS
     TYPE(Glob_HistoryStep), ALLOCATABLE, DIMENSION(:) :: TempHistory
     REAL(wp), ALLOCATABLE, DIMENSION(:, :)            :: TempParam
     INTEGER, ALLOCATABLE, DIMENSION(:)                :: TempFunc
-    INTEGER, ALLOCATABLE, DIMENSION(:)                :: TempZInd
+    INTEGER, ALLOCATABLE, DIMENSION(:)                :: TempPWR
 
 
     !==================================================================
@@ -6920,12 +6871,12 @@ CONTAINS
       !--------------------------------------------------------------
       ALLOCATE(TempHistory(NumOfFuncToKeep))
       ALLOCATE(TempFunc(NumOfFuncToKeep))
-      ALLOCATE(TempZInd(NumOfFuncToKeep))
+      ALLOCATE(TempPWR(NumOfFuncToKeep))
       ALLOCATE(TempParam(Glob_npt, NumOfFuncToKeep))
 
       TempHistory(1:NumOfFuncToKeep) = Glob_History(1:NumOfFuncToKeep)
       TempFunc(1:NumOfFuncToKeep) = Glob_FuncNum(1:NumOfFuncToKeep)
-      TempZInd(1:NumOfFuncToKeep) = Glob_PWR(1:NumOfFuncToKeep)
+      TempPWR(1:NumOfFuncToKeep) = Glob_PWR(1:NumOfFuncToKeep)
       TempParam(1:Glob_npt, 1:NumOfFuncToKeep) = Glob_NonlinParam(1:Glob_npt, 1:NumOfFuncToKeep)
 
       !--------------------------------------------------------------
@@ -6946,11 +6897,11 @@ CONTAINS
       !--------------------------------------------------------------
       Glob_History(1:NumOfFuncToKeep) = TempHistory(1:NumOfFuncToKeep)
       Glob_FuncNum(1:NumOfFuncToKeep) = TempFunc(1:NumOfFuncToKeep)
-      Glob_PWR(1:NumOfFuncToKeep) = TempZInd(1:NumOfFuncToKeep)
+      Glob_PWR(1:NumOfFuncToKeep) = TempPWR(1:NumOfFuncToKeep)
       Glob_NonlinParam(1:Glob_npt, 1:NumOfFuncToKeep) = TempParam(1:Glob_npt, 1:NumOfFuncToKeep)
 
       DEALLOCATE(TempParam)
-      DEALLOCATE(TempZInd)
+      DEALLOCATE(TempPWR)
       DEALLOCATE(TempFunc)
       DEALLOCATE(TempHistory)
 
@@ -8806,11 +8757,11 @@ CONTAINS
     INTEGER, PARAMETER :: PWRMax = 2*(Glob_MaxPowerAllowed/2)
     ! Candidate block and the best candidate block found so far
     REAL(wp), ALLOCATABLE, DIMENSION(:, :) :: ParSet, ParSetBest
-    INTEGER, ALLOCATABLE, DIMENSION(:)     :: ZIndSet, ZIndSetBest
+    INTEGER, ALLOCATABLE, DIMENSION(:)     :: PWRSet, PWRSetBest
     ! The optimization variables: the nonlinear parameters of the block
     ! laid out as one flat vector of nfo*npt elements
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: x, x_best, grad
-    INTEGER, ALLOCATABLE, DIMENSION(:)  :: ZIndOptSequence
+    INTEGER, ALLOCATABLE, DIMENSION(:)  :: PWROptSequence
     ! Arrays used by DRMNG
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: D, V, V_init
     INTEGER, PARAMETER                  :: LIV = 60
@@ -8883,12 +8834,12 @@ CONTAINS
     ! Local workspace
     ALLOCATE(ParSet(npt, Kstep))
     ALLOCATE(ParSetBest(npt, Kstep))
-    ALLOCATE(ZIndSet(Kstep))
-    ALLOCATE(ZIndSetBest(Kstep))
+    ALLOCATE(PWRSet(Kstep))
+    ALLOCATE(PWRSetBest(Kstep))
     ALLOCATE(x(nvmax))
     ALLOCATE(x_best(nvmax))
     ALLOCATE(grad(nvmax))
-    ALLOCATE(ZIndOptSequence(Kstep))
+    ALLOCATE(PWROptSequence(Kstep))
     ! Arrays used by DRMNG; LV is the documented size of V plus one
     ALLOCATE(D(nvmax))
     LV = 71+nvmax*(nvmax+13)/2 + 1
@@ -9024,17 +8975,17 @@ CONTAINS
         wbfu = 0
         wmu = 0
         DO i = 1, NTrials
-          IF (Glob_ProcID == 0) CALL GenerateTrialParam(nfo, ParSet, ZIndSet, wbfu_t, wmu_t)
+          IF (Glob_ProcID == 0) CALL GenerateTrialParam(nfo, ParSet, PWRSet, wbfu_t, wmu_t)
           CALL MPI_BCAST(ParSet, npt*nfo, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
-          CALL MPI_BCAST(ZIndSet, nfo, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+          CALL MPI_BCAST(PWRSet, nfo, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
           Glob_NonlinParam(1:npt, nfrup1:K) = ParSet(1:npt, 1:nfo)
-          Glob_PWR(nfrup1:K) = ZIndSet(1:nfo)
+          Glob_PWR(nfrup1:K) = PWRSet(1:nfo)
           CALL EvaluateQAppendedTrial(nfru, K, Evalue, ErrCode)
           IF (ErrCode == Q_METHOD_SUCCESS) THEN
             IF (Evalue < Glob_CurrEnergy) THEN
               Glob_CurrEnergy = Evalue
               ParSetBest(1:npt, 1:nfo) = ParSet(1:npt, 1:nfo)
-              ZIndSetBest(1:nfo) = ZIndSet(1:nfo)
+              PWRSetBest(1:nfo) = PWRSet(1:nfo)
               IsEnergyImproved = .TRUE.
               wbfu = wbfu_t
               wmu = wmu_t
@@ -9070,7 +9021,7 @@ CONTAINS
         ! also records the matrix parameters the replacement transactions
         ! of EnergyQA/EnergyQB start from.
         Glob_NonlinParam(1:npt, nfrup1:K) = ParSetBest(1:npt, 1:nfo)
-        Glob_PWR(nfrup1:K) = ZIndSetBest(1:nfo)
+        Glob_PWR(nfrup1:K) = PWRSetBest(1:nfo)
         CALL EvaluateQAppendedTrial(nfru, K, Glob_CurrEnergy, ErrCode)
         IF (ErrCode /= Q_METHOD_SUCCESS) THEN
           IF (Glob_ProcID == 0) WRITE(*, '(1x,a,1x,i0)') &
@@ -9082,7 +9033,7 @@ CONTAINS
           CALL writereal(6, Glob_CurrEnergy)
           IF (Verbose >= 2) WRITE (*, '(5x,a,1x,i0)') 'prototype function is', wbfu
           DO i = 1, nfo
-            WRITE(*, '(1x,i6,a1,i6)', ADVANCE='no') nfru+i, ':', ZIndSetBest(i)
+            WRITE(*, '(1x,i6,a1,i6)', ADVANCE='no') nfru+i, ':', PWRSetBest(i)
             CALL writerealarradv(6, ParSetBest(1:npt, i), npt)
           ENDDO
           IF (Verbose >= 1) WRITE (*, *) 'Optimizing nonlinear parameters'
@@ -9122,49 +9073,47 @@ CONTAINS
           ! append/delete transaction as a random candidate, and the winning
           ! powers are rebuilt explicitly at the end (the nonlinear
           ! parameters alone cannot tell the Q transaction that this metadata
-          ! changed). Skipped when the power is pinned by Glob_IsIndexFixed.
+          ! changed).
           !------------------------------------------------------------------
           NumOfFailures = 0
-          IF (.NOT. Glob_IsIndexFixed) THEN
-            ! Generate a random sequence which will define the order in which
-            ! Z-indices should be optimized (one index at a time)
-            CALL GenerateRndIntSeq(nfo, ZIndOptSequence)
-            DO i = 1, nfo
-              ii = ZIndOptSequence(i)
-              j = Glob_PWR(nfru+ii)
-              jbest = j
-              DO jj = 2, PWRMax, 2
-                IF (jj /= j) THEN
-                  Glob_PWR(nfru+ii) = jj
-                  CALL EvaluateQAppendedTrial(nfru, K, Evalue, ErrCode)
-                  IF (ErrCode /= Q_METHOD_SUCCESS) THEN
-                    ! Restore the best power known so far before carrying on,
-                    ! so a failed trial never leaves a bad power behind.
-                    NumOfFailures = NumOfFailures+1
-                    Glob_PWR(nfru+ii) = jbest
-                    IF (NumOfFailures > Glob_MaxEnergyFailsAllowed) THEN
-                      IF (Glob_ProcID == 0) THEN
-                        WRITE(*, *) 'Error EC0128 in BasisEnlQ: number of failures in energy calculations'
-                        WRITE(*, *) 'during the optimization of Z-indicies exceeded limit'
-                      ENDIF
-                      CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
+          ! Generate a random sequence which will define the order in which
+          ! premultiplier powers should be optimized (one function at a time)
+          CALL GenerateRndIntSeq(nfo, PWROptSequence)
+          DO i = 1, nfo
+            ii = PWROptSequence(i)
+            j = Glob_PWR(nfru+ii)
+            jbest = j
+            DO jj = 2, PWRMax, 2
+              IF (jj /= j) THEN
+                Glob_PWR(nfru+ii) = jj
+                CALL EvaluateQAppendedTrial(nfru, K, Evalue, ErrCode)
+                IF (ErrCode /= Q_METHOD_SUCCESS) THEN
+                  ! Restore the best power known so far before carrying on,
+                  ! so a failed trial never leaves a bad power behind.
+                  NumOfFailures = NumOfFailures+1
+                  Glob_PWR(nfru+ii) = jbest
+                  IF (NumOfFailures > Glob_MaxEnergyFailsAllowed) THEN
+                    IF (Glob_ProcID == 0) THEN
+                      WRITE(*, *) 'Error EC0128 in BasisEnlQ: number of failures in energy calculations'
+                      WRITE(*, *) 'during the optimization of premultiplier powers exceeded limit'
                     ENDIF
-                  ELSE
-                    IF (Evalue < Glob_CurrEnergy) THEN
-                      Glob_CurrEnergy = Evalue
-                      jbest = jj
-                    ENDIF
+                    CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
+                  ENDIF
+                ELSE
+                  IF (Evalue < Glob_CurrEnergy) THEN
+                    Glob_CurrEnergy = Evalue
+                    jbest = jj
                   ENDIF
                 ENDIF
-              ENDDO
-              Glob_PWR(nfru+ii) = jbest
+              ENDIF
             ENDDO
-            CALL EvaluateQAppendedTrial(nfru, K, Glob_CurrEnergy, ErrCode)
-            IF (ErrCode /= Q_METHOD_SUCCESS) THEN
-              IF (Glob_ProcID == 0) WRITE(*, '(1x,a,1x,i0)') &
-                'Error EC0129 in BasisEnlQ: optimized Z-indices cannot be reconstructed, status', ErrCode
-              CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
-            ENDIF
+            Glob_PWR(nfru+ii) = jbest
+          ENDDO
+          CALL EvaluateQAppendedTrial(nfru, K, Glob_CurrEnergy, ErrCode)
+          IF (ErrCode /= Q_METHOD_SUCCESS) THEN
+            IF (Glob_ProcID == 0) WRITE(*, '(1x,a,1x,i0)') &
+              'Error EC0129 in BasisEnlQ: optimized premultiplier powers cannot be reconstructed, status', ErrCode
+            CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
           ENDIF
           !------------------------------------------------------------------
           ! Step 3: nonlinear parameters, with DRMNG
@@ -9484,12 +9433,12 @@ CONTAINS
     DEALLOCATE(V)
     DEALLOCATE(D)
     ! Deallocate workspace
-    DEALLOCATE(ZIndOptSequence)
+    DEALLOCATE(PWROptSequence)
     DEALLOCATE(grad)
     DEALLOCATE(x_best)
     DEALLOCATE(x)
-    DEALLOCATE(ZIndSetBest)
-    DEALLOCATE(ZIndSet)
+    DEALLOCATE(PWRSetBest)
+    DEALLOCATE(PWRSet)
     DEALLOCATE(ParSetBest)
     DEALLOCATE(ParSet)
     ! Deallocate workspace for EnergyQB
@@ -10567,15 +10516,13 @@ CONTAINS
     ! iteration twin. For each block: (1) stochastic selection - NTrials
     ! candidate blocks drawn from the distribution of the existing
     ! parameters, the best kept; (2) premultiplier powers, scanned one
-    ! function at a time in random order (skipped with Glob_IsIndexFixed);
+    ! function at a time in random order;
     ! (3) nonlinear parameters optimized with DRMNG through the
     ! reverse-communication loop (OptimizationType 1); (4) acceptance - the
     ! block is regenerated when the energy cannot be evaluated, a new pair
     ! overlap exceeds OverlapThreshold or a linear coefficient exceeds
     ! LinCoeffThreshold, up to Glob_BadOverlapOrLinCoeffLim attempts (then
-    ! the last block is kept). A threshold <= 0 disables its test. The
-    ! names ZIndSet/ZIndSetBest/ZIndOptSequence and the "Z-index" messages
-    ! refer to the premultiplier power in Glob_PWR.
+    ! the last block is kept). A threshold <= 0 disables its test.
     ! Arguments: Kstart, Kstop, Kstep (the last block may be smaller),
     ! NTrials, OptimizationType (0 keep the selected parameters, 1 optimize;
     ! else EC0129), MaxEnergyEval (per block), OverlapThreshold,
@@ -10617,12 +10564,12 @@ CONTAINS
 
     ! Candidate block and the best candidate block found so far
     REAL(wp), ALLOCATABLE, DIMENSION(:, :) :: ParSet, ParSetBest
-    INTEGER, ALLOCATABLE, DIMENSION(:)     :: ZIndSet, ZIndSetBest
+    INTEGER, ALLOCATABLE, DIMENSION(:)     :: PWRSet, PWRSetBest
 
     ! The optimization variables: the nonlinear parameters of the block
     ! laid out as one flat vector of nfo*npt elements
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: x, x_best, grad
-    INTEGER, ALLOCATABLE, DIMENSION(:)  :: ZIndOptSequence
+    INTEGER, ALLOCATABLE, DIMENSION(:)  :: PWROptSequence
 
     ! Arrays used by DRMNG
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: D, V, V_init
@@ -10642,7 +10589,7 @@ CONTAINS
     INTEGER, ALLOCATABLE, DIMENSION(:)                :: WorkBuffInt
     TYPE(Glob_HistoryStep), ALLOCATABLE, DIMENSION(:) :: TempHistory
     REAL(wp), ALLOCATABLE, DIMENSION(:, :)            :: TempParam
-    INTEGER, ALLOCATABLE, DIMENSION(:)                :: TempZInd
+    INTEGER, ALLOCATABLE, DIMENSION(:)                :: TempPWR
     INTEGER, ALLOCATABLE, DIMENSION(:)                :: TempFunc
     !====================================================
     ! These variables are used when a finite difference gradient is computed
@@ -10748,12 +10695,12 @@ CONTAINS
     ! Allocate workspace
     ALLOCATE(ParSet(npt, Kstep))
     ALLOCATE(ParSetBest(npt, Kstep))
-    ALLOCATE(ZIndSet(Kstep))
-    ALLOCATE(ZIndSetBest(Kstep))
+    ALLOCATE(PWRSet(Kstep))
+    ALLOCATE(PWRSetBest(Kstep))
     ALLOCATE(x(nvmax))
     ALLOCATE(x_best(nvmax))
     ALLOCATE(grad(nvmax))
-    ALLOCATE(ZIndOptSequence(Kstep))
+    ALLOCATE(PWROptSequence(Kstep))
 
 
     !==================================================================
@@ -10921,17 +10868,17 @@ CONTAINS
         wmu = 0
 
         DO i = 1, NTrials
-          IF (Glob_ProcID == 0) CALL GenerateTrialParam(nfo, ParSet, ZIndSet, wbfu_t, wmu_t)
+          IF (Glob_ProcID == 0) CALL GenerateTrialParam(nfo, ParSet, PWRSet, wbfu_t, wmu_t)
           CALL MPI_BCAST(ParSet, npt*nfo, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
-          CALL MPI_BCAST(ZIndSet, nfo, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+          CALL MPI_BCAST(PWRSet, nfo, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
           Glob_NonlinParam(1:npt, nfrup1:K) = ParSet(1:npt, 1:nfo)
-          Glob_PWR(nfrup1:K) = ZIndSet(1:nfo)
+          Glob_PWR(nfrup1:K) = PWRSet(1:nfo)
           Evalue = EnergyGA(nfrup1, K, .TRUE., ErrCode)
           IF (ErrCode == 0) THEN
             IF (Evalue < Glob_CurrEnergy) THEN
               Glob_CurrEnergy = Evalue
               ParSetBest(1:npt, 1:nfo) = ParSet(1:npt, 1:nfo)
-              ZIndSetBest(1:nfo) = ZIndSet(1:nfo)
+              PWRSetBest(1:nfo) = PWRSet(1:nfo)
               IsEnergyImproved = .TRUE.
               wbfu = wbfu_t
               wmu = wmu_t
@@ -10967,7 +10914,7 @@ CONTAINS
         ! because the last candidate evaluated is not in general the best
         ! one, so Glob_H/Glob_S hold the wrong block.
         Glob_NonlinParam(1:npt, nfrup1:K) = ParSetBest(1:npt, 1:nfo)
-        Glob_PWR(nfrup1:K) = ZIndSetBest(1:nfo)
+        Glob_PWR(nfrup1:K) = PWRSetBest(1:nfo)
         Glob_CurrEnergy = EnergyGA(nfrup1, K, .TRUE., ErrCode)
 
         IF (Glob_ProcID == 0) THEN
@@ -10975,7 +10922,7 @@ CONTAINS
           CALL writereal(6, Glob_CurrEnergy)
           IF (Verbose >= 2) WRITE (*, '(5x,a,1x,i0)') 'prototype function is', wbfu
           DO i = 1, nfo
-            WRITE(*, '(1x,i6,a1,i6)', ADVANCE='no') nfru+i, ':', ZIndSetBest(i)
+            WRITE(*, '(1x,i6,a1,i6)', ADVANCE='no') nfru+i, ':', PWRSetBest(i)
             CALL writerealarradv(6, ParSetBest(1:npt, i), npt)
           ENDDO
           IF (Verbose >= 1) WRITE (*, *) 'Optimizing nonlinear parameters'
@@ -11022,48 +10969,45 @@ CONTAINS
           ! 2,4,...,PWRMax and the best is kept; the functions are visited in
           ! random order. This exhaustive scan costs PWRMax/2 - 1 energy
           ! evaluations per function (a 1-D minimizer or a window around the
-          ! current power would be cheaper). Skipped when the power is pinned
-          ! by Glob_IsIndexFixed.
+          ! current power would be cheaper).
           !------------------------------------------------------------------
           NumOfFailures = 0
-          IF (.NOT. Glob_IsIndexFixed) THEN
-            ! Generate a random sequence which will define the order in which
-            ! Z-indices should be optimized (one index at a time)
-            CALL GenerateRndIntSeq(nfo, ZIndOptSequence)
-            ! Loop where Z-indices are optimized. Note: there is some room for improvement
-            ! here as I programmed it in a simple way when all matrix element of functions
-            ! nfrup1 through K are computed each time while it is not always necessary.
-            DO i = 1, nfo
-              ii = ZIndOptSequence(i)
-              j = Glob_PWR(nfru+ii)
-              jbest = j
-              DO jj = 2, PWRMax, 2
-                IF (jj /= j) THEN
-                  Glob_PWR(nfru+ii) = jj
-                  Evalue = EnergyGA(nfrup1, K, .TRUE., ErrCode)
-                  IF (ErrCode /= 0) THEN
-                    ! Restore the best power known so far before carrying on,
-                    ! so a failed trial never leaves a bad power behind.
-                    NumOfFailures = NumOfFailures+1
-                    Glob_PWR(nfru+ii) = jbest
-                    IF (NumOfFailures > Glob_MaxEnergyFailsAllowed) THEN
-                      IF (Glob_ProcID == 0) THEN
-                        WRITE(*, *) 'Error EC0128 in BasisEnlG: number of failures in energy calculations'
-                        WRITE(*, *) 'during the optimization of Z-indicies exceeded limit'
-                      ENDIF
-                      CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
+          ! Generate a random sequence which will define the order in which
+          ! premultiplier powers should be optimized (one function at a time)
+          CALL GenerateRndIntSeq(nfo, PWROptSequence)
+          ! Loop where premultiplier powers are optimized. Note: there is some room for improvement
+          ! here as I programmed it in a simple way when all matrix element of functions
+          ! nfrup1 through K are computed each time while it is not always necessary.
+          DO i = 1, nfo
+            ii = PWROptSequence(i)
+            j = Glob_PWR(nfru+ii)
+            jbest = j
+            DO jj = 2, PWRMax, 2
+              IF (jj /= j) THEN
+                Glob_PWR(nfru+ii) = jj
+                Evalue = EnergyGA(nfrup1, K, .TRUE., ErrCode)
+                IF (ErrCode /= 0) THEN
+                  ! Restore the best power known so far before carrying on,
+                  ! so a failed trial never leaves a bad power behind.
+                  NumOfFailures = NumOfFailures+1
+                  Glob_PWR(nfru+ii) = jbest
+                  IF (NumOfFailures > Glob_MaxEnergyFailsAllowed) THEN
+                    IF (Glob_ProcID == 0) THEN
+                      WRITE(*, *) 'Error EC0128 in BasisEnlG: number of failures in energy calculations'
+                      WRITE(*, *) 'during the optimization of premultiplier powers exceeded limit'
                     ENDIF
-                  ELSE
-                    IF (Evalue < Glob_CurrEnergy) THEN
-                      Glob_CurrEnergy = Evalue
-                      jbest = jj
-                    ENDIF
+                    CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
+                  ENDIF
+                ELSE
+                  IF (Evalue < Glob_CurrEnergy) THEN
+                    Glob_CurrEnergy = Evalue
+                    jbest = jj
                   ENDIF
                 ENDIF
-              ENDDO
-              Glob_PWR(nfru+ii) = jbest
+              ENDIF
             ENDDO
-          ENDIF
+            Glob_PWR(nfru+ii) = jbest
+          ENDDO
 
           !------------------------------------------------------------------
           ! Step 3: nonlinear parameters, with DRMNG
@@ -11467,12 +11411,12 @@ CONTAINS
     DEALLOCATE(D)
 
     ! Deallocate workspace
-    DEALLOCATE(ZIndOptSequence)
+    DEALLOCATE(PWROptSequence)
     DEALLOCATE(grad)
     DEALLOCATE(x_best)
     DEALLOCATE(x)
-    DEALLOCATE(ZIndSetBest)
-    DEALLOCATE(ZIndSet)
+    DEALLOCATE(PWRSetBest)
+    DEALLOCATE(PWRSet)
     DEALLOCATE(ParSetBest)
     DEALLOCATE(ParSet)
 
@@ -11579,7 +11523,7 @@ CONTAINS
 
     ! Candidate block and the best candidate block found so far
     REAL(wp), ALLOCATABLE, DIMENSION(:, :) :: ParSet, ParSetBest
-    INTEGER, ALLOCATABLE, DIMENSION(:)     :: ZIndSet, ZIndSetBest
+    INTEGER, ALLOCATABLE, DIMENSION(:)     :: PWRSet, PWRSetBest
 
     ! The optimization variables: the nonlinear parameters of the block
     ! laid out as one flat vector of nfo*npt elements
@@ -11589,7 +11533,7 @@ CONTAINS
     ! note where it is allocated
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: v_good
 
-    INTEGER, ALLOCATABLE, DIMENSION(:) :: ZIndOptSequence
+    INTEGER, ALLOCATABLE, DIMENSION(:) :: PWROptSequence
 
     ! Arrays used by DRMNG
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: D, V, V_init
@@ -11608,7 +11552,7 @@ CONTAINS
     INTEGER, ALLOCATABLE, DIMENSION(:)                :: WorkBuffInt
     TYPE(Glob_HistoryStep), ALLOCATABLE, DIMENSION(:) :: TempHistory
     REAL(wp), ALLOCATABLE, DIMENSION(:, :)            :: TempParam
-    INTEGER, ALLOCATABLE, DIMENSION(:)                :: TempZInd
+    INTEGER, ALLOCATABLE, DIMENSION(:)                :: TempPWR
     INTEGER, ALLOCATABLE, DIMENSION(:)                :: TempFunc
     !====================================================
     ! These variables are used when a finite difference gradient is computed
@@ -11727,12 +11671,12 @@ CONTAINS
     ! Allocate workspace
     ALLOCATE(ParSet(npt, Kstep))
     ALLOCATE(ParSetBest(npt, Kstep))
-    ALLOCATE(ZIndSet(Kstep))
-    ALLOCATE(ZIndSetBest(Kstep))
+    ALLOCATE(PWRSet(Kstep))
+    ALLOCATE(PWRSetBest(Kstep))
     ALLOCATE(x(nvmax))
     ALLOCATE(x_best(nvmax))
     ALLOCATE(grad(nvmax))
-    ALLOCATE(ZIndOptSequence(Kstep))
+    ALLOCATE(PWROptSequence(Kstep))
 
 
     !==================================================================
@@ -11949,18 +11893,18 @@ CONTAINS
         wmu = 0
 
         DO i = 1, NTrials
-          IF (Glob_ProcID == 0) CALL GenerateTrialParam(nfo, ParSet, ZIndSet, wbfu_t, wmu_t)
+          IF (Glob_ProcID == 0) CALL GenerateTrialParam(nfo, ParSet, PWRSet, wbfu_t, wmu_t)
           CALL MPI_BCAST(ParSet, npt*nfo, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
-          CALL MPI_BCAST(ZIndSet, nfo, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+          CALL MPI_BCAST(PWRSet, nfo, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
           Glob_NonlinParam(1:npt, nfrup1:K) = ParSet(1:npt, 1:nfo)
-          Glob_PWR(nfrup1:K) = ZIndSet(1:nfo)
+          Glob_PWR(nfrup1:K) = PWRSet(1:nfo)
           Evalue = EnergyIA(nfrup1, K, .TRUE., ErrCode)
           IF (ErrCode == 0) THEN
             v_good(1:K) = Glob_LastEigvector(1:K)
             IF (Evalue < Glob_CurrEnergy) THEN
               Glob_CurrEnergy = Evalue
               ParSetBest(1:npt, 1:nfo) = ParSet(1:npt, 1:nfo)
-              ZIndSetBest(1:nfo) = ZIndSet(1:nfo)
+              PWRSetBest(1:nfo) = PWRSet(1:nfo)
               IsEnergyImproved = .TRUE.
               wbfu = wbfu_t
               wmu = wmu_t
@@ -11999,7 +11943,7 @@ CONTAINS
         ! because the last candidate evaluated is not in general the best
         ! one, so Glob_H/Glob_S hold the wrong block.
         Glob_NonlinParam(1:npt, nfrup1:K) = ParSetBest(1:npt, 1:nfo)
-        Glob_PWR(nfrup1:K) = ZIndSetBest(1:nfo)
+        Glob_PWR(nfrup1:K) = PWRSetBest(1:nfo)
         Evalue = EnergyIA(nfrup1, K, .TRUE., ErrCode)
         IF (ErrCode == 0) THEN
           Glob_CurrEnergy = Evalue
@@ -12013,7 +11957,7 @@ CONTAINS
           CALL writereal(6, Glob_CurrEnergy)
           IF (Verbose >= 2) WRITE (*, '(5x,a,1x,i0)') 'prototype function is', wbfu
           DO i = 1, nfo
-            WRITE(*, '(1x,i6,a1,i6)', ADVANCE='no') nfru+i, ':', ZIndSetBest(i)
+            WRITE(*, '(1x,i6,a1,i6)', ADVANCE='no') nfru+i, ':', PWRSetBest(i)
             CALL writerealarradv(6, ParSetBest(1:npt, i), npt)
           ENDDO
           IF (Verbose >= 1) WRITE (*, *) 'Optimizing nonlinear parameters'
@@ -12060,48 +12004,45 @@ CONTAINS
           ! 2,4,...,PWRMax and the best is kept; the functions are visited in
           ! random order. This exhaustive scan costs PWRMax/2 - 1 energy
           ! evaluations per function (a 1-D minimizer or a window around the
-          ! current power would be cheaper). Skipped when the power is pinned
-          ! by Glob_IsIndexFixed.
+          ! current power would be cheaper).
           !------------------------------------------------------------------
           NumOfFailures = 0
-          IF (.NOT. Glob_IsIndexFixed) THEN
-            ! Generate a random sequence which will define the order in which
-            ! Z-indices should be optimized (one index at a time)
-            CALL GenerateRndIntSeq(nfo, ZIndOptSequence)
-            ! Loop where Z-indices are optimized. Note: there is some room for improvement
-            ! here as I programmed it in a simple way when all matrix element of functions
-            ! nfrup1 through K are computed each time while it is not always necessary.
-            DO i = 1, nfo
-              ii = ZIndOptSequence(i)
-              j = Glob_PWR(nfru+ii)
-              jbest = j
-              DO jj = 2, PWRMax, 2
-                IF (jj /= j) THEN
-                  Glob_PWR(nfru+ii) = jj
-                  Evalue = EnergyIA(nfrup1, K, .TRUE., ErrCode)
-                  IF (ErrCode /= 0) THEN
-                    ! Restore the best power known so far before carrying on,
-                    ! so a failed trial never leaves a bad power behind.
-                    NumOfFailures = NumOfFailures+1
-                    Glob_PWR(nfru+ii) = jbest
-                    IF (NumOfFailures > Glob_MaxEnergyFailsAllowed) THEN
-                      IF (Glob_ProcID == 0) THEN
-                        WRITE(*, *) 'Error EC0138 in BasisEnlI: number of failures in energy calculations'
-                        WRITE(*, *) 'during the optimization of Z-indicies exceeded limit'
-                      ENDIF
-                      CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
+          ! Generate a random sequence which will define the order in which
+          ! premultiplier powers should be optimized (one function at a time)
+          CALL GenerateRndIntSeq(nfo, PWROptSequence)
+          ! Loop where premultiplier powers are optimized. Note: there is some room for improvement
+          ! here as I programmed it in a simple way when all matrix element of functions
+          ! nfrup1 through K are computed each time while it is not always necessary.
+          DO i = 1, nfo
+            ii = PWROptSequence(i)
+            j = Glob_PWR(nfru+ii)
+            jbest = j
+            DO jj = 2, PWRMax, 2
+              IF (jj /= j) THEN
+                Glob_PWR(nfru+ii) = jj
+                Evalue = EnergyIA(nfrup1, K, .TRUE., ErrCode)
+                IF (ErrCode /= 0) THEN
+                  ! Restore the best power known so far before carrying on,
+                  ! so a failed trial never leaves a bad power behind.
+                  NumOfFailures = NumOfFailures+1
+                  Glob_PWR(nfru+ii) = jbest
+                  IF (NumOfFailures > Glob_MaxEnergyFailsAllowed) THEN
+                    IF (Glob_ProcID == 0) THEN
+                      WRITE(*, *) 'Error EC0138 in BasisEnlI: number of failures in energy calculations'
+                      WRITE(*, *) 'during the optimization of premultiplier powers exceeded limit'
                     ENDIF
-                  ELSE
-                    IF (Evalue < Glob_CurrEnergy) THEN
-                      Glob_CurrEnergy = Evalue
-                      jbest = jj
-                    ENDIF
+                    CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
+                  ENDIF
+                ELSE
+                  IF (Evalue < Glob_CurrEnergy) THEN
+                    Glob_CurrEnergy = Evalue
+                    jbest = jj
                   ENDIF
                 ENDIF
-              ENDDO
-              Glob_PWR(nfru+ii) = jbest
+              ENDIF
             ENDDO
-          ENDIF
+            Glob_PWR(nfru+ii) = jbest
+          ENDDO
 
           !------------------------------------------------------------------
           ! Step 3: nonlinear parameters, with DRMNG
@@ -12521,12 +12462,12 @@ CONTAINS
     DEALLOCATE(D)
 
     ! Deallocate workspace
-    DEALLOCATE(ZIndOptSequence)
+    DEALLOCATE(PWROptSequence)
     DEALLOCATE(grad)
     DEALLOCATE(x_best)
     DEALLOCATE(x)
-    DEALLOCATE(ZIndSetBest)
-    DEALLOCATE(ZIndSet)
+    DEALLOCATE(PWRSetBest)
+    DEALLOCATE(PWRSet)
     DEALLOCATE(ParSetBest)
     DEALLOCATE(ParSet)
 
@@ -15791,7 +15732,7 @@ CONTAINS
     REAL(wp)                               :: Aver_c
     REAL(wp), ALLOCATABLE, DIMENSION(:, :) :: NonlinParamTemp
     INTEGER, ALLOCATABLE, DIMENSION(:)     :: MaskArray
-    INTEGER, ALLOCATABLE, DIMENSION(:)     :: ZIndTemp
+    INTEGER, ALLOCATABLE, DIMENSION(:)     :: PWRTemp
     CHARACTER(Glob_FileNameLength)         :: ch_temp
     CHARACTER(1)                           :: Method
 
@@ -15858,7 +15799,7 @@ CONTAINS
 
     ALLOCATE(NonlinParamTemp(1:npt, cbs))
     ALLOCATE(MaskArray(1:cbs))
-    ALLOCATE(ZIndTemp(cbs))
+    ALLOCATE(PWRTemp(cbs))
     MaskArray = 0
 
     IF ((PrintInfoSpec > 1) .AND. (Glob_ProcID == 0)) THEN
@@ -15876,7 +15817,7 @@ CONTAINS
     DO i = 1, cbs
       IF (ABS(Glob_c(i)) >= LinCoeffThreshold) THEN
         NonlinParamTemp(1:npt, i-j) = Glob_NonlinParam(1:npt, i)
-        ZIndTemp(i-j) = Glob_PWR(i)
+        PWRTemp(i-j) = Glob_PWR(i)
       ELSE
         IF ((j == 0) .AND. (Glob_ProcID == 0)) WRITE(*, *) 'Little contributing function list:'
         j = j+1
@@ -15924,7 +15865,7 @@ CONTAINS
     ENDIF
 
     Glob_NonlinParam(1:npt, 1:cbs-j) = NonlinParamTemp(1:npt, 1:cbs-j)
-    Glob_PWR(1:cbs-j) = ZIndTemp(1:cbs-j)
+    Glob_PWR(1:cbs-j) = PWRTemp(1:cbs-j)
 
     IF (Glob_ProcID == 0) THEN
       IF (Method == 'Q') THEN
@@ -15980,7 +15921,7 @@ CONTAINS
     Glob_DataFileName = ch_temp
 
     DEALLOCATE(MaskArray)
-    DEALLOCATE(ZIndTemp)
+    DEALLOCATE(PWRTemp)
     DEALLOCATE(NonlinParamTemp)
 
     ! deallocate global arrays

@@ -9,10 +9,11 @@ all other files in this repository are covered by the ECGPACK license.
 
 ## Reference BLAS and LAPACK (University of Tennessee et al.)
 
-**Files:** `BLAS.f` and `LAPACK.f` in each of `CG_0S/src/`, `RG_0S/src/`,
-`RG_1P/src/`, `RG_2D/src/` and `RG_2P/src/`. The four real-ECG codes use
-identical expanded aggregates shared by ECGPACK and qrlinalg; `CG_0S` retains
-the smaller aggregate required by that code.
+**Files:** `BLAS.f` and `LAPACK.f` in each of `CG_0S/src/`, `PG_0S/src/`,
+`PG_1P/src/`, `RG_0S/src/`, `RG_1P/src/`, `RG_2D/src/` and `RG_2P/src/`. The
+four real-ECG codes and the two power-Gaussian codes use identical expanded
+aggregates shared by ECGPACK and qrlinalg; `CG_0S` retains the smaller
+aggregate required by that code.
 
 **Origin:** the netlib reference implementations of BLAS and LAPACK,
 <https://www.netlib.org/lapack/>. The routine headers retained in the
@@ -22,7 +23,7 @@ carrying a version 3.1 header.
 **Scope:** these are subsets, not the complete libraries. They contain the
 real double precision (`D`) and complex (`Z`) Level 1, 2 and 3 BLAS routines
 and the LAPACK routines used by the ECGPACK eigensolvers. The expanded
-real-ECG aggregates additionally contain the factorization and rotation
+real-ECG and power-Gaussian aggregates additionally contain the factorization and rotation
 routines required by qrlinalg and qrupdate-ng, including `DROT`, `DGEQRF`,
 `ZGEQRF`, `ZLARTG`, and their supporting routines.
 
@@ -39,7 +40,7 @@ module `wp_def`, so that the codes can be built in double (fp64),
 extended (fp80) or quadruple (fp128) precision. The individual netlib
 source files were also concatenated into the two aggregate files
 `BLAS.f` and `LAPACK.f`, with separator comment lines inserted between
-routines. The real-ECG aggregates were extended with the qrlinalg-required
+routines. The real-ECG and power-Gaussian aggregates were extended with the qrlinalg-required
 Netlib routines and are stored only at the top level of each code's `src/`
 directory. Problems observed in these copies should be reported to the
 ECGPACK authors rather than to the LAPACK developers.
@@ -106,8 +107,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ## qrupdate-ng (Martin Köhler and contributors)
 
 **Files:** the `src/qrupdate/` directories in `RG_0S`, `RG_1P`, `RG_2D`,
-and `RG_2P`. Each energy code carries an identical copy of the imported
-sources, its README, and the complete `COPYING` license text.
+`RG_2P`, `PG_0S`, and `PG_1P`. Each of these six codes carries a copy of the
+same imported sources, its README, and the complete `COPYING` license text
+(the copies differ at most in blank lines).
 
 **Origin:** Martin Köhler's `qrupdate-ng` repository at the Max Planck
 Institute Magdeburg,
@@ -122,7 +124,7 @@ and licensing notices.
 
 The qrupdate-ng sources state GNU GPL version 3 or, at the user's option, any
 later version. The full license text is reproduced as `COPYING` in each of the
-four vendored directories.
+six vendored directories.
 
 ---
 
@@ -226,8 +228,9 @@ modifications are distributed under the ECGPACK license (`LICENSE.md`).
 
 ## SLATEC machine constants (`I1MACH` and `D1MACH`)
 
-**Files:** `X1MACH.f90` in each of `CG_0S/src/`, `RG_0S/src/`,
-`RG_1P/src/`, `RG_2D/src/` and `RG_2P/src/` (five identical copies).
+**Files:** `X1MACH.f90` in the `src/` directory of each energy code
+(`RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, `PG_0S`, `PG_1P`, and `CG_0S`; seven
+copies of the same file, differing at most in trailing blank lines).
 
 **Origin:** obtained from Netlib, <https://www.netlib.org/slatec/>. The
 file provides the machine constant enquiry functions `I1MACH` and

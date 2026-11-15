@@ -132,16 +132,6 @@ MODULE globvars
   ! (0 .. Glob_MaxPowerAllowed; 0 means no premultiplier).
   INTEGER, ALLOCATABLE, DIMENSION(:), SAVE :: Glob_PWR
 
-  ! Glob_IsIndexFixed specifies whether the z-indices (r-premultiplier powers)
-  ! of all basis functions are held fixed at one common value instead of being
-  ! generated and optimized per function. Set from the optional FIXED_INDEX
-  ! line of the data file.
-  LOGICAL :: Glob_IsIndexFixed = .FALSE.
-
-  ! When Glob_IsIndexFixed is .true. this holds the common z-index value.
-  ! Otherwise it is not used.
-  INTEGER :: Glob_IndexFixedValue
-
   INTEGER :: Glob_VariedParam
 
 

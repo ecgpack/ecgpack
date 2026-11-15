@@ -1,3 +1,12 @@
+# Store all text files with LF line endings and check them out with LF on
+# every platform (Git decides which files are text).
+* text=auto eol=lf
+
+# Files that must never be converted.
+*.png binary
+*.xlsx binary
+swapfile.dat binary
+
 # Shell interpreters on Linux require an LF-terminated shebang.
 *.bash text eol=lf
 *.sh text eol=lf

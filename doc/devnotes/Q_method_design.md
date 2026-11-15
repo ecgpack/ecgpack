@@ -15,6 +15,12 @@ Method `Q` is implemented in the four real-ECG energy codes:
 - `RG_2D`; and
 - `RG_2P`.
 
+It has also been ported to the two power-Gaussian energy codes, `PG_0S` and
+`PG_1P`, which reuse the same `qrlinalg.f90` and `qrupdate/` sources. This
+document describes the real-ECG implementations; where the power-Gaussian
+codes differ (their matrix-element interfaces and their additional BBOP
+commands), consult their local sources.
+
 The implementations are intentionally local to each code because ECGPACK's
 energy variants have separate source trees and basis-specific matrix-element
 interfaces. `RG_0S` remains the reference implementation. The Q algorithms

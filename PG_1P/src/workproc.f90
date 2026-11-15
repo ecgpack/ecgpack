@@ -114,7 +114,7 @@ CONTAINS
     ! BASIS_SIZE, CURRENT_ENERGY, WHICH_EIGENVALUE, EIGVAL_TOLERANCE,
     ! INVITPARAMETER, LAST/BEST/WORST_EIGVAL_TOL, GENERATOR_PARAM, then the
     ! BBOP script, the optimization history and the nonlinear parameters
-    ! (one record per function: number, x-index, power, vech L), each block
+    ! (one record per function: number, z-index, power, vech L), each block
     ! between separator lines.
     !
     ! Optional records are read into a character buffer and parsed with an
@@ -165,7 +165,7 @@ CONTAINS
     INTEGER :: NumOfValues     ! values counted on a record
     INTEGER :: ValuesExpected  ! values a record should carry
     LOGICAL :: InValue         ! token-scanner state
-    INTEGER :: XIndexRead      ! x-index of the current parameter record
+    INTEGER :: XIndexRead      ! z-index of the current parameter record
     INTEGER :: PowerRead       ! power of r_1 of the current parameter record
 
     ! Whole-record buffer for the nonlinear-parameter lines. Each line
@@ -273,7 +273,7 @@ CONTAINS
     ! Optional FIXED_INDEX line
     !==================================================================
     ! May appear between PARTICLES and MASSES. When present, every basis
-    ! function keeps the same x-index (the pseudoparticle whose x
+    ! function keeps the same z-index (the pseudoparticle whose z
     ! coordinate is the angular prefactor) instead of having one generated
     ! and optimized per function; the powers of r_1 stay free.
     !------------------------------------------------------------------
@@ -1208,7 +1208,7 @@ CONTAINS
     !   Glob_History     optimization history, one record per function
     !   Glob_FuncNum     function numbering
     !   Glob_PWR         premultiplier power of r_1 per function
-    !   Glob_X_index     pseudoparticle index of the x_i prefactor per function
+    !   Glob_X_index     pseudoparticle index of the z_i prefactor per function
     !   Glob_NonlinParam Cholesky elements of L_k, shape (npt x N)
     !------------------------------------------------------------------
     ALLOCATE(Glob_History(Glob_CurrBasisSize))
@@ -1349,7 +1349,7 @@ CONTAINS
     !==================================================================
     ! One record per basis function:
     !   <FuncNum> <XIndex> <Power> <param_1> ... <param_npt>
-    ! XIndex (1..Glob_n) is the pseudoparticle whose x coordinate is the
+    ! XIndex (1..Glob_n) is the pseudoparticle whose z coordinate is the
     ! angular prefactor and Power the EVEN power of r_1; they are stored in
     ! Glob_X_index and Glob_PWR.
     !
@@ -1397,7 +1397,7 @@ CONTAINS
           WRITE(*, *) 'Error EC0234 in data file: nonlinear parameter block'
           IF (Verbose >= 1) WRITE(*, *) 'Record', i, 'carries', NumOfValues, 'values but', &
             ValuesExpected, 'are expected:'
-          IF (Verbose >= 1) WRITE(*, *) 'function number, x-index, power, and', Glob_npt, &
+          IF (Verbose >= 1) WRITE(*, *) 'function number, z-index, power, and', Glob_npt, &
             'nonlinear parameters.'
           IF (Verbose >= 1) WRITE(*, *) 'This file was most likely written for a different particle number.'
           ErrorInDataFile = .TRUE.
@@ -1420,14 +1420,14 @@ CONTAINS
           ErrorInDataFile = .TRUE.
         ENDIF
 
-        ! The x-index must name a pseudoparticle, and the power must be an
+        ! The z-index must name a pseudoparticle, and the power must be an
         ! even number within the range of the precomputed gamma tables in
-        ! globvars.f90 (0-based: a power of 0 leaves only the x_i prefactor).
+        ! globvars.f90 (0-based: a power of 0 leaves only the z_i prefactor).
         ! Out of range it reads past the end of those tables, which surfaces
         ! far away inside MatrixElements instead of here.
         IF ((XIndexRead < 1) .OR. (XIndexRead > Glob_n)) THEN
           WRITE(*, *) 'Error EC0237 in data file: nonlinear parameter block'
-          IF (Verbose >= 1) WRITE(*, *) 'Record', i, 'has x-index', XIndexRead, &
+          IF (Verbose >= 1) WRITE(*, *) 'Record', i, 'has z-index', XIndexRead, &
             'outside the allowed range 1 ..', Glob_n
           ErrorInDataFile = .TRUE.
           XIndexRead = 1
@@ -3259,14 +3259,14 @@ CONTAINS
     !   Method 2 - one normal draw r (0,Glob_RG_s2) scales every parameter
     !              by (1+r); redrawn while |1+r| lies in [0.8,1.2], which
     !              would give a nearly linearly dependent function.
-    ! The premultiplier x_i r_1^m of every trial function is returned as
-    ! its power m and its x-index i. Powers are EVEN and lie in 0..PWRMax
-    ! (PWRMax = largest even value <= Glob_MaxPowerAllowed); the x-index
+    ! The premultiplier z_i r_1^m of every trial function is returned as
+    ! its power m and its z-index i. Powers are EVEN and lie in 0..PWRMax
+    ! (PWRMax = largest even value <= Glob_MaxPowerAllowed); the z-index
     ! lies in 1..Glob_n. Method 1 keeps the prototype's power with
     ! probability 1-PWRChangeProb, else draws a different even one, and
-    ! keeps the prototype's x-index with probability 1-XIndexChangeProb,
+    ! keeps the prototype's z-index with probability 1-XIndexChangeProb,
     ! else draws one uniformly; method 2 inherits both. Glob_IsIndexFixed
-    ! overrides the x-index with Glob_IndexFixedValue (the power stays as
+    ! overrides the z-index with Glob_IndexFixedValue (the power stays as
     ! drawn).
     ! Input:  nfun - number of trial functions.
     ! Output: x(1:Glob_npt,1:nfun), m(1:nfun), xind(1:nfun); k - the
@@ -3283,7 +3283,7 @@ CONTAINS
     INTEGER  :: nfun               ! number of trial functions wanted
     REAL(wp) :: x(Glob_npt, nfun)  ! out: nonlinear parameters
     INTEGER  :: m(nfun)            ! out: premultiplier powers
-    INTEGER  :: xind(nfun)         ! out: x-indices of the prefactors
+    INTEGER  :: xind(nfun)         ! out: z-indices of the prefactors
     INTEGER  :: k                  ! out: prototype basis function
     INTEGER  :: method_used        ! out: 1, 2, or 0 for an empty basis
 
@@ -3305,9 +3305,9 @@ CONTAINS
     ! the power of its prototype (method 1 only).
     REAL(8) :: PWRChangeProb = 0.5_8
 
-    ! Probability that a generated function gets a NEW x-index (drawn
+    ! Probability that a generated function gets a NEW z-index (drawn
     ! uniformly from 1..Glob_n, so it may still coincide with the
-    ! prototype's) instead of the x-index of its prototype (method 1 only).
+    ! prototype's) instead of the z-index of its prototype (method 1 only).
     REAL(8) :: XIndexChangeProb = 0.5_8
 
     ! Largest EVEN premultiplier power this build allows. Powers index
@@ -3326,7 +3326,7 @@ CONTAINS
       !==================================================================
       ! There is no prototype to perturb, so the nonlinear parameters come
       ! from a flat distribution on [Lmin,Lmax], the power from a flat
-      ! distribution over the even values in 0..PWRMax and the x-index
+      ! distribution over the even values in 0..PWRMax and the z-index
       ! from a flat distribution over 1..Glob_n.
       !------------------------------------------------------------------
       DO i = 1, nfun
@@ -3466,7 +3466,7 @@ CONTAINS
 
 
     !==================================================================
-    ! A fixed x-index overrides everything generated above
+    ! A fixed z-index overrides everything generated above
     !==================================================================
     ! The powers keep the values drawn above; only the pseudoparticle
     ! index of the angular prefactor is set to the fixed value.
@@ -3479,13 +3479,13 @@ CONTAINS
     SUBROUTINE DrawPremultiplier(ProtoPower, ProtoXIndex, Power, XIndex)
       ! Premultiplier of a method-1 trial function from that of its
       ! prototype: the power is kept with probability 1-PWRChangeProb and
-      ! otherwise replaced by a different even power; the x-index is kept
+      ! otherwise replaced by a different even power; the z-index is kept
       ! with probability 1-XIndexChangeProb and otherwise drawn uniformly.
       ! Uses r of the host.
       INTEGER, INTENT(IN)  :: ProtoPower   ! power of the prototype
-      INTEGER, INTENT(IN)  :: ProtoXIndex  ! x-index of the prototype
+      INTEGER, INTENT(IN)  :: ProtoXIndex  ! z-index of the prototype
       INTEGER, INTENT(OUT) :: Power        ! power of the trial function
-      INTEGER, INTENT(OUT) :: XIndex       ! x-index of the trial function
+      INTEGER, INTENT(OUT) :: XIndex       ! z-index of the trial function
 
       r = urand()
 
@@ -5592,7 +5592,7 @@ CONTAINS
 
 
     !==================================================================
-    ! Premultiplier powers and x-indices
+    ! Premultiplier powers and z-indices
     !==================================================================
     ! FuncNumTemp is reused as scratch here and again below; the uses
     ! are sequential, so one array of size nfco serves all of them.
@@ -5698,7 +5698,7 @@ CONTAINS
 
 
     !==================================================================
-    ! Premultiplier powers and x-indices
+    ! Premultiplier powers and z-indices
     !==================================================================
     FuncNumTemp(1:k) = Glob_PWR(fb1:fe1)
 
@@ -7641,7 +7641,7 @@ CONTAINS
     INTEGER :: a, b, i, j, PairNumber, MatrixOrder, NumActive
     INTEGER :: ActiveIndex, NumMatrixEntries, NumDerivativeEntries, npt, npt2
     INTEGER :: mActive, mOther  ! premultiplier powers of the active and the other function
-    INTEGER :: iActive, iOther  ! their x-indices
+    INTEGER :: iActive, iOther  ! their z-indices
     INTEGER :: gradflag  ! 0 no derivatives, 1 active side only, 2 both sides
     ! Nonlinear parameters of the active (bra) and of the other (ket) function
     REAL(wp) :: ParamActive(Glob_n*(Glob_n+1)/2)
@@ -9153,12 +9153,12 @@ CONTAINS
     ! even powers), so the premultiplier scan steps through 0,2,...,PWRMax.
     INTEGER, PARAMETER :: PWRMax = 2*(Glob_MaxPowerAllowed/2)
 
-    ! The premultiplier scan: x-index range and the code being tried
+    ! The premultiplier scan: z-index range and the code being tried
     INTEGER :: ix, ixmin, ixmax, ix0, ixbest, NumOfAlternatives
     ! Candidate block and the best candidate block found so far
     REAL(wp), ALLOCATABLE, DIMENSION(:, :) :: ParSet, ParSetBest
     INTEGER, ALLOCATABLE, DIMENSION(:)     :: PWRSet, PWRSetBest    ! powers of the candidate block
-    INTEGER, ALLOCATABLE, DIMENSION(:)     :: XIndSet, XIndSetBest  ! x-indices of the candidate block
+    INTEGER, ALLOCATABLE, DIMENSION(:)     :: XIndSet, XIndSetBest  ! z-indices of the candidate block
     ! The optimization variables: the nonlinear parameters of the block
     ! laid out as one flat vector of nfo*npt elements
     REAL(wp), ALLOCATABLE, DIMENSION(:) :: x, x_best, grad
@@ -9473,11 +9473,11 @@ CONTAINS
         !------------------------------------------------------------------
         CASE (1)
           !------------------------------------------------------------------
-          ! Step 2: premultipliers x_i r_1^m, one function at a time
+          ! Step 2: premultipliers z_i r_1^m, one function at a time
           !------------------------------------------------------------------
           ! Each function of the block is tried with every legal
           ! premultiplier - every pseudoparticle index i of the angular
-          ! prefactor x_i (only Glob_IndexFixedValue with FIXED_INDEX)
+          ! prefactor z_i (only Glob_IndexFixedValue with FIXED_INDEX)
           ! combined with every EVEN power 0,2,...,PWRMax of r_1 - and the
           ! best is kept; the functions are visited in random order (see
           ! BasisEnlG for the reasoning behind the exhaustive scan). The
@@ -11028,7 +11028,7 @@ CONTAINS
     ! LinCoeffThreshold, up to Glob_BadOverlapOrLinCoeffLim attempts (then
     ! the last block is kept). A threshold <= 0 disables its test. The
     ! candidate block is held in ParSet/PWRSet/XIndSet (parameters, powers,
-    ! x-indices), the best one so far in the *Best arrays.
+    ! z-indices), the best one so far in the *Best arrays.
     ! Arguments: Kstart, Kstop, Kstep (the last block may be smaller),
     ! NTrials, OptimizationType (0 keep the selected parameters, 1 optimize;
     ! else EC0129), MaxEnergyEval (per block), OverlapThreshold,
@@ -11068,13 +11068,13 @@ CONTAINS
     ! premultiplier scan below steps through 0,2,...,PWRMax.
     INTEGER, PARAMETER :: PWRMax = 2*(Glob_MaxPowerAllowed/2)
 
-    ! The premultiplier scan: x-index range and the code being tried
+    ! The premultiplier scan: z-index range and the code being tried
     INTEGER :: ix, ixmin, ixmax, ix0, ixbest, NumOfAlternatives
 
     ! Candidate block and the best candidate block found so far
     REAL(wp), ALLOCATABLE, DIMENSION(:, :) :: ParSet, ParSetBest
     INTEGER, ALLOCATABLE, DIMENSION(:)     :: PWRSet, PWRSetBest    ! powers of the candidate block
-    INTEGER, ALLOCATABLE, DIMENSION(:)     :: XIndSet, XIndSetBest  ! x-indices of the candidate block
+    INTEGER, ALLOCATABLE, DIMENSION(:)     :: XIndSet, XIndSetBest  ! z-indices of the candidate block
 
     ! The optimization variables: the nonlinear parameters of the block
     ! laid out as one flat vector of nfo*npt elements
@@ -11481,11 +11481,11 @@ CONTAINS
         CASE (1)
 
           !------------------------------------------------------------------
-          ! Step 2: premultipliers x_i r_1^m, one function at a time
+          ! Step 2: premultipliers z_i r_1^m, one function at a time
           !------------------------------------------------------------------
           ! Each function in the window is tried with every legal
           ! premultiplier - every pseudoparticle index i of the angular
-          ! prefactor x_i (only Glob_IndexFixedValue with FIXED_INDEX)
+          ! prefactor z_i (only Glob_IndexFixedValue with FIXED_INDEX)
           ! combined with every EVEN power 0,2,...,PWRMax of r_1 - and the
           ! best is kept; the functions are visited in random order. This
           ! exhaustive scan costs Glob_n*(PWRMax/2+1)-1 energy evaluations
@@ -11493,7 +11493,7 @@ CONTAINS
           ! of the power described in J. Phys. B 48, 195101 (2015); the
           ! original code searched the packed code with a one-dimensional
           ! minimizer and rounded the result to an even code, which for two
-          ! pseudoparticles always selected x_1.
+          ! pseudoparticles always selected z_1.
           !------------------------------------------------------------------
           NumOfFailures = 0
           ! Generate a random sequence which will define the order in which
@@ -12087,13 +12087,13 @@ CONTAINS
     ! premultiplier scan below steps through 0,2,...,PWRMax.
     INTEGER, PARAMETER :: PWRMax = 2*(Glob_MaxPowerAllowed/2)
 
-    ! The premultiplier scan: x-index range and the code being tried
+    ! The premultiplier scan: z-index range and the code being tried
     INTEGER :: ix, ixmin, ixmax, ix0, ixbest, NumOfAlternatives
 
     ! Candidate block and the best candidate block found so far
     REAL(wp), ALLOCATABLE, DIMENSION(:, :) :: ParSet, ParSetBest
     INTEGER, ALLOCATABLE, DIMENSION(:)     :: PWRSet, PWRSetBest    ! powers of the candidate block
-    INTEGER, ALLOCATABLE, DIMENSION(:)     :: XIndSet, XIndSetBest  ! x-indices of the candidate block
+    INTEGER, ALLOCATABLE, DIMENSION(:)     :: XIndSet, XIndSetBest  ! z-indices of the candidate block
 
     ! The optimization variables: the nonlinear parameters of the block
     ! laid out as one flat vector of nfo*npt elements
@@ -12582,11 +12582,11 @@ CONTAINS
         CASE (1)
 
           !------------------------------------------------------------------
-          ! Step 2: premultipliers x_i r_1^m, one function at a time
+          ! Step 2: premultipliers z_i r_1^m, one function at a time
           !------------------------------------------------------------------
           ! Each function in the window is tried with every legal
           ! premultiplier - every pseudoparticle index i of the angular
-          ! prefactor x_i (only Glob_IndexFixedValue with FIXED_INDEX)
+          ! prefactor z_i (only Glob_IndexFixedValue with FIXED_INDEX)
           ! combined with every EVEN power 0,2,...,PWRMax of r_1 - and the
           ! best is kept; the functions are visited in random order. See
           ! BasisEnlG for the reasoning behind the exhaustive scan.
@@ -18446,14 +18446,14 @@ CONTAINS
       WRITE(*, '(1x,a,f5.2,a)') 'Working precision: -log10(EPSILON) = ', Dhave, &
                                ' decimal digits'
       WRITE(*, *)
-      WRITE(*, '(1x,a)') '  func  x-ind  power        S_raw(i,i)        sum|terms|'// &
+      WRITE(*, '(1x,a)') '  func  z-ind  power        S_raw(i,i)        sum|terms|'// &
                         '     cancel C   lost   left      rel.err'
       IF (OpenFileErr == 0) THEN
         WRITE(3, *) 'Basis health from the diagonal of Y+Y'
         WRITE(3, '(1x,a,f5.2,a)') 'Working precision: -log10(EPSILON) = ', Dhave, &
                                  ' decimal digits'
         WRITE(3, *)
-        WRITE(3, '(1x,a)') '  func  x-ind  power        S_raw(i,i)        sum|terms|'// &
+        WRITE(3, '(1x,a)') '  func  z-ind  power        S_raw(i,i)        sum|terms|'// &
                           '     cancel C   lost   left      rel.err'
       ENDIF
 
@@ -19138,18 +19138,21 @@ CONTAINS
     ! ProgramDataInit. SymmAdaptMethod must be 1 (Y'Y on the ket;
     ! ExpValuesMatElem takes a single symmetry matrix), else EC0194.
     !
-    ! ExpValuesMatElem takes the x-indices of both prefactors and the
+    ! ExpValuesMatElem takes the z-indices of both prefactors and the
     ! transformation of the ket prefactor by the symmetry operator into
     ! account, so the distances and the correlation function are exact for
-    ! any x_i (the original code used the x_1 formulas for all functions).
+    ! any z_i (the original code used the z_1 formulas for all functions).
     !
     ! Action is 'EXPC_VALS' or 'DENSITIES'. DENSITIES additionally
     ! evaluates the nucleus-nucleus correlation function g(x,y) - the
     ! probability density of the internuclear vector r_1 in the plane
     ! through the quantization axis; for an N = 1 state it is not
     ! spherically symmetric - on a user-supplied two-dimensional grid:
-    !   FileName1 - grid of the x coordinate (one value x >= 0 per line)
-    !   FileName2 - grid of the y coordinate (one value y >= 0 per line)
+    !   FileName1 - grid of the coordinate x along the quantization axis
+    !               (the z axis of the z_i prefactors; one value x >= 0
+    !               per line)
+    !   FileName2 - grid of the coordinate y perpendicular to that axis
+    !               (one value y >= 0 per line)
     !   FileName3 - file where g(x,y) is stored, one line per grid point
     !               (y outer, x inner) with the columns x, y, g
     !   FileName4 - file where g(x,y) is stored for all four quadrants
@@ -19255,7 +19258,7 @@ CONTAINS
     INTEGER          :: kmax, kmin                       ! functions with the largest and smallest |c_k|
     INTEGER          :: PairI, PairJ                     ! pair of the current record (Verbose 4)
     REAL(wp)         :: csum                             ! sum of c_k^2
-    REAL(wp), ALLOCATABLE, DIMENSION(:) :: WeightByX     ! sum of c_k^2 over the functions with x_i
+    REAL(wp), ALLOCATABLE, DIMENSION(:) :: WeightByX     ! sum of c_k^2 over the functions with z_i
     LOGICAL, ALLOCATABLE, DIMENSION(:)  :: Listed        ! functions already in the table of largest c_k
 
 
@@ -19610,7 +19613,7 @@ CONTAINS
     !------------------------------------------------------------------
     ! Verbose 1: the solver check (gap to the next eigenvalue for 'G',
     ! iterations and residual for 'I'), the norm check, the largest and
-    ! smallest coefficients, and the share of each prefactor x_i in the sum
+    ! smallest coefficients, and the share of each prefactor z_i in the sum
     ! of c_k^2. Verbose 2: the ten largest coefficients. Verbose 3: all of
     ! them. c_k multiplies the NORMALIZED function k (the stored overlap
     ! matrix has a unit diagonal), so c_k^2 is its diagonal weight in the
@@ -19647,14 +19650,14 @@ CONTAINS
       CALL writerealadv(6, Glob_c(kmin))
       WRITE(*, *) 'Share of the sum of c_k^2 by prefactor:'
       DO i = 1, n
-        WRITE(*, '(5x,a,i0,a,i8,a,f9.4,a)') 'x_', i, ':', COUNT(Glob_X_index(1:cbs) == i), &
+        WRITE(*, '(5x,a,i0,a,i8,a,f9.4,a)') 'z_', i, ':', COUNT(Glob_X_index(1:cbs) == i), &
           ' functions,', 100*WeightByX(i)/csum, ' %'
       ENDDO
       DEALLOCATE(WeightByX)
 
       IF (Verbose >= 3) THEN
         WRITE(*, *) 'Coefficients of all basis functions:'
-        WRITE(*, '(1x,a)') '  function  x_i      m                      c_k c_k^2 share (%)'
+        WRITE(*, '(1x,a)') '  function  z_i      m                      c_k c_k^2 share (%)'
         DO k = 1, cbs
           WRITE(*, '(1x,i10,i5,i7)', ADVANCE='no') k, Glob_X_index(k), Glob_PWR(k)
           CALL writereal(6, Glob_c(k))
@@ -19662,7 +19665,7 @@ CONTAINS
         ENDDO
       ELSEIF (Verbose >= 2) THEN
         WRITE(*, *) 'The ten largest coefficients:'
-        WRITE(*, '(1x,a)') '  function  x_i      m                      c_k c_k^2 share (%)'
+        WRITE(*, '(1x,a)') '  function  z_i      m                      c_k c_k^2 share (%)'
         ALLOCATE(Listed(cbs))
         Listed(1:cbs) = .FALSE.
         DO i = 1, MIN(10, cbs)

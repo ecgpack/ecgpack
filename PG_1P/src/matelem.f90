@@ -4,14 +4,14 @@ MODULE matelem
   ! Module matelem contains the procedures that compute the matrix
   ! elements of the PG_1P basis
   !
-  !   f_k = x_i * r_1^m_k * exp[-r'(L_k L_k' (x) I3) r]
+  !   f_k = z_i * r_1^m_k * exp[-r'(L_k L_k' (x) I3) r]
   !
-  ! (all-particle explicitly correlated Gaussians with an x_i angular
+  ! (all-particle explicitly correlated Gaussians with a z_i angular
   ! prefactor and an even power of the internuclear distance r_1, for
   ! N = 1 rotationally excited states of diatomic systems):
   !   MatrixElements   - overlap, Hamiltonian and their derivatives with
   !                      respect to vech L_k and vech L_l
-  !   MatrixElementsXi - the same for one prefactor x_j of the symmetry
+  !   MatrixElementsXi - the same for one prefactor z_j of the symmetry
   !                      transformed ket (called by MatrixElements)
   !   BraSetup, KetSetup - the parts of the setup of MatrixElementsXi that
   !                      belong to the bra or to one ket term alone, kept
@@ -20,10 +20,10 @@ MODULE matelem
   !   GramTablesInit   - products of the Gram-term power sums, formed once
   !   ExpValuesMatElem - the nucleus-nucleus correlation function and the
   !                      interparticle distances <r_ij>, <r_ij^2>
-  !   ExpValuesXi      - the same for one prefactor x_j of the symmetry
+  !   ExpValuesXi      - the same for one prefactor z_j of the symmetry
   !                      transformed ket (called by ExpValuesMatElem)
   !   KetNormRatios    - normalization ratios of the ket terms when the
-  !                      symmetry operator turns x_il into a sum of x_j
+  !                      symmetry operator turns z_il into a sum of z_j
   !   GramTermPair, GramTermCorr - the Gram-determinant term of the
   !                      Coulomb integrals and its gradient (see
   !                      MatrixElementsXi); from 5 pseudoparticles on, in
@@ -35,7 +35,7 @@ MODULE matelem
   !                      r_1^m_k * exp[...] (kept from the original code,
   !                      not called by this program)
   !   MatElemTraMom, TMMatElem - kernels of the N = 0 -> N = 1 transition
-  !                      moments <psi(N=0)|x_i|psi(N=1)> (kept from the
+  !                      moments <psi(N=0)|z_i|psi(N=1)> (kept from the
   !                      original code, not called by this program)
   ! The Coulomb terms take the charge products from Glob_ChargeMatrix, into
   ! which ProgramDataInit has folded the optional REPULSION_SCALING_PARAM
@@ -344,19 +344,19 @@ CONTAINS
   SUBROUTINE MatrixElements(mk, ik, vechLk, ml, il, vechLl, SymMatrix, &
                             Skl, Hkl, dSk, dSl, dHk, dHl, gradflag, KetSlot)
     ! Symmetry adapted matrix elements in the basis of correlated Gaussians
-    ! with x_i r_1^m premultipliers for N = 1 rotationally excited states,
-    !   f_k = x_i * r_1^mk * exp[-r'(Lk*Lk' (x) I3) r].
+    ! with z_i r_1^m premultipliers for N = 1 rotationally excited states,
+    !   f_k = z_i * r_1^mk * exp[-r'(Lk*Lk' (x) I3) r].
     ! The symmetry operator acts on the whole ket, P f_l(r) = f_l(SymMatrix*r):
     ! the exponent becomes Al = SymMatrix'*Ll*Ll'*SymMatrix and the
-    ! prefactor x_il becomes sum_j SymMatrix(il, j) x_j (r_1 is unchanged,
+    ! prefactor z_il becomes sum_j SymMatrix(il, j) z_j (r_1 is unchanged,
     ! row 1 of SymMatrix is +-e_1). MatrixElementsXi computes the matrix
-    ! elements for one prefactor x_j of the transformed ket:
+    ! elements for one prefactor z_j of the transformed ket:
     !  - row il of SymMatrix has one entry +-1 (every permutation of the
-    !    particles 2 .. N, and x_1 under the exchange of the two nuclei):
+    !    particles 2 .. N, and z_1 under the exchange of the two nuclei):
     !    one call with j = its column, the sign applied to all outputs;
-    !  - otherwise (x_il, il > 1, under the exchange of the two nuclei:
-    !    x_il --> x_il - x_1) the terms are summed. MatrixElementsXi
-    !    normalizes the ket with its own x_j, so every term is rescaled
+    !  - otherwise (z_il, il > 1, under the exchange of the two nuclei:
+    !    z_il --> z_il - z_1) the terms are summed. MatrixElementsXi
+    !    normalizes the ket with its own z_j, so every term is rescaled
     !    to the norm of the true ket (KetNormRatios).
     ! For the identity term this is one call with j = il, as before.
     ! GramTermCorr (GramTermCorrPairs from 5 pseudoparticles on in double
@@ -366,7 +366,7 @@ CONTAINS
     ! corrects the Coulomb gradients.
     ! Input:
     !   mk, ml         :: premultiplier powers (even) of the bra and the ket
-    !   ik, il         :: pseudoparticle indices i of the x_i prefactors of
+    !   ik, il         :: pseudoparticle indices i of the z_i prefactors of
     !                     the bra and the ket (1 .. n)
     !   vechLk, vechLl :: n(n+1)/2 exponent parameters (Lk, Ll lower triangular)
     !   SymMatrix      :: the symmetry permutation matrix
@@ -392,7 +392,7 @@ CONTAINS
 
     ! Local variables
     INTEGER :: j, t, NumKetTerms
-    INTEGER :: KetIndex(n)                        ! x-index j of each ket term
+    INTEGER :: KetIndex(n)                        ! z-index j of each ket term
     REAL(wp) :: KetWeight(n)                      ! SymMatrix(il, j) of each ket term
     REAL(wp) :: KetRatio(n)                       ! sqrt(N_j/N_ket), see KetNormRatios
     REAL(wp) :: dlnKetRatio(Glob_npt, n)          ! its log-derivative, vech[Ll]
@@ -434,7 +434,7 @@ CONTAINS
       ENDIF
     ENDDO
 
-    ! One term: x_il --> +-x_j
+    ! One term: z_il --> +-z_j
     IF ((NumKetTerms == 1) .AND. (ABS(KetWeight(1)) == ONE)) THEN
       CALL MatrixElementsXi(mk, ik, BraKept, ml, KetIndex(1), Ket, SymMatrix, &
                             Skl, Hkl, dSk, dSl, dHk, dHl, gradflag)
@@ -461,7 +461,7 @@ CONTAINS
       RETURN
     ENDIF
 
-    ! Several terms: x_il --> sum_t KetWeight(t) x_KetIndex(t)
+    ! Several terms: z_il --> sum_t KetWeight(t) z_KetIndex(t)
     CALL KetNormRatios(ml, il, vechLl, SymMatrix, NumKetTerms, KetIndex, &
                        KetRatio, dlnKetRatio, (gradflag > 1))
 
@@ -506,11 +506,11 @@ CONTAINS
   SUBROUTINE MatrixElementsXi(mk, ik, Bra, ml, jl, Ket, SymMatrix, &
                               Skl, Hkl, dSk, dSl, dHk, dHl, gradflag)
     ! Symmetry adapted matrix elements in the basis of correlated Gaussians
-    ! with x_i r_1^m premultipliers for N = 1 rotationally excited states,
-    !   f_k = x_i * r_1^mk * exp[-r'(Lk*Lk' (x) I3) r],
-    ! for one term x_jl of the prefactor of the symmetry transformed ket
-    ! (see MatrixElements): the ket is x_jl * r_1^ml * exp[-r'(Al (x) I3) r],
-    ! Al = SymMatrix'*Ll*Ll'*SymMatrix, normalized with its own x_jl.
+    ! with z_i r_1^m premultipliers for N = 1 rotationally excited states,
+    !   f_k = z_i * r_1^mk * exp[-r'(Lk*Lk' (x) I3) r],
+    ! for one term z_jl of the prefactor of the symmetry transformed ket
+    ! (see MatrixElements): the ket is z_jl * r_1^ml * exp[-r'(Al (x) I3) r],
+    ! Al = SymMatrix'*Ll*Ll'*SymMatrix, normalized with its own z_jl.
     !
     ! The Coulomb terms follow eqs. (33)-(35) of Kirnosov, Sharkey,
     ! Adamowicz, J. Phys. B 48, 195101 (2015), summed over all pairs of
@@ -520,14 +520,14 @@ CONTAINS
     ! (e1, v, e_i) and (e1, v, e_j) in the metric invAkl (v = e_p for 1/r_p,
     ! e_p - e_g for 1/r_pg). G_ij vanishes when e_i or e_j lies in
     ! span{e1, v} - always for n = 2, and whenever the bra or the ket
-    ! prefactor is x_1 - and the formulas of the paper are then exact.
+    ! prefactor is z_1 - and the formulas of the paper are then exact.
     ! Otherwise MatrixElements adds the term with GramTermCorr (see
     ! GramTermPair); it is not computed here, so that the code of this
     ! routine and its results where the term is absent stay as they were.
     ! Input:
     !   mk, ml         :: premultiplier powers (even) of the bra and the ket
-    !   ik             :: pseudoparticle index i of the x_i prefactor of the bra
-    !   jl             :: pseudoparticle index j of the x_j term of the
+    !   ik             :: pseudoparticle index i of the z_i prefactor of the bra
+    !   jl             :: pseudoparticle index j of the z_j term of the
     !                     transformed ket (1 .. n)
     !   Bra, Ket       :: the parts of the setup that belong to the bra and to
     !                     the ket term alone (BraSetup, KetSetup)
@@ -1779,8 +1779,8 @@ CONTAINS
 
   SUBROUTINE GramTermPair(invAkl, parti, partj, m, p, q, IsOn, Gn, Q0, Q1)
     ! The Gram-determinant term of the Coulomb integral R(p, q) of
-    ! MatrixElementsXi for the bra prefactor x_i (i = parti), the ket term
-    ! x_j (j = partj) and m = (mk+ml)/2. With a = invAkl(1,1),
+    ! MatrixElementsXi for the bra prefactor z_i (i = parti), the ket term
+    ! z_j (j = partj) and m = (mk+ml)/2. With a = invAkl(1,1),
     ! Aij = invAkl(i,j), A1i = invAkl(1,i), v = e_p (q = p) or e_p - e_q,
     !   beta = v'*invAkl*v,  c = (invAkl*v)(1),  d_i = (invAkl*v)(i),
     !   coab = 1 - c^2/(a*beta), hoa = A1i*A1j/a, fob = d_i*d_j/beta,
@@ -1794,7 +1794,7 @@ CONTAINS
     ! e_p or e_p - e_1 (q = p or q = 1).
     ! Input:
     !   invAkl          :: inverse of Akl
-    !   parti, partj    :: x-indices of the bra and the ket term
+    !   parti, partj    :: z-indices of the bra and the ket term
     !   m               :: (mk+ml)/2
     !   p, q            :: the pair (q <= p)
     ! Output:
@@ -1861,8 +1861,8 @@ CONTAINS
 
   SUBROUTINE GramTermSetup(invAkl, parti, partj, m, p, q, IsOn, Gn, coab)
     ! The Gram-determinant term of the Coulomb integral R(p, q) of
-    ! MatrixElementsXi for the bra prefactor x_i (i = parti), the ket term
-    ! x_j (j = partj) and m = (mk+ml)/2. With a = invAkl(1,1),
+    ! MatrixElementsXi for the bra prefactor z_i (i = parti), the ket term
+    ! z_j (j = partj) and m = (mk+ml)/2. With a = invAkl(1,1),
     ! Aij = invAkl(i,j), A1i = invAkl(1,i), v = e_p (q = p) or e_p - e_q,
     !   beta = v'*invAkl*v,  c = (invAkl*v)(1),  d_i = (invAkl*v)(i),
     !   coab = 1 - c^2/(a*beta), hoa = A1i*A1j/a, fob = d_i*d_j/beta,
@@ -1877,7 +1877,7 @@ CONTAINS
     ! in it when i = 1, or i = p and v is e_p or e_p - e_1 (q = p or q = 1).
     ! Input:
     !   invAkl          :: inverse of Akl
-    !   parti, partj    :: x-indices of the bra and the ket term
+    !   parti, partj    :: z-indices of the bra and the ket term
     !   m               :: (mk+ml)/2
     !   p, q            :: the pair (q <= p)
     ! Output:
@@ -2087,7 +2087,7 @@ CONTAINS
 
   SUBROUTINE GramTermCorr(mk, ik, Bra, ml, jl, Ket, SymMatrix, &
                           Skl, Hkl, dSk, dSl, dHk, dHl, gradflag)
-    ! Adds to the output of MatrixElementsXi (one ket term x_jl) the
+    ! Adds to the output of MatrixElementsXi (one ket term z_jl) the
     ! Gram-determinant term of its Coulomb integrals (see GramTermPair):
     !   R(p,q) += Cpq*Skl,  Cpq = -Gn*Q0*gm2(m)/((3 Aij + 2 m hoa) sqrt(beta)),
     ! for every pair where the term is present, so Hkl gets
@@ -2109,7 +2109,7 @@ CONTAINS
     ! be present (mk+ml > 0, ik /= 1, jl /= 1, n > 2).
     ! Input:
     !   mk, ik, Bra     :: the bra (Bra: BraSetup)
-    !   ml, jl, Ket     :: the ket term (power, x-index in the transformed
+    !   ml, jl, Ket     :: the ket term (power, z-index in the transformed
     !                      ket, KetSetup of its exponent parameters)
     !   SymMatrix       :: the symmetry permutation matrix
     !   Skl, dSk, dSl   :: overlap and its gradients from MatrixElementsXi
@@ -2245,7 +2245,7 @@ CONTAINS
     ! energy and both gradient sides. With fewer pseudoparticles the
     ! compiler would fuse some products of the gradients differently, so
     ! there GramTermCorr is used.
-    ! Adds to the output of MatrixElementsXi (one ket term x_jl) the
+    ! Adds to the output of MatrixElementsXi (one ket term z_jl) the
     ! Gram-determinant term of its Coulomb integrals (see GramTermSetup):
     !   R(p,q) += Cpq*Skl,  Cpq = -Gn*Q0*gm2(m)/((3 Aij + 2 m hoa) sqrt(beta)),
     ! for every pair where the term is present, so Hkl gets
@@ -2267,7 +2267,7 @@ CONTAINS
     ! be present (mk+ml > 0, ik /= 1, jl /= 1, n > 2).
     ! Input:
     !   mk, ik, Bra     :: the bra (Bra: BraSetup)
-    !   ml, jl, Ket     :: the ket term (power, x-index in the transformed
+    !   ml, jl, Ket     :: the ket term (power, z-index in the transformed
     !                      ket, KetSetup of its exponent parameters)
     !   SymMatrix       :: the symmetry permutation matrix
     !   Skl, dSk, dSl   :: overlap and its gradients from MatrixElementsXi
@@ -2455,7 +2455,7 @@ CONTAINS
     ! exactly as they were; dfob is taken without dividing by d_i or d_j:
     !   dfob = (dd_i*d_j + d_i*dd_j)/beta - fob*dbeta/beta.
     ! Input:
-    !   ik, jl          :: x-indices of the bra and the ket term
+    !   ik, jl          :: z-indices of the bra and the ket term
     !   vechLk, vechLl  :: n(n+1)/2 exponent parameters
     !   SymMatrix       :: the symmetry permutation matrix
     !   Skl             :: the overlap from MatrixElementsXi
@@ -2605,13 +2605,13 @@ CONTAINS
 
   SUBROUTINE KetNormRatios(ml, il, vechLl, SymMatrix, NumKetTerms, KetIndex, &
                            KetRatio, dlnKetRatio, IsGradNeeded)
-    ! When the symmetry operator turns the ket prefactor x_il into
-    ! sum_t w_t x_j(t) (w = row il of SymMatrix, j(t) = KetIndex(t)),
+    ! When the symmetry operator turns the ket prefactor z_il into
+    ! sum_t w_t z_j(t) (w = row il of SymMatrix, j(t) = KetIndex(t)),
     ! MatrixElementsXi and ExpValuesXi normalize term t with the norm N_j(t)
-    ! of x_j(t) r_1^ml exp[-r'(Al (x) I3) r], Al = PLl*PLl', PLl =
-    ! SymMatrix'*Ll, whereas the ket has the norm N_w of (w'x) r_1^ml
+    ! of z_j(t) r_1^ml exp[-r'(Al (x) I3) r], Al = PLl*PLl', PLl =
+    ! SymMatrix'*Ll, whereas the ket has the norm N_w of (w'z) r_1^ml
     ! exp[...], which is the norm of f_l itself. With B = inv(Al), the
-    ! norm of (u'x) r_1^ml exp[...] is, up to a factor common to all u,
+    ! norm of (u'z) r_1^ml exp[...] is, up to a factor common to all u,
     !   N_u = u'B u + (2 ml/3) (e1'B u)^2/B(1,1),
     ! and with P = PLl
     !   d(u'B v)/dP(a,b) = -[(B u)_a (P'B v)_b + (B v)_a (P'B u)_b].
@@ -2619,11 +2619,11 @@ CONTAINS
     ! as in MatrixElementsXi.
     ! Input:
     !   ml            :: premultiplier power of the ket
-    !   il            :: x-index of the ket before the transformation
+    !   il            :: z-index of the ket before the transformation
     !   vechLl        :: n(n+1)/2 exponent parameters of the ket
     !   SymMatrix     :: the symmetry permutation matrix
     !   NumKetTerms   :: number of terms
-    !   KetIndex      :: x-index j(t) of each term
+    !   KetIndex      :: z-index j(t) of each term
     !   IsGradNeeded  :: compute dlnKetRatio
     ! Output:
     !   KetRatio(t)   :: sqrt(N_j(t)/N_w)
@@ -2753,7 +2753,7 @@ CONTAINS
   CONTAINS
 
     SUBROUTINE NormOfKetTerm(uu, Nu, dNu)
-      ! N_u and dN_u/dPLl for the prefactor u'x (see KetNormRatios)
+      ! N_u and dN_u/dPLl for the prefactor u'z (see KetNormRatios)
       REAL(wp), INTENT(IN) :: uu(n)
       REAL(wp), INTENT(OUT) :: Nu, dNu(n, n)
 
@@ -2793,16 +2793,16 @@ CONTAINS
                               NumCFGridPoints, CFGridX, ycf, CFkl, AreCorrFuncNeeded, &
                               ArePairDistNeeded, rkl, rkl_2)
     ! Matrix elements of the expectation-value operators between two basis
-    ! functions x_ik r_1^mk exp[...] and x_il r_1^ml exp[...]: the
+    ! functions z_ik r_1^mk exp[...] and z_il r_1^ml exp[...]: the
     ! nucleus-nucleus correlation function on one row of the (x,y) grid,
     ! and the interparticle distances <r_ij> and <r_ij^2>. The symmetry
-    ! operator turns the ket prefactor x_il into sum_j SymMatrix(il, j) x_j,
+    ! operator turns the ket prefactor z_il into sum_j SymMatrix(il, j) z_j,
     ! handled as in MatrixElements: one call of ExpValuesXi with the sign
     ! when row il of SymMatrix has one entry +-1, otherwise the terms
     ! rescaled with KetNormRatios and summed.
     ! Input:
     !   mk, ml           :: premultiplier powers of the bra and the ket
-    !   ik, il           :: x-indices of the prefactors of the bra and the ket
+    !   ik, il           :: z-indices of the prefactors of the bra and the ket
     !   vechLk, vechLl   :: n(n+1)/2 exponent parameters
     !   SymMatrix        :: the symmetry permutation matrix (ket)
     !   NumCFGridPoints  :: number of x grid points of the correlation function
@@ -2833,7 +2833,7 @@ CONTAINS
 
     ! Local variables
     INTEGER :: j, t, NumKetTerms
-    INTEGER :: KetIndex(n)                        ! x-index j of each ket term
+    INTEGER :: KetIndex(n)                        ! z-index j of each ket term
     REAL(wp) :: KetWeight(n)                      ! SymMatrix(il, j) of each ket term
     REAL(wp) :: KetRatio(n)                       ! sqrt(N_j/N_ket), see KetNormRatios
     REAL(wp) :: dlnKetRatio(Glob_npt, n)          ! not used here
@@ -2851,7 +2851,7 @@ CONTAINS
       ENDIF
     ENDDO
 
-    ! One term: x_il --> +-x_j
+    ! One term: z_il --> +-z_j
     IF ((NumKetTerms == 1) .AND. (ABS(KetWeight(1)) == ONE)) THEN
       CALL ExpValuesXi(mk, ik, vechLk, ml, KetIndex(1), vechLl, SymMatrix, &
                        NumCFGridPoints, CFGridX, ycf, CFkl, AreCorrFuncNeeded, &
@@ -2866,7 +2866,7 @@ CONTAINS
       RETURN
     ENDIF
 
-    ! Several terms: x_il --> sum_t KetWeight(t) x_KetIndex(t)
+    ! Several terms: z_il --> sum_t KetWeight(t) z_KetIndex(t)
     CALL KetNormRatios(ml, il, vechLl, SymMatrix, NumKetTerms, KetIndex, &
                        KetRatio, dlnKetRatio, .FALSE.)
 
@@ -2896,10 +2896,10 @@ CONTAINS
   SUBROUTINE ExpValuesXi(mk, ik, vechLk, ml, jl, vechLl, SymMatrix, &
                          NumCFGridPoints, CFGridX, ycf, CFkl, AreCorrFuncNeeded, &
                          ArePairDistNeeded, rkl, rkl_2)
-    ! The matrix elements of ExpValuesMatElem for one term x_jl of the
-    ! prefactor of the symmetry transformed ket, x_jl r_1^ml exp[-r'(Al (x)
-    ! I3) r], normalized with its own x_jl.
-    ! For ik = jl = 1 the formulas are those of the x_1 r_1^m basis
+    ! The matrix elements of ExpValuesMatElem for one term z_jl of the
+    ! prefactor of the symmetry transformed ket, z_jl r_1^ml exp[-r'(Al (x)
+    ! I3) r], normalized with its own z_jl.
+    ! For ik = jl = 1 the formulas are those of the z_1 r_1^m basis
     ! (Sharkey, Kirnosov and Adamowicz, J. Chem. Phys. 139, 164119 (2013)),
     ! exactly as in the original code. Otherwise, with p = (mk+ml)/2,
     ! a = invAkl(1,1), Aij = invAkl(i,j), A1i = invAkl(1,i) (i = ik,
@@ -2907,9 +2907,10 @@ CONTAINS
     ! vector v (v = e_k, or e_k - e_l), b = v'*invAkl*v, cv = (invAkl*v)(1),
     ! d_i = (invAkl*v)(i), kap = cv^2/(a*b), w = 1 - kap, fob = d_i*d_j/b,
     ! e = cv*(A1i*d_j + d_i*A1j)/(a*b):
-    !   correlation function (the density of r_1 = (x, y, 0), x along the
-    !   axis of the prefactors; E[x_i x_j | r_1] = (A1i A1j/a^2) x^2
-    !   + (Aij - hoa)/2):
+    !   correlation function (the density of r_1 at the grid point (x, y):
+    !   the grid coordinate x runs along the z axis, the axis of the z_i
+    !   prefactors, and y is perpendicular to it;
+    !   E[z_i z_j | r_1] = (A1i A1j/a^2) x^2 + (Aij - hoa)/2):
     !     g(x,y) = Skl/(pi P0) [(A1i A1j/a^2) x^2 + (Aij - hoa)/2]
     !              * (r^2/a)^p exp(-r^2/a) a^(-3/2)/Gamma(p+3/2)
     !   <r^2> = Skl [b (3/2 + (p-1) kap) + b (kap Aij + fob + (2p/3) e)/P0]
@@ -2920,8 +2921,8 @@ CONTAINS
     !     D_t = -(2t+3) fob - (2t+1)(kap w Aij - w fob - w e - 2 kap fob)
     !           + (2p+1)(kap hoa - e)
     ! <r> is -d/ds of the Coulomb integral of MatrixElementsXi (with the
-    ! Gram term) for invAkl --> inv(Akl + s v v'); for x_1 all three reduce
-    ! to the x_1 formulas.
+    ! Gram term) for invAkl --> inv(Akl + s v v'); for z_1 all three reduce
+    ! to the z_1 formulas.
     ! Input and output: as ExpValuesMatElem, with jl in place of il.
     !================================================================
     IMPLICIT NONE
@@ -2950,7 +2951,7 @@ CONTAINS
     REAL(wp) :: a, coabij, r1kl
     REAL(wp) :: Temp(n, n), R(n, n), b(n, n), c(n, n), coab(n, n), Vtmp(n, n)
 
-    ! Prefactors x_i (bra) and x_j (ket term) other than x_1 x_1
+    ! Prefactors z_i (bra) and z_j (ket term) other than z_1 z_1
     LOGICAL :: IsX1X1
     INTEGER :: parti, partj
     REAL(wp) :: Aij, A1i, A1j, hoa, P0, SklOverP0
@@ -4120,7 +4121,7 @@ CONTAINS
 
   SUBROUTINE MatElemTraMom(mk, vechLk, ml, vechLl, SymMatrix, Skl)
     ! Overlap-type kernel used for the purely rotational transition moments
-    ! N = 0 -> N = 1,  <psi(N=0,v)|x_1|psi(N=1,v)>, in a basis of correlated
+    ! N = 0 -> N = 1,  <psi(N=0,v)|z_1|psi(N=1,v)>, in a basis of correlated
     ! Gaussians with r_1 premultipliers. Kept from the original code; this
     ! program does not call it.
     ! The symmetry adaption is applied to the ket:
@@ -4341,7 +4342,7 @@ CONTAINS
   SUBROUTINE TMMatElem(mk, vechLk, ml, vechLl, SymMatrix, TM1, TM2)
     ! Kernels of the N = 0 -> N = 1 transition moments between an N = 0
     ! function r_1^mk exp[...] (bra) and an N = 1 function (ket):
-    !   TM1 = <r_1^mk ...|x_1|x_1 r_1^ml ...>  and  TM2, the x_2 counterpart
+    !   TM1 = <r_1^mk ...|z_1|z_1 r_1^ml ...>  and  TM2, the z_2 counterpart
     ! (unnormalized). Kept from the original code; this program does not
     ! call it.
     ! The symmetry adaption is applied to the ket:

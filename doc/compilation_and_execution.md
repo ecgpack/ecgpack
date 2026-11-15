@@ -78,9 +78,9 @@ To use Fortran compilers and MPI wrappers other than those listed above, the use
 
 ### Linear algebra libraries
 
-All energy codes (`CG_0S`, `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`) as an option can invoke the slow eigenvalue solver from standard LAPACK. This requires linking of these codes against some BLAS/LAPACK library. The choice of this library can be controlled with the `LINALG` argument of the `make` command:
+All energy codes (`CG_0S`, `PG_0S`, `PG_1P`, `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`) as an option can invoke the slow eigenvalue solver from standard LAPACK. This requires linking of these codes against some BLAS/LAPACK library. The choice of this library can be controlled with the `LINALG` argument of the `make` command:
 
-* `LINALG=netlib` (default) - The bundled, lightly modified netlib reference BLAS/LAPACK subroutines are compiled from `src/BLAS.f` and `src/LAPACK.f`. In the real-ECG energy codes these aggregates contain the routines required by both ECGPACK and qrlinalg, so no duplicate provider is kept under `src/qrupdate/`. No external LAPACK/BLAS library is required in this case.
+* `LINALG=netlib` (default) - The bundled, lightly modified netlib reference BLAS/LAPACK subroutines are compiled from `src/BLAS.f` and `src/LAPACK.f`. In the real-ECG and power-Gaussian energy codes these aggregates contain the routines required by both ECGPACK and qrlinalg, so no duplicate provider is kept under `src/qrupdate/`. No external LAPACK/BLAS library is required in this case.
 * `LINALG=mkl` - Intel Math Kernel Library (MKL).
 * `LINALG=lblas` - An optimized BLAS/LAPACK exposed through the `-llapack -lblas` symbolic links. For example, if an NVHPC module is loaded last, this will lead to linking against BLAS/LAPACK that comes with NVIDIA HPC SDK. If an Easybuild's module `foss/2025b` is loaded last it will result in routing through FlexiBLAS, which will back-end directly into OpenBLAS.
 * `LINALG=openblas` - OpenBLAS library is used through the `-lopenblas` link flag.
@@ -90,7 +90,7 @@ Note that an optimized BLAS/LAPACK library can be used only when `PREC=8`. For `
 
 ### OpenMP
 
-OpenMP support is currently provided by the Makefiles of `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`. The compiler flag is selected automatically (`-fopenmp` for gfortran, `-qopenmp` for ifort and ifx, and `-mp` for nvfortran). In `LINALG=netlib` builds, OpenMP parallelizes sufficiently large operations in the bundled BLAS used by qrlinalg. When an external BLAS/LAPACK provider is selected, its own threading configuration also applies and should be checked separately.
+OpenMP support is currently provided by the Makefiles of `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`. The compiler flag is selected automatically (`-fopenmp` for gfortran, `-qopenmp` for ifort and ifx, and `-mp` for nvfortran). In `LINALG=netlib` builds, OpenMP parallelizes sufficiently large operations in the bundled BLAS used by qrlinalg. When an external BLAS/LAPACK provider is selected, its own threading configuration also applies and should be checked separately. The Makefiles of `PG_0S` and `PG_1P` accept the `OPENMP` argument as well, but OpenMP builds of these two codes are not supported.
 
 The number of threads is selected at runtime with `OMP_NUM_THREADS`. Every MPI process may create its own OpenMP team, so the approximate CPU demand is the number of MPI ranks multiplied by the number of threads per rank. For example, two MPI ranks with four threads each may use eight CPU cores:
 
@@ -109,7 +109,7 @@ The number of particles is hardcoded in files `src/wp_def_*.f90` (here `*` stand
 
 ### Batch compilation of multiple code variants
 
-The easiest way to compile all or some number of selected codes (basis type, number of particles, precisions, external libraries, etc.) in **one step** on a specific machine/OS using specific toolchains is to invoke the `build.bash` script located in the root directory. This script requires arguments. **Please read its source or run it with no arguments** to see instructions regarding how to run it properly. When this script is run, it will automatically move all individual binaries built to directory `ecgpack/bin/<toolchainname>/<configuration>`, where `<toolchainname>` (e.g. `systemdefault`) is the name of the toolchain specified and `<configuration>` is `debug` or `release`. Serial and OpenMP binaries are stored side by side in the same directory. The binary files are named `<code_name>_N<particle_number>_P<precision>_<linalg>` (e.g. `RG_0S_N4_P8_netlib` for `RG_0S`, 4 particles, double precision, and bundled netlib BLAS/LAPACK). The `<linalg>` suffix identifies the selected linear algebra library (`netlib`, `mkl`, `lblas`, `openblas`, or `aocl`) and is always present. OpenMP builds carry an additional `_omp` suffix at the end of the file name (e.g. `RG_0S_N4_P8_netlib_omp`).
+The easiest way to compile all or some number of selected codes (basis type, number of particles, precisions, external libraries, etc.) in **one step** on a specific machine/OS using specific toolchains is to invoke the `build.bash` script located in the root directory. This script requires arguments. **Please read its source or run it with no arguments** to see instructions regarding how to run it properly. The only required argument is `nparticles` (from 2 to 19). Each individual build is run with `make -j` on all available CPU cores; this is controlled by the variable `make_jobs` near the top of the script (set it to `1` for serial builds). When this script is run, it will automatically move all individual binaries built to directory `ecgpack/bin/<toolchainname>/<configuration>`, where `<toolchainname>` (e.g. `systemdefault`) is the name of the toolchain specified and `<configuration>` is `debug` or `release`. For the cluster machines `puma`, `ocelote`, and `elgato` the machine name is inserted into this path as well: `ecgpack/bin/<machinename>/<toolchainname>/<configuration>`. Serial and OpenMP binaries are stored side by side in the same directory. The binary files are named `<code_name>_N<particle_number>_P<precision>_<linalg>` (e.g. `RG_0S_N4_P8_netlib` for `RG_0S`, 4 particles, double precision, and bundled netlib BLAS/LAPACK). The `<linalg>` suffix identifies the selected linear algebra library (`netlib`, `mkl`, `lblas`, `openblas`, or `aocl`) and is always present. OpenMP builds carry an additional `_omp` suffix at the end of the file name (e.g. `RG_0S_N4_P8_netlib_omp`), and CUDA builds (see below) carry an additional `_gpu` suffix. Note that `build.bash` does not handle the `PG_1P` code yet (it rejects `code=PG_1P`); build that code directly with its `Makefile`.
 
 An example of executing the `build.bash` script to build production (optimized) binaries for `RG_0S` and `RG_1P` codes using double and extended precision and bundled BLAS/LAPACK source for the case of 4, 5, and 6 particles:
 
@@ -207,7 +207,7 @@ Note that `systemdefault` toolchain assumes that the system's default `mpif90` w
 
 Script `build.bash` can use some common toolchains available in HPC systems/environments that are deployed with `Easybuild` - an open-source software management tool for scientific software, compilers, MPI libraries, BLAS/LAPACK libraries, and related packages. The following `Easybuild` toolchains can be invoked:
 
-| Toolchain argument in `make` | Easybuild module | Description |
+| Toolchain argument of `build.bash` | Easybuild module | Description |
 | :---: | :---: | :---: |
 | systemdefault  | n/a | Default compiler and MPI on a given system referenced by `mpif90` |
 | foss-2025b | foss/2025b | GNU Compiler Collection based compiler toolchain |
@@ -221,6 +221,8 @@ Script `build.bash` can use some common toolchains available in HPC systems/envi
 | nvhpc-26.5 | NVHPC/26.5-CUDA-13.2.0 | Nvidia compilers and libraries included in NVHPC SDK |
 | nvhpc-25.9 | NVHPC/25.9-CUDA-12.9.1 | Nvidia compilers and libraries included in NVHPC SDK |
 | nvhpc-25.3 | NVHPC/25.3-CUDA-12.8.0 | Nvidia compilers and libraries included in NVHPC SDK |
+
+These toolchains are available for the machines `linux-generic`, `ubuntu-generic`, `irgetas`, `shabyt`, and `muon`. The cluster machines `puma`, `ocelote`, and `elgato` have their own sets of toolchains, based on environment modules rather than `Easybuild` (`systemdefault`, `ohpc`, and `intel-2024.0.0` on `puma`; `systemdefault`, `ohpc`, and `intel-2020.4` on `ocelote` and `elgato`); run `build.bash` with no arguments for the complete list.
 
 Users can certainly easily modify `build.bash` to suit their own environment.
 

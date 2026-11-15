@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for AI coding agents working in this repository.
+Guidance for AI coding agents working in this repository. This file is the single source of agent instructions: Codex and Antigravity read it directly, and `CLAUDE.md` imports it for Claude Code.
 
 ## Project Overview
 
@@ -14,7 +14,7 @@ Each main code lives in a top-level directory with a similar structure:
 
 - `Makefile`
 - `src/`
-- `.vscode/`: per-code build tasks, debugger launch configurations, and editor settings; see `doc/use_of_visual_studio_code.md`
+- `.vscode/`: per-code VS Code tasks and launch configurations; see `doc/use_of_visual_studio_code.md`
 - usually `sample_input/`
 
 The main code groups overlap:
@@ -24,7 +24,7 @@ The main code groups overlap:
 - Transition dipole codes: `RG_0S-1P`, `RG_1P-2D`, `RG_1P-2P`. These evaluate transition electric-dipole moments in the length and velocity gauges.
 - Fine-structure coupling codes: `RG_0S-2D`, `RG_0S-2P`, `RG_1P-1P`, `RG_2D-2D`, `RG_2P-2D`, `RG_2P-2P`. These evaluate spin-orbit and non-contact spin-spin matrix elements.
 - Real ECG codes: all `RG_*` directories.
-- Power Gaussian codes: `PG_0S`, `PG_1P`. These use real ECGs premultiplied by an even power of $r_1$, the distance between particles 1 and 2: $r_1^{2m_k}$ for $L=0$, even parity (`PG_0S`) and $z_{i_k} r_1^{2m_k}$ for $L=1$, odd parity (`PG_1P`), with $0 \le m_k \le 125$. They are intended for systems where particles 1 and 2 are heavy and carry charges of the same sign, such as diatomic molecules.
+- Power Gaussian codes: `PG_0S` ($L=0$, even parity) and `PG_1P` ($L=1$, odd parity). These use real ECGs premultiplied by an even power (up to 250) of $r_1$, the distance between particles 1 and 2. They are intended for systems where particles 1 and 2 are heavy and carry charges of the same sign, such as diatomic molecules.
 - Complex ECG codes: `CG_0S`. This code currently supports only the complex $L=0$ basis and is a work in progress that may lag behind the real-ECG codes.
 
 `RG_0S` is the most complete reference implementation. Other codes intentionally share much of its source layout and Makefile structure.
@@ -33,8 +33,9 @@ The main code groups overlap:
 
 Non-code directories:
 
-- `doc/`: project documentation (`compilation_and_execution.md`, `input_file_format.md`, `theoretical_background.md`, `use_of_visual_studio_code.md`); `doc/devnotes/` contains developer-facing design and maintenance guides, and `doc/img/` holds the project logos
+- `doc/`: project documentation (`compilation_and_execution.md`, `input_file_format.md`, `theoretical_background.md`, `use_of_visual_studio_code.md`); `doc/devnotes/` contains developer-facing design and maintenance guides (including `source_architecture.md` and `Q_method_design.md`), and `doc/img/` holds the project logos
 - `utilities/`: helper scripts — input-file generation and merging (`input_file_manipulation/`), nuclear masses (`nuclear_masses/`), job monitoring (`job_monitoring/`), and a Young-tableaux spreadsheet (`permutational_symmetry/`)
+- `.agents/skills/`: skills shared by all AI coding agents, with identical copies for Claude Code in `.claude/skills/`; see Agent Skills below
 - `bin/`: generated/user-created binaries, not normally committed
 - `jobs/`: user-created calculation work directories, not normally committed
 
@@ -49,7 +50,7 @@ Root files of interest:
 - `THIRD-PARTY-NOTICES.md`: notices for bundled qrupdate-ng, BLAS, LAPACK, PORT, and SLATEC-derived sources
 - `build.bash`: batch build driver
 - `.code-workspace`: VS Code multi-folder workspace
-- `CLAUDE.md`: Claude-specific project context; keep it consistent with this file when relevant
+- `CLAUDE.md`: a stub that imports this file for Claude Code (`@AGENTS.md`); do not add guidance there
 
 ## General Agent Rules
 
@@ -57,77 +58,48 @@ Root files of interest:
 - Do not rewrite broad portions of the duplicated Fortran code unless the task explicitly requires it.
 - Treat the `RG_*` and `PG_*` directories as related implementations. When changing shared algorithms, matrix elements, build logic, or file formats, check whether analogous changes are needed in sibling directories.
 - Do not commit generated build products from `debug/`, `debug-omp/`, `release/`, `release-omp/`, `bin/`, or `jobs/`.
-- Be careful with `src/wp_def_*.f90`: the number of particles is compiled in, and `build.bash` may edit these files temporarily during builds.
+- Text files use LF line endings; do not introduce CRLF.
+- Be careful with `src/wp_def_*.f90`: the number of particles is compiled in, and `build.bash` edits these files temporarily during builds.
 - Preserve scientific behavior unless the user explicitly asks for a change. Numerical code changes should be validated with representative sample inputs when practical.
 - Treat `matelem.f90`, `matform.f90`, `linalg.f90`, and their callers in `workproc.f90` as performance-sensitive code. Preserve the current algorithmic complexity, precomputation outside pair/permutation loops, no-gradient fast paths, cache-aware loops, and MPI routing unless a task explicitly calls for changing them. For performance changes, check numerical agreement up to expected roundoff and benchmark a representative basis size and process count when practical.
-- Matrix-element routine names now identify both their purpose and ECG basis (for example, `MatrixElementsHS_RG_0S` and `MatrixElementsAll_RG_0S`). Use the current names from the affected `matelem.f90`; do not restore historical generic names, and update all callers and analogous sibling codes together when renaming an interface.
+- Matrix-element routine names identify both their purpose and ECG basis (for example, `MatrixElementsHS_RG_0S`; the PG codes use `MatrixElementsOpt` or `MatrixElements`). Use the current names from the affected `matelem.f90`; do not restore historical generic names, and update all callers and analogous sibling codes together when renaming an interface.
 - Preserve copyright and license banner comments in bundled third-party sources. Keep `THIRD-PARTY-NOTICES.md` consistent if bundled third-party code or its notices change.
+- Keep this file small. Codex truncates project instructions beyond 32 KiB and Antigravity truncates each instruction file beyond 24,000 bytes, so keep `AGENTS.md` below 22 KB: put detailed reference material in `doc/devnotes/` and link to it from here.
+- Agent-specific rule directories (`.claude/rules/`, `.agents/rules/`) are intentionally not used (their formats are not portable); project rules belong in this file.
 
 ## Building
 
-The preferred batch build entry point is the root script:
+Full details (machines, toolchains, precision and linear-algebra support, OpenMP, CUDA, runtime switches) are in `doc/compilation_and_execution.md`; `./build.bash` with no arguments prints its usage and exits with status 1. The essentials:
 
 ```bash
 ./build.bash machine=linux-generic toolchain=systemdefault config=release code=RG_0S nparticles=4 precision=8 linalg=netlib openmp=no
 ```
 
-Run `./build.bash` from the repository root; invoking it with no arguments prints usage and exits with status 1. It loops over requested toolchains, configurations, codes, particle counts, precisions, linear-algebra choices, and OpenMP settings, then places binaries under:
-
-```text
-bin/[<machine>/]<toolchain>/<config>/<CODE>_N<nparticles>_P<precision>_<linalg>[_omp][_gpu]
-```
-
-The `<machine>/` segment is present only for the cluster machines `puma`, `ocelote`, and `elgato`; it is empty for `linux-generic`, `ubuntu-generic`, `irgetas`, `shabyt`, and `muon`. The `<linalg>` suffix is always present. OpenMP and CUDA builds are written to the same `<config>` directory as the plain ones and are distinguished by a trailing `_omp` or `_gpu` in the file name.
-
-`nparticles` is the only required argument. The defaults are `machine=linux-generic`, `toolchain=systemdefault`, `config=debug,release`, `precision=8`, `linalg=netlib`, `openmp=no`, `gpu=no`, and a `code` list containing every code `build.bash` knows except `CG_0S`. `build.bash` does not know `PG_1P` yet and rejects `code=PG_1P`; build that code directly with its Makefile. Every argument except `machine`, `gpu`, and `cuda_arch` accepts a comma-separated list of values. For `precision=10` or `precision=16`, `build.bash` builds only `linalg=netlib` and skips optimized-library choices; `openmp=yes` is skipped for any code other than `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`. `gpu=yes` builds the CUDA backend (`USE_CUDA=yes`; see the Makefile parameters below) and is accepted only with an `nvhpc-*` toolchain, `precision=8`, and the codes `PG_0S`, `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`; `cuda_arch=sm_XX` overrides the machine's default GPU target.
-
-Supported machines are `linux-generic` (default), `ubuntu-generic`, `irgetas`, `shabyt`, `muon`, `puma`, `ocelote`, and `elgato`. Toolchains are machine-specific: the generic and NU machines accept `systemdefault`, `foss-2023b`/`foss-2024a`/`foss-2025a`/`foss-2025b`, `intel-2023b`/`intel-2024a`/`intel-2025a`/`intel-2025b`, and `nvhpc-25.3`/`nvhpc-25.9`/`nvhpc-26.5`; `puma` accepts `systemdefault`, `ohpc`, and `intel-2024.0.0`; `ocelote` and `elgato` accept `systemdefault`, `ohpc`, and `intel-2020.4`. Anything other than `systemdefault` loads an Easybuild or `module` environment. Machine profiles are hardcoded in both `build.bash` and the per-code Makefiles. Toolchain names and module-loading logic live in `build.bash`; the Makefiles select flags by `MACHINE`, `COMPILER`, and precision.
-
-Each build runs `make -j${make_jobs}`. The variable `make_jobs` is defined near the top of `build.bash` and defaults to `$(nproc)`; set it to `1` for serial builds. The script also passes `--output-sync=target` when the installed GNU make supports it (version 4.0 or newer), so each file's compiler messages stay together. The builds of the outer loop still run one after another.
+- Run it from the repository root. Only `nparticles` (2 through 19) is required. Defaults: `machine=linux-generic`, `toolchain=systemdefault`, `config=debug,release`, `precision=8`, `linalg=netlib`, `openmp=no`, `gpu=no`, and every code `build.bash` knows except `CG_0S`. Every argument except `machine`, `gpu`, and `cuda_arch` accepts a comma-separated list.
+- Binaries go to `bin/[<machine>/]<toolchain>/<config>/<CODE>_N<nparticles>_P<precision>_<linalg>[_omp][_gpu]`. The `<machine>/` segment appears only for `puma`, `ocelote`, and `elgato`; the `<linalg>` suffix is always present.
+- `build.bash` does not know `PG_1P` yet (it rejects `code=PG_1P`); build that code with its Makefile.
+- Skipped or rejected combinations: `precision=10`/`16` build only `linalg=netlib`; `openmp=yes` applies only to `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`; `gpu=yes` requires an `nvhpc-*` toolchain, `precision=8`, and one of `PG_0S`, `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`.
+- Machine profiles are hardcoded in both `build.bash` and the per-code Makefiles (adding one means editing both); toolchain names and module loading live only in `build.bash`.
 
 To build a single code directly, use its Makefile:
 
 ```bash
 cd RG_0S
 make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=openblas EXEFILE=ecg
-make release COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=openblas OPENMP=yes EXEFILE=ecg
 make debug   COMPILER=gfortran MACHINE=linux-generic PREC=8 LINALG=netlib   EXEFILE=ecg
-make clean
+make clean   # also: cleaner, cleanest, cleanrelease, cleandebug
 ```
 
-The Makefiles also provide `cleaner`, `cleanest`, `cleanrelease`, and `cleandebug`. Object and module files are written under `release/` or `debug/`; the four real-ECG energy codes use separate `release-omp/` or `debug-omp/` trees when `OPENMP=yes`. Direct Makefile builds place the executable in that same tree using `EXEFILE` unchanged, for example `release/ecg` or `release-omp/ecg`.
+- Parameters: `COMPILER` (`gfortran`, `ifort`, `ifx`, or `nvfortran`; the matching MPI wrapper is what is actually called), `MACHINE`, `PREC` (`8`, `10`, `16`), `LINALG` (`netlib`, `mkl`, `lblas`, `openblas`, `aocl`), `OPENMP` (`no`/`yes`), `USE_CUDA` (`no`/`yes`, with `CUDA_ARCH=sm_XX`), and `EXEFILE`.
+- Objects, `.mod` files, and the executable (named `EXEFILE` unchanged) go to `release/` or `debug/`, or to `release-omp/` or `debug-omp/` with `OPENMP=yes`.
+- `COMPILER`, `PREC`, `LINALG`, and `USE_CUDA` share one object directory: run `make clean` before changing any of them. `build.bash` already does this for each build combination.
+- Parallel `make -j` is safe because the Makefile rules list every module dependency (for example, `spin.o` depends on `globvars.o`). When adding a source file or a `use` statement, add the matching prerequisite to the Makefile rule; otherwise `-j` builds can fail with a missing `.mod` file.
+- Supported precisions are 8/10/16 with gfortran, 8/16 with ifort or ifx, and 8 with nvfortran. Compile support is not run support: gfortran with `PREC=16` currently runs with a single MPI process only.
+- `LINALG=netlib` compiles the bundled `src/BLAS.f` and `src/LAPACK.f`, the single copies used by both the main code and `src/qrupdate/`; add any new reference routine to these files only. Optimized libraries require `PREC=8`. In the off-diagonal codes `LINALG` is accepted but is a no-op because they link no BLAS/LAPACK.
+- `OPENMP=yes` is supported by the four real-ECG energy codes only (the `PG_*` Makefiles accept it, but OpenMP builds of the PG codes are not supported). The `!$OMP` directives live in those codes' `src/BLAS.f` and are gated by an `OMP_MIN_WORK` size threshold.
+- `USE_CUDA=yes` compiles the CUDA Fortran backend `src/gpu_backend.f90` in `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, and `PG_0S`; it requires `COMPILER=nvfortran` and `PREC=8`. The binary still computes on the CPU unless `ECG_GPU=1` or `ECG_GPU_EIG=1` is set at runtime, and it needs a visible CUDA device either way.
 
-For direct Makefile builds, clean before changing compiler, precision, linear-algebra provider, or `USE_CUDA` because these choices share an object directory. `build.bash` already runs `make clean` for each build combination.
-
-Parallel `make -j` builds are safe because the Makefile rules list every module dependency (for example, `spin.o` depends on `globvars.o`). When adding a source file or a `use` statement, add the matching prerequisite to the Makefile rule; otherwise `-j` builds can fail with a missing `.mod` file.
-
-Common Makefile parameters:
-
-- `CONFIG`: selected by the target, usually `release` or `debug`. `release` optimization flags are compiler-specific (`-O3 -march=native` for gfortran, `-O3 -xhost -fp-model precise` for ifort/ifx, `-O3 -tp=native` for nvfortran); `debug` enables bounds, uninitialized-value, and FPE checking
-- `COMPILER`: `gfortran`, `ifort`, `ifx`, or `nvfortran`; these normally map to `mpif90`, `mpiifort`, `mpiifx`, and `mpif90`, respectively
-- `MACHINE`: machine profile such as `linux-generic`, `ubuntu-generic`, `irgetas`, `shabyt`, `muon`, `puma`, `ocelote`, or `elgato`
-- `PREC`: `8`, `10`, or `16`
-- `LINALG`: `netlib`, `mkl`, `lblas`, `openblas`, or `aocl`
-- `OPENMP`: `no` (default) or `yes`, supported by the four real-ECG energy codes; enables OpenMP compiler/linker flags and selects a separate build tree. The `PG_*` Makefiles accept it too, but OpenMP builds of the PG codes are not supported
-- `USE_CUDA`: `no` (default) or `yes`; compiles the CUDA Fortran backend `src/gpu_backend.f90` in `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, and `PG_0S`. It requires `COMPILER=nvfortran` and `PREC=8` and links cuSOLVER/cuBLAS; `CUDA_ARCH=sm_XX` sets the GPU compute capability (default per `MACHINE`, otherwise `sm_80`). The binary still computes on the CPU unless `ECG_GPU=1` (GPU matrix assembly) is set at runtime; `ECG_GPU_EIG=1` implies it and also uses cuSOLVER for single-eigenpair method-`G` solves. See `doc/compilation_and_execution.md`
-- `EXEFILE`: output executable name for direct Makefile builds
-
-Precision notes:
-
-- `PREC=8`: double precision; broadly supported
-- `PREC=10`: extended precision; mainly GNU/x86; use `LINALG=netlib`
-- `PREC=16`: quadruple precision; slow emulation on most hardware; use `LINALG=netlib`
-
-The current Makefiles support precisions 8/10/16 with gfortran, 8/16 with ifort or ifx, and only 8 with nvfortran. Compiler support does not guarantee MPI support for every precision. The documented gfortran/OpenMPI configuration supports `PREC=16` only with a single MPI process; Intel MPI supports multi-process quadruple precision. Consult `doc/compilation_and_execution.md` before running multi-process high-precision cases.
-
-Linear algebra notes:
-
-- Energy codes can link BLAS/LAPACK.
-- `LINALG=netlib` compiles bundled `src/BLAS.f` and `src/LAPACK.f`. These are the single copies used by both the main code and `src/qrupdate/`; the duplicate `qrupdate/BLAS.f` and `qrupdate/LAPACK.f` were removed, so add any new reference routine to the top-level files only.
-- Optimized libraries are supported only for `PREC=8`; `PREC=10` and `PREC=16` require `LINALG=netlib`.
-- Off-diagonal matrix-element codes accept `LINALG` for interface consistency, but it is a no-op because those codes do not link BLAS/LAPACK.
-
-The number of particles is a compile-time parameter, not a runtime option. `build.bash` accepts particle counts from 2 through 19, temporarily edits `Glob_AllowedNumOfParticles` and `MPI_DPREC` in the selected `src/wp_def_<PREC>.f90`, performs the build, and restores the original file from `wp_def_temporary.f90`. A direct Makefile build uses the values already in that source file. A binary built for one particle count will reject inputs (or, for the off-diagonal codes, wave-function files) with a different `PARTICLES` value; every code, including `RG_1P-1P`, requires an exact match. The quantities derived from the particle count are compile-time parameters as well; see the `globvars.f90` entry below. Avoid concurrent builds of the same code directory, which share the temporary backup and build trees; after an interrupted build, check that the precision-definition file was restored.
+The number of particles is a compile-time parameter, not a runtime option. `build.bash` temporarily edits `Glob_AllowedNumOfParticles` and `MPI_DPREC` in the selected `src/wp_def_<PREC>.f90`, performs the build, and restores the original file from `wp_def_temporary.f90`; a direct Makefile build uses the values already in that source file. A binary built for one particle count rejects inputs (or, for the off-diagonal codes, wave-function files) with a different `PARTICLES` value; every code requires an exact match. Avoid concurrent builds of the same code directory (they share the backup file and build trees), and after an interrupted build check that `src/wp_def_<PREC>.f90` was restored.
 
 ## Running
 
@@ -139,9 +111,9 @@ mpirun -np <NPROCS> /path/to/bin/[<machine>/]<toolchain>/<config>/<binary>
 
 Run from a work directory containing the required input files. For validation, copy the sample case into `jobs/` or another scratch directory and use an absolute executable path so calculation output does not overwrite tracked examples.
 
-For OpenMP builds, set `OMP_NUM_THREADS` explicitly and allocate enough cores for the MPI rank count multiplied by the threads per rank. In `LINALG=netlib` builds, OpenMP parallelizes sufficiently large bundled BLAS operations used by qrlinalg. External BLAS providers have their own threading settings; see `doc/compilation_and_execution.md` for placement and threading guidance.
+For OpenMP builds, set `OMP_NUM_THREADS` explicitly and allocate enough cores for the MPI rank count multiplied by the threads per rank. External BLAS providers have their own threading settings; see `doc/compilation_and_execution.md` for placement and threading guidance.
 
-Energy codes read and write a single `inout.txt` in the current working directory; this is the default value of `Glob_DataFileName` in `globvars.f90`. The file begins with an optional `BASIS_TYPE <BASIS>` line and a required `PARTICLES <n>` line.
+Energy codes read and write a single `inout.txt` in the current working directory; this is the default value of `Glob_DataFileName` in `globvars.f90`. The file begins with an optional `BASIS_TYPE <BASIS>` line and a required `PARTICLES <n>` line. Some header keywords are basis-specific: `FIXED_INDEX` (`RG_1P`, `PG_1P`), `FIXED_INDEX_1`/`FIXED_INDEX_2` (`RG_2D`, `RG_2P`), and `VECTOR_COUPLING_SCHEME` (`RG_2D` only); see `doc/input_file_format.md`.
 
 Off-diagonal matrix-element codes read wave-function files for the two states rather than a single `inout.txt`. Most use `wf_state0.txt` and `wf_state1.txt`; `RG_1P-2D` and `RG_1P-2P` use `wf_state1.txt` and `wf_state2.txt`.
 
@@ -154,107 +126,56 @@ Where present, the positional value or values in `inp.txt` select the requested 
 
 There is no general automated test suite. Validation is usually done by running sample physical cases and comparing energies, expectation values, or matrix elements against documented reference values.
 
-Sample inputs live under each code's `sample_input/` directory when available. The four real-ECG energy codes, the two power-Gaussian codes, and all nine off-diagonal codes provide worked examples; `CG_0S` currently has none. The example READMEs document the calculation, expected runtime, and reference values:
+Sample inputs live under each code's `sample_input/` directory; every code except `CG_0S` provides worked examples. The example READMEs document the calculation, expected runtime, and reference values:
 
 - Energy-code cases are single directories containing `inout.txt`. Recurring case types include `basis_generation_*`, `expected_values_*`, `densities_*`, and `store_wavefunction_*`. `PG_0S` adds `basis_health_checking_*` (`SAVE_HS_R`), `linear_c_elimination_*` (`ELIM_LCFN`), `linear_depen_elimination_*` (`ELIM_LND1`), and `overlap_diagonalization_*` (`OVERLAP_D`).
 - Transition-dipole cases are named `transition_dipole_moment_*` and put a `README.md` in each case directory.
 - Fine-structure cases put instructions in their `initial_state_*/`, `final_state_*/`, and `matelem/` subdirectories rather than at case level. The `matelem/` directory holds both wave-function files and, except for `RG_0S-2D`, the coupling-selector `inp.txt`.
 - `RG_0S-1P` and `RG_1P-2D` additionally have an overview `sample_input/README.md`.
 
-The `RG_*` density examples cover both coordinate space (`DENSITIES`) and momentum space (`MOMT_DENS`). They include Python grid builders (`create_grid.py` for the radial `RG_0S` example; `create_cyl_grid.py` and the alternative `create_radial_grid.py` for `RG_1P`, `RG_2D`, and `RG_2P`), supplied grid `.dat` files, and gnuplot scripts `create_plots_{coor,mom}_{dens,cf}.gp`. Reference tables and plots are committed under `output_cyl/` and `cyl_plots/`, including the radial `RG_0S` case despite those directory names. The PG density examples compute only the nucleus–nucleus correlation function; `PG_0S` ships `create_grid.py`, and `PG_1P` ships the two-dimensional grid files `cfgrid_x.txt` and `cfgrid_y.txt`. Follow each example's README for grid generation and plotting.
+The `RG_*` density examples (`DENSITIES`, `MOMT_DENS`) ship grid builders, gnuplot scripts, and reference output; the PG ones compute only the nucleus–nucleus correlation function. Follow each example's README.
+
+The `run-sample-case` skill automates this for the energy codes (see Agent Skills below).
 
 ## Utilities
 
-- `utilities/input_file_manipulation/ecgpack_input_file_generator.py`: generates an initial input file on standard output; use `python3 ... -h` for its options and redirect output into a job directory. Its `-particles` option currently accepts 2 through 9, a narrower range than `build.bash`.
-- `utilities/input_file_manipulation/ecgpack_input_file_merger.py`: concatenates selected basis ranges from two inputs using `-file1`, `-file2`, and `-file3`, with optional `-range1` and `-range2`. It takes header settings from the first file and writes an `EXPC_VALS G` command for the merged basis. Preserve its verbatim copying of numerical strings so extended and quadruple precision are not lost through Python float conversion. Its particle-count and row-width checks do not establish that masses, charges, and symmetry settings agree; check that the inputs describe the same system.
+- `utilities/input_file_manipulation/ecgpack_input_file_generator.py`: generates an initial input file on standard output; use `python3 ... -h` for its options and redirect output into a job directory. Its `-particles` option currently accepts 2 through 9, a narrower range than `build.bash`, and its `-basis_type` option accepts the four `RG_*` energy bases, `PG_0S`, `PG_1P`, and `CG_0S`.
+- `utilities/input_file_manipulation/ecgpack_input_file_merger.py`: concatenates selected basis ranges from two inputs using `-file1`, `-file2`, and `-file3`, with optional `-range1` and `-range2`. It takes header settings from the first file and writes an `EXPC_VALS G` command for the merged basis. Preserve its verbatim copying of numerical strings so extended and quadruple precision are not lost through Python float conversion. It does not check that the two inputs describe the same system (masses, charges, symmetry).
 - `utilities/nuclear_masses/nuclear_mass_determination.py`: prints nuclear masses and uncertainty estimates using embedded CODATA 2022 constants and AME 2020 atomic masses; retain the source references when updating its data.
 - `utilities/job_monitoring/status_all.bash`: reports calculation progress and optional SLURM status. Its `JOBSDIR`, directory selection, and display flags are configured near the top; review these local settings before running it.
 - `utilities/permutational_symmetry/Young_Tableaux.xlsx`: spreadsheet supporting permutation-symmetry work.
 
 ## Source Architecture
 
-In the four real-ECG energy codes and the two PG codes, which have the fullest source set, module order is:
+The full description (the role of every source file, BBOP steps, compile-time dimensions, matrix-element interfaces, the CUDA layout, and solver storage rules) is in `doc/devnotes/source_architecture.md`. **Read it before editing `globvars.f90`, `matelem.f90`, `matform.f90`, `linalg.f90`, `qrlinalg.f90`, `workproc.f90`, `main.f90`, or `gpu_backend.f90`.** In brief:
 
-```text
-wp_def_<PREC> -> globvars -> misc, linalg, spin -> matelem -> matform -> qrupdate -> qrlinalg -> workproc -> main
+- Module order in the four real-ECG energy codes and the two PG codes, which have the fullest source set: `wp_def_<PREC> -> globvars -> misc, linalg, spin -> matelem -> matform -> qrupdate -> qrlinalg -> workproc -> main`. CUDA builds add `gpu_backend` after `matelem`. `CG_0S` lacks `spin.f90`, `qrlinalg.f90`, and `qrupdate/` (no method `Q`, no `MOMT_DENS` or `SAVE_HSWF`). The off-diagonal codes carry only `wp_def_<PREC>`, `globvars`, `matelem`, `workproc`, `main`, and `spin` where spin coupling is needed.
+- `main.f90` executes a sequence of BBOP (Basis Building and Optimization Program) steps read from the input: `BASIS_ENL`, `OPT_CYCLE`, `FULL_OPT1`, `ELIM_LCFN`, `ELIM_LND1`, `SEPR_LND1`, `SEPR_FLCF`, `EXPC_VALS`, `DENSITIES`, `MOMT_DENS`, `SAVE_FILE`, `SAVE_HSWF`. The PG codes lack `MOMT_DENS` and add `SAVE_HS_R` and `OVERLAP_D`. Adding a calculation mode means adding a `case` in `main.f90` and a routine in `workproc.f90`, which holds the bulk of each program (I/O, basis enlargement, optimization, the eigensolvers `G`, `I`, and `Q`, expectation values, densities).
+
+Invariants that are easy to break:
+
+- `Glob_n`, `Glob_np`, `Glob_npt`, `Glob_2Raised3n2`, and `Glob_PiRaised3n2` are named constants fixed by the compiled-in particle count. Never assign or `MPI_BCAST` them, and pass full-size arrays to explicit-shape dummy arguments even on paths that never touch them (for example `Dk(2*Glob_np)` for `MatrixElementsHS_*`).
+- Hot paths read the precomputed `Glob_ScaledPseudoChargeMatrix` and the once-per-sweep outputs of `PrecomputeMatrices_L_A_MA`; do not recompute them per basis-function pair.
+- `linalg_setparam(n)` must remain a collective call on all MPI ranks and be repeated whenever the problem dimension changes.
+- Method `Q`: basis arrays stay in canonical order, and the lower triangles of `Glob_H` and `Glob_S` are authoritative. Read `doc/devnotes/Q_method_design.md` first. `qrlinalg.f90` is shared by the four real-ECG energy codes and the two PG codes, so a fix normally goes into all six.
+- `misc.f90` and the RNG-seeding `block` in `main.f90` are byte-identical in all seven energy codes; keep them that way. Use `urand` and `drnor` from `misc.f90`, never the intrinsic `random_number`/`random_seed`.
+- Each MPI rank seeds its generators differently, so a random choice that all ranks must agree on has to be made on rank 0 and broadcast, as `GenerateRndIntSeq` does.
+- CUDA builds share one arithmetic kernel between CPU and GPU (`MatrixElementsHS_<BASIS>`, or `MatrixElementsOpt` in `PG_0S`, marked `attributes(host,device)`). Do not duplicate the arithmetic, and keep the NVHPC loop workarounds described in the devnote.
+
+## Agent Skills
+
+Skills shared by all agents live in `.agents/skills/<skill-name>/` (a `SKILL.md` plus optional `scripts/`), the location that Codex and Antigravity read natively. Claude Code reads `.claude/skills/` instead, so each skill is also kept there as an identical copy (not a symlink, which can break in Windows checkouts). Edit a skill in `.agents/skills/`, then refresh the copy:
+
+```bash
+rm -rf .claude/skills/<skill-name> && cp -r .agents/skills/<skill-name> .claude/skills/
+diff -r .agents/skills .claude/skills   # must print nothing
 ```
 
-CUDA builds (`USE_CUDA=yes`) add `gpu_backend` after `matelem`, ahead of `matform`, `workproc`, and `main`.
+Refer to helper scripts by their `.agents/skills/...` path so that both copies stay identical. Restrict the `SKILL.md` frontmatter to the fields of the Agent Skills standard (`name`, which must match the directory name, and `description`; optionally `license`, `compatibility`, and `metadata`) so that every agent accepts it.
 
-`PG_0S` and `PG_1P` have the same file set (`gpu_backend.f90` only in `PG_0S`) and the same eigenvalue methods `G`, `I`, and `Q`. Their `spin.f90` is an empty stub module that nothing uses, their matrix-element routines and some input-file fields differ (for example, `FIXED_INDEX` in `PG_1P`; see `doc/input_file_format.md`), and so does their set of BBOP steps (see below).
+Available skills:
 
-Other codes carry only a subset of these files:
-
-- `CG_0S`: the same set minus `spin.f90`, `qrlinalg.f90`, and `qrupdate/`. It also has no `Q` eigenvalue method and no `MOMT_DENS` or `SAVE_HSWF` step, so do not assume feature parity with the `RG_*` energy codes.
-- Off-diagonal codes: only `wp_def_<PREC>.f90`, `globvars.f90`, `matelem.f90`, `workproc.f90`, `main.f90`, and `spin.f90` where spin coupling is needed. They have no `misc`, `linalg`, `matform`, or `qrupdate`, and link no BLAS/LAPACK. `spin.f90` is present in `RG_0S-2D`, `RG_0S-2P`, `RG_1P-1P`, `RG_2D-2D`, `RG_2P-2D`, and `RG_2P-2P`, and absent in the transition-dipole codes `RG_0S-1P`, `RG_1P-2D`, and `RG_1P-2P`.
-
-Important files:
-
-- `wp_def_<PREC>.f90`: working precision kind, MPI real type, and `Glob_AllowedNumOfParticles`
-- `globvars.f90`: global state, physical constants, numerical constants, basis/matrix storage; this includes both `Glob_PseudoChargeMatrix` and the pre-scaled `Glob_ScaledPseudoChargeMatrix`. Particle-count-derived sizes are compile-time constants; see the dimension and interface rules below
-- `misc.f90`: auxiliary numerical routines: the `drnor` normal and `urand` uniform (MRG32k3a) random-number generators (with their initializers `drnor_start`/`urand_start`; the energy codes use `urand` instead of the intrinsic `random_number`, whose sequence for a given seed differs between compilers, so a fixed `RANDOM_SEED` reproduces runs across compilers; do not reintroduce `random_number`/`random_seed`), the one-dimensional minimizers `DA17LSM` and `DFMINM`, and working-kind ports of the SLATEC modified Bessel K routines (`DBESK`, `DBSKNU`, `DASYIK`) with their coefficient tables (`Bessel_DebyeC`, `Bessel_RecipGammaC`). `misc.f90` is byte-identical in all seven energy codes (`RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, `PG_0S`, `PG_1P`, `CG_0S`); keep it that way, even though some codes do not reference every routine (provenance in `THIRD-PARTY-NOTICES.md`; development notes in `doc/devnotes/mod_Bessel_high_precision/`); `MatrixElementsAll_<BASIS>` uses the Bessel routines for the semi-relativistic kinetic energy `sqrt(m^2c^4+p^2c^2)-mc^2`, printed as `semi_rel_T` by `EXPC_VALS`
-- `linalg.f90`: linear-algebra wrappers over BLAS/LAPACK, including performance-aware serial/MPI routing and cache-blocked LDL factorization paths
-- `BLAS.f`, `LAPACK.f`: bundled modified reference sources used with `LINALG=netlib`
-- `dmng.f`, `X1MACH.f90`: nonlinear optimizer support and machine constants
-- `spin.f90`: spin algebra and permutation-symmetry projection
-- `matelem.f90`: matrix elements between individual basis functions
-- `matform.f90`: assembly of Hamiltonian and overlap matrices
-- `qrlinalg.f90` and `qrupdate/`: QR factorization/update state used by method `Q` in the four real-ECG energy codes and the two PG codes. `qrlinalg.f90` is identical in `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, and `PG_0S` and nearly so in `PG_1P`, so a Q-solver fix normally goes into all six
-- `workproc.f90`: the bulk of the program, including energy-code `ReadIOFile`/`SaveResults` I/O, off-diagonal wave-function readers, basis construction, optimization cycles, generalized symmetric eigensolvers (methods `G`, `I`, and `Q` in the real-ECG and PG energy codes), expectation values, densities, and swap-file handling
-- `main.f90`: MPI initialization, random-number seeding, and top-level execution of BBOP input steps. The seeding is one `block` construct, byte-identical in all seven energy codes (keep it that way); it uses `Glob_RndSeedInput` from the optional `RANDOM_SEED` header line read by `ReadIOFile` (an integer, `ECG_RND_SEED`, or the default `SYSTEM_CLOCK`)
-
-Common BBOP steps handled from `main.f90` include:
-
-- `BASIS_ENL`
-- `OPT_CYCLE`
-- `FULL_OPT1`
-- `ELIM_LCFN`
-- `ELIM_LND1`
-- `SEPR_LND1`
-- `SEPR_FLCF`
-- `EXPC_VALS`
-- `DENSITIES`
-- `MOMT_DENS`
-- `SAVE_FILE`
-- `SAVE_HSWF`
-
-All four real-ECG energy codes implement this full list. `CG_0S` implements the same steps except `MOMT_DENS` and `SAVE_HSWF`. `PG_0S` and `PG_1P` lack `MOMT_DENS` (its case is commented out), and their `DENSITIES` computes only the nucleus–nucleus correlation function; they add `SAVE_HS_R` (H and S of the unnormalized basis functions, plus a basis-health table) and `OVERLAP_D` (spectrum of the overlap matrix alone). Adding a new calculation mode usually requires adding a case in `main.f90` and corresponding implementation in `workproc.f90`.
-
-### Compile-Time Dimensions
-
-In every code, the number of pseudoparticles `Glob_n` (equal to `Glob_AllowedNumOfPseudoParticles`, i.e. N-1) and the derived `Glob_np` (n(n+1)/2), `Glob_npt` (`Glob_np` for real ECGs, `2*Glob_np` for `CG_0S`), and `Glob_2Raised3n2` are named constants, not variables. `Glob_PiRaised3n2` is also a named constant in the variants that define it; it is absent from `CG_0S` and `RG_0S-1P`. Never assign or `MPI_BCAST` these constants. The energy input and off-diagonal wave-function readers validate the particle count rather than changing these dimensions. Use `Glob_n` (for example, `integer,parameter :: nn=Glob_n`) rather than `Glob_AllowedNumOfPseudoParticles` outside its definition.
-
-Because these sizes are known at compile time, the compiler checks explicit-shape array arguments against them. Actual arrays must be full size even on paths that never touch them. In particular, the real-ECG `MatrixElementsHS_*` routines require `Dk` and `Dl` of length `2*Glob_np`; `MatrixElementsHS_CG_0S` requires complex derivative buffers of length `4*Glob_np` (`2*Glob_npt`). Do not use undersized dummy buffers when both gradient flags are false, even if an older nearby comment suggests that this is safe.
-
-### Current Matrix-Element And Linear-Algebra Conventions
-
-In the four real-ECG energy codes, `MatrixElementsHS_<BASIS>` retains the original CPU name and argument list and is marked `attributes(host,device)` only in CUDA builds. CUDA-only `attributes(managed)` declarations let it read `Glob_MassMatrix` and `Glob_ScaledPseudoChargeMatrix` directly; ordinary CPU builds retain host allocations. Keep the seven NVHPC reduction/fusion loop workarounds in RG_1P/RG_2D/RG_2P: their local `n` is volatile so that `n=Glob_n` cannot become a constant bound; array extents stay `nn`. GPU launchers synchronize before returning to host code. CUDA-enabled binaries need a visible CUDA device even when GPU computation is disabled because these arrays use managed allocations. Do not duplicate the arithmetic between CPU and GPU routines.
-
-`PG_0S` has the same CUDA backend layout (`src/gpu_backend.f90`, the same `USE_CUDA` hooks and `ECG_GPU`/`ECG_GPU_EIG`/`ECG_GPU_BATCH` switches) with one difference: `MatrixElementsOpt` evaluates every symmetry term of a pair in one call, so one GPU thread handles one pair, matching matform's per-pair MPI split. In CUDA builds `MatrixElementsOpt`, its private helpers, `Glob_MassMatrix`, `Glob_ChargeMatrix` and `Glob_NumYHYTerms` carry the device/managed attributes; `PrecomputeMatrices_MA_L_A` stays host-only (the bra-side matrices are built on the host once per build). `MatrixElementsOpt`'s arrays sized by the run-time `Glob_NumYHYTerms` become per-thread device `malloc`s, so the GPU matrix elements are correct but slower than the CPU for small systems, and need the larger device heap set by `ECG_GPU_HEAP` (default 1 GiB). Host calls to a `host,device` routine must not pass array sections that nvfortran treats as reshaping (NVFORTRAN-S-0525).
-
-The primary energy-code entry points in `matelem.f90` use symmetry-qualified names:
-
-- Hamiltonian/overlap, optionally with nonlinear-parameter derivatives: `MatrixElementsHS_RG_0S`, `MatrixElementsHS_RG_1P`, `MatrixElementsHS_RG_2D`, `MatrixElementsHS_RG_2P`, and `MatrixElementsHS_CG_0S`
-- full expectation-value/operator sets: the corresponding `MatrixElementsAll_*` routines
-- normalized or diagonal overlaps, where present: `OverlapMatrixElement_<BASIS>` or `NormalizedOverlapMatElem_<BASIS>`
-
-The PG codes do not follow this naming: `PG_0S` uses `MatrixElementsOpt`, which evaluates every symmetry term of a pair in one call, and `PG_1P` uses `MatrixElements`, `MatrixElementsXi`, and `MatrixElements0`. Off-diagonal codes use specialized operator routines and basis-specific overlap routines. Consult the local `matelem.f90` rather than relying on an older name. Several matrix-element kernels now replace deeply nested particle-pair accumulations with preassembled matrix expressions and skip derivative work when neither gradient is requested. Do not expand these back into the older pair-by-pair algorithms.
-
-`ProgramDataInit` constructs `Glob_ScaledPseudoChargeMatrix` once; hot matrix-element loops should read it directly rather than recomputing scaled charge products.
-
-In the four real-ECG energy codes, `PrecomputeMatrices_L_A_MA(np,Nmax,NonlinParam,MassMatrix,Lk,Ak,MAk)` in `matelem.f90` is identical across all four variants. It unpacks the lower-triangular `Lk`, forms `Ak=Lk*transpose(Lk)`, and optionally forms `MAk=MassMatrix*Ak`, with output shapes `(Glob_n,Glob_n,Nmax)`. Preserve the existing packed parameter order and compute these inputs outside the basis-pair and symmetry-permutation loops:
-
-- `ComputeMatElem` and `ComputeMatElemAndDeriv` in `matform.f90` prepare all three arrays for `MatrixElementsHS_*`.
-- `AssembleQTrial` in `workproc.f90` does the same for Q trial columns, including derivative evaluations.
-- `ExpectationValues` in `workproc.f90` prepares only `Lk` and `Ak` for `MatrixElementsAll_*`, including its density paths; the optional `MAk` output is omitted.
-
-These arrays are local to an evaluation sweep and must reflect the current nonlinear parameters. The real-ECG H/S kernels take precomputed `Lk`, `Ll`, `Ak`, `Al`, and `MAk`, plus basis-specific angular indices where needed; the full-operator kernels take the L/A matrices and bra/ket permutations. `CG_0S` and the off-diagonal codes do not use this helper, and overlap-only routines retain their own interfaces. Check the actual declaration before changing a caller. Do not restore the former `PrecomputeMatrixElements` name or reconstruct L/A/MA inside each pair evaluation.
-
-In the energy codes, `linalg_setparam(n)` selects and, for multi-process double-precision runs, calibrates the current linear-algebra paths. It must remain a collective call on all MPI ranks and must be called again when the problem dimension changes.
-
-For method `Q`, preserve canonical basis order and the authoritative lower triangles of `Glob_H` and `Glob_S`, which hold normalized, unshifted physical matrix elements. Upper triangles are scratch or unspecified storage. Consult `doc/devnotes/Q_method_design.md` before changing Q matrix assembly, updates, or solver state.
-
-These storage rules are solver-specific: method `I` stores shifted `H-Glob_ApproxEnergy*S` in the lower triangle of `Glob_H` and a full `Glob_S`; method `G` keeps the normalized Hamiltonian diagonal separately in `Glob_diagH` and uses lower-triangle storage for off-diagonal H/S. Preserve the normalization and derivative handling in `StoreHS`/`StoreHSD` when changing assembly. Q uses its dedicated trial-column path for derivatives.
+- `run-sample-case`: builds an energy code if needed and runs one of its `sample_input` cases in a scratch copy under `jobs/`.
 
 ## Documentation To Check
 
@@ -262,6 +183,7 @@ These storage rules are solver-specific: method `I` stores shifted `H-Glob_Appro
 - Input format: `doc/input_file_format.md`
 - Physics and notation: `doc/theoretical_background.md`
 - VS Code setup: `doc/use_of_visual_studio_code.md`
+- Source architecture, conventions, and invariants: `doc/devnotes/source_architecture.md`
 - Q-method architecture, canonical H/S layout, porting steps, and validation: `doc/devnotes/Q_method_design.md`
 
 For behavior questions, prefer these project docs over inference from code alone.
@@ -280,4 +202,3 @@ After editing:
 - When changing module declarations or interfaces, also build with an Intel toolchain if one is available: gfortran accepts some non-standard constructs that ifx rejects, such as an entity given the `PUBLIC` attribute twice.
 - For numerical behavior changes, run a small sample input if practical.
 - Check for unintended edits to generated files, temporary files, `debug/`, `release/`, `bin/`, and `jobs/`.
-- Keep `AGENTS.md` and `CLAUDE.md` conceptually aligned when changing agent-facing project guidance.

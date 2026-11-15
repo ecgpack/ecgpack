@@ -7,6 +7,6 @@ Sample file `inout.txt` in this directory provides input for generating an ECG b
 `inout_Li_2Se-01-00050.txt`  
 `inout_Li_2Se-01-00100.txt`  
 The calculation with this input file should take roughly 1-2 minutes on a single CPU core when double precision is used (gfortran compiler / AMD Ryzen 7 7800X3D).
-At the end of the calculation the energy should reproduce four decimal figures in the exact value of -7.4774519307.
+At the end of the calculation the energy should be about -7.4774 (with the seed given in `inout.txt` and a single MPI process a test run with the gfortran compiler gave -7.4773676). It differs from the exact nonrelativistic energy of this state of the Li-7 atom, -7.4774519307, by slightly less than $1\times 10^{-4}$ hartree.
 
 The basis functions are selected stochastically. The `RANDOM_SEED` line in `inout.txt` fixes the seed of the random number generators, and the codes use their own generators, whose sequences do not depend on the compiler. Repeated runs with the same number of MPI processes therefore reproduce the same energies on any machine and with any compiler, apart from rounding differences, which the stochastic selection and the optimization can amplify (especially in longer runs). To get a different random selection in every run, remove the `RANDOM_SEED` line or replace the seed with `SYSTEM_CLOCK` (see `doc/input_file_format.md`).  

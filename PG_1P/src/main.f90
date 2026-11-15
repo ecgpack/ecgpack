@@ -5,7 +5,7 @@ PROGRAM main
   ! Driver of the Basis Building and Optimization Program (BBOP) of the
   ! PG_1P code: non-Born-Oppenheimer variational calculations of N = 1
   ! (first rotationally excited) states of diatomic systems with the
-  ! explicitly correlated Gaussians x_i r_1^m exp[-r'(L L' (x) I3) r]
+  ! explicitly correlated Gaussians z_i r_1^m exp[-r'(L L' (x) I3) r]
   ! (Kirnosov, Sharkey and Adamowicz, J. Phys. B 48, 195101 (2015)).
   ! It reads the data file, initializes the program data, seeds the random
   ! generators, executes the BBOP steps in order and empties the swap
@@ -60,15 +60,15 @@ PROGRAM main
   IF (Glob_IsOptCycleScripted) CALL ReadBlackList()
   CALL ProgramDataInit()
 
-  ! How the angular prefactors x_i are distributed over the pseudoparticles
+  ! How the angular prefactors z_i are distributed over the pseudoparticles
   ! (the original code printed this summary as well). The functions with
   ! i = 1 carry the rotational excitation of the nuclei, those with i > 1
   ! the angular excitation of the light particles.
   IF ((Glob_ProcID == 0) .AND. (Glob_CurrBasisSize > 0)) THEN
-    WRITE(*, '(1x,a)') 'Angular prefactors x_i of the basis functions read:'
+    WRITE(*, '(1x,a)') 'Angular prefactors z_i of the basis functions read:'
     DO i = 1, Glob_n
       k = COUNT(Glob_X_index(1:Glob_CurrBasisSize) == i)
-      WRITE(*, '(1x,i6,a,i0,a,f6.2,a)') k, ' functions with x_', i, '  (', &
+      WRITE(*, '(1x,i6,a,i0,a,f6.2,a)') k, ' functions with z_', i, '  (', &
         (100.0_wp*k)/Glob_CurrBasisSize, ' %)'
     ENDDO
     WRITE(*, *)

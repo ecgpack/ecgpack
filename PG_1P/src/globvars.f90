@@ -139,27 +139,27 @@ MODULE globvars
   INTEGER, ALLOCATABLE, DIMENSION(:), SAVE :: Glob_FuncNum
 
   ! Premultiplier of each basis function. A PG_1P function is
-  !   f_k = x_i * r_1^m * exp[-r'(L_k L_k' (x) I3) r],
-  ! with x_i the x coordinate of pseudoparticle i (i = 1..Glob_n) and m an
+  !   f_k = z_i * r_1^m * exp[-r'(L_k L_k' (x) I3) r],
+  ! with z_i the z coordinate of pseudoparticle i (i = 1..Glob_n) and m an
   ! EVEN power of the internuclear distance r_1 (0 .. Glob_MaxPowerAllowed).
   ! The two are kept in two independent vectors, one entry per function:
   !   Glob_PWR(k)      - the power m of function k
-  !   Glob_X_index(k)  - the pseudoparticle index i of its x_i prefactor
+  !   Glob_X_index(k)  - the pseudoparticle index i of its z_i prefactor
   ! The data file carries them as two columns of every parameter record
   ! (see ReadIOFile/SaveResults).
   INTEGER, ALLOCATABLE, DIMENSION(:), SAVE :: Glob_PWR
   INTEGER, ALLOCATABLE, DIMENSION(:), SAVE :: Glob_X_index
 
-  ! Glob_IsIndexFixed specifies whether the x-index i of the angular
-  ! prefactor x_i is held fixed at one common value for all basis functions
+  ! Glob_IsIndexFixed specifies whether the z-index i of the angular
+  ! prefactor z_i is held fixed at one common value for all basis functions
   ! instead of being generated and optimized per function (the power m stays
   ! free). Set from the optional FIXED_INDEX line of the data file. With
-  ! FIXED_INDEX 1 the basis is the x_1 r_1^m basis of Sharkey, Kirnosov and
-  ! Adamowicz, J. Chem. Phys. 139, 164119 (2013); without it the x_i r_1^m
+  ! FIXED_INDEX 1 the basis is the z_1 r_1^m basis of Sharkey, Kirnosov and
+  ! Adamowicz, J. Chem. Phys. 139, 164119 (2013); without it the z_i r_1^m
   ! basis of Kirnosov, Sharkey and Adamowicz, J. Phys. B 48, 195101 (2015).
   LOGICAL :: Glob_IsIndexFixed = .FALSE.
 
-  ! When Glob_IsIndexFixed is .true. this holds the common x-index value
+  ! When Glob_IsIndexFixed is .true. this holds the common z-index value
   ! (1 .. Glob_n). Otherwise it is not used.
   INTEGER :: Glob_IndexFixedValue
 

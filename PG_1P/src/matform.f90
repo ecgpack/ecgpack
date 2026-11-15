@@ -334,7 +334,7 @@ CONTAINS
     ! The NumBatch*Glob_NumYHYTerms (pair, term) items, item q = (b-1)*
     ! Glob_NumYHYTerms+j for term j of pair b, are dealt out cyclically:
     ! item q goes to rank MOD(q-1,Glob_NumOfProcs). The cost of an item
-    ! depends on its pair (the powers, the x-indices), not on its term, so
+    ! depends on its pair (the powers, the z-indices), not on its term, so
     ! every rank gets about the same share of every pair, however the cost
     ! of the pairs varies. Every rank computes its items with MatrixElements
     ! into its slots of ItemS/ItemH (ItemSlots), MPI_ALLGATHERV gives every
@@ -741,7 +741,7 @@ CONTAINS
 
   FUNCTION SelfOverlapCancellation(pwr, xind, param, Ssum, Sabs) RESULT(Cfac)
     ! Cancellation factor of the self-overlap <phi|Y+Y|phi> of ONE basis
-    ! function with premultiplier x_xind r_1^pwr and nonlinear parameters param:
+    ! function with premultiplier z_xind r_1^pwr and nonlinear parameters param:
     !   Ssum = sum_k c_k S_k       the self-overlap that survives Y+Y
     !   Sabs = sum_k |c_k S_k|     the size of the terms that were summed
     !   Cfac = Sabs/|Ssum| >= 1    log10(Cfac) digits are lost; HUGE if Ssum = 0
@@ -753,7 +753,7 @@ CONTAINS
     ! parameters and every term c_k*S_k.
     IMPLICIT NONE
     INTEGER, INTENT(IN)   :: pwr   ! power of r_1
-    INTEGER, INTENT(IN)   :: xind  ! x-index of the prefactor
+    INTEGER, INTENT(IN)   :: xind  ! z-index of the prefactor
     REAL(wp), INTENT(IN)  :: param(Glob_npt)
     REAL(wp), INTENT(OUT) :: Ssum, Sabs
     REAL(wp)              :: Cfac
@@ -799,7 +799,7 @@ CONTAINS
 
     IF ((Glob_ProcID == 0) .AND. (Verbose >= 3)) THEN
       WRITE(*, '(1x,a,i0,a,i0,a,i0,a,es12.5,a,es12.5,a,es10.3,a,f7.1,a)') &
-        'SelfOverlapCancellation: x-index ', xind, ', power ', pwr, &
+        'SelfOverlapCancellation: z-index ', xind, ', power ', pwr, &
         ', terms ', Glob_NumYHYTerms, ': Ssum = ', Ssum, &
         '  Sabs = ', Sabs, '  C = ', Cfac, '  (', LOG10(Cfac), ' digits lost)'
       WRITE(*, '(1x,a,es12.5,a,es12.5,a,i0,a,es12.5,a,es9.2)') &

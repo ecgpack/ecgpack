@@ -3,13 +3,15 @@
 #
 # Usage examples:
 #
-# ./ecg_input_file_generator.py -basis_type=RG_0S -particles 3 -masses "1.E30 1.0 1.0" -charges "2.0 -1.0 -1.0" -symmetry "(1+P23)" -eigenvalue 1 -maxbasis 2000 -istart 50 -systemname "He_1Se"
+# ./ecgpack_input_file_generator.py -basis_type=RG_0S -particles 3 -masses "1.E30 1.0 1.0" -charges "2.0 -1.0 -1.0" -symmetry "(1+P23)" -eigenvalue 1 -maxbasis 2000 -istart 50 -systemname "He_1Se"
 #
-# ./ecg_input_file_generator.py -basis_type=RG_0S -particles 4 -masses "1.E30 1.0 1.0 1.0" -charges "3.0 -1.0 -1.0 -1.0" -symmetry "atom-doublet" -eigenvalue 1 -maxbasis 3000 -istart 50 -systemname "Li_2Se"
+# ./ecgpack_input_file_generator.py -basis_type=RG_0S -particles 4 -masses "1.E30 1.0 1.0 1.0" -charges "3.0 -1.0 -1.0 -1.0" -symmetry "atom-doublet" -eigenvalue 1 -maxbasis 3000 -istart 50 -systemname "Li_2Se"
 #
-# ./ecg_input_file_generator.py -basis_type=RG_0S -particles 5 -masses "1.E30 1.0 1.0 1.0 1.0" -charges "4.0 -1.0 -1.0 -1.0 -1.0" -symmetry "atom-triplet" -youngoperatorformat "AS" -eigenvalue 1 -maxbasis 5000 -istart 80 -systemname "Be_3Se"
+# ./ecgpack_input_file_generator.py -basis_type=RG_0S -particles 5 -masses "1.E30 1.0 1.0 1.0 1.0" -charges "4.0 -1.0 -1.0 -1.0 -1.0" -symmetry "atom-triplet" -youngoperatorformat "AS" -eigenvalue 1 -maxbasis 5000 -istart 80 -systemname "Be_3Se"
 #
-# ./ecg_input_file_generator.py -basis_type=RG_2P -particles 7 -masses "25519.04528337 1.0 1.0 1.0 1.0 1.0 1.0" -charges "7.0 -1.0 -1.0 -1.0 -1.0 -1.0 -1.0" -symmetry "(1+P23)(1+P45)(1-P24)(1-P26-P46)(1-P27-P47-P67)(1-P35)" -eigenvalue 1 -maxbasis 15000 -istart 80 -systemname "N+_3Pe"
+# ./ecgpack_input_file_generator.py -basis_type=RG_2P -particles 7 -masses "25519.04528337 1.0 1.0 1.0 1.0 1.0 1.0" -charges "7.0 -1.0 -1.0 -1.0 -1.0 -1.0 -1.0" -symmetry "(1+P23)(1+P45)(1-P24)(1-P26-P46)(1-P27-P47-P67)(1-P35)" -eigenvalue 1 -maxbasis 15000 -istart 80 -systemname "N+_3Pe"
+#
+# ./ecgpack_input_file_generator.py -basis_type=PG_0S -particles 4 -masses "3670.48296785 1836.15267247 1.0 1.0" -charges "1.0 1.0 -1.0 -1.0" -symmetry "(1+P34)" -eigenvalue 1 -maxbasis 2000 -istart 50 -systemname "HD_1Se"
 #
 # Argument basis_type is optional. If present, it will be printed in the header of the input file, where the corresponding descriptor is also optional. 
 # If not present, the header will not contain the basis type descriptor.
@@ -18,6 +20,8 @@
 # (e.g. "(1+P23)"), or can be specified using the following keywords:
 # "atom-singlet", "atom-doublet", "atom-triplet", "atom-quartet", "atom-quintet", "atom-sextet","atom-septet", "atom-octet", "atom-nonet".
 # In such a case the first particle is assumed to be an atomic nucleus, while all others are assumed to be identical electrons.
+# These keywords are therefore not suitable for the power Gaussian basis types (PG_0S, PG_1P), where particles 1 and 2 are
+# the two heavy particles (e.g. nuclei of a diatomic molecule); supply the Young operator explicitly in that case.
 #
 # The value of argument youngoperatorformat is only used if the permutational symmetry is defined through a keyword (e.g. "atom-quartet").
 # It can only take two values - "SA" and "AS". The default/natural/textbook order is "SA", meaning that Y = S*A, where S is the symmetrizer and
@@ -111,7 +115,7 @@
 import argparse
 
 parser = argparse.ArgumentParser(description="Generate file")
-parser.add_argument("-basis_type", default='NONE', help="Basis type, optional argument. Possible values are RG_0S, RG_1P, RG_2D, RG_2P, CG_0S.", choices=["NONE", "RG_0S", "RG_1P", "RG_2D", "RG_2P", "CG_0S"])
+parser.add_argument("-basis_type", default='NONE', help="Basis type, optional argument. Possible values are RG_0S, RG_1P, RG_2D, RG_2P, PG_0S, PG_1P, CG_0S.", choices=["NONE", "RG_0S", "RG_1P", "RG_2D", "RG_2P", "PG_0S", "PG_1P", "CG_0S"])
 parser.add_argument("-particles", default=3, type=int, choices=[2, 3, 4, 5, 6, 7, 8, 9], help="Number of particles, default is 3")
 parser.add_argument("-maxbasis", default=5000, type=int, help="Maximum basis size, default is 5000")
 parser.add_argument("-istart", default=50, type=int, help="Size of the basis after which the inverse iteration eigensolver will be used (the G option changes to I)")

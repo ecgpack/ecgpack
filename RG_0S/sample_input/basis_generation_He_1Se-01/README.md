@@ -4,6 +4,6 @@ Sample file `inout.txt` in this directory provides input for generating a very s
 `inout_He_1Se-01-00005.txt`  
 `inout_He_1Se-01-00010.txt`  
 The calculation with this input file should take about 1 second on a single CPU core when double precision is used (gfortran compiler / AMD Ryzen AI 9 HX 370).
-At the end of the calculation the energy should reproduce three decimal figures in the exact value of -2.9033045577.
+At the end of the calculation the energy should be about -2.9009 (with the seed given in `inout.txt` and a single MPI process the calculation gives -2.9008724). Such a small basis reproduces only two decimal figures of the exact nonrelativistic energy of this state of the He-4 atom, -2.9033045577.
 
 The basis functions are selected stochastically. The `RANDOM_SEED` line in `inout.txt` fixes the seed of the random number generators, and the codes use their own generators, whose sequences do not depend on the compiler. Repeated runs with the same number of MPI processes therefore reproduce the same energies on any machine and with any compiler, apart from rounding differences, which the stochastic selection and the optimization can amplify (especially in longer runs). To get a different random selection in every run, remove the `RANDOM_SEED` line or replace the seed with `SYSTEM_CLOCK` (see `doc/input_file_format.md`).  
