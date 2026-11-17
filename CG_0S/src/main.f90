@@ -4,7 +4,7 @@ program main
   implicit none
 
 !Local variables
-  integer      i,iw,Kstart,Kstop,Kstep,OpenFileErr,OptimizationType
+  integer      i,iw,Kstart,Kstop,Kstep,OpenFileErr,OptimizationType,QErrorCode
 
 !Initialize MPI
   call MPI_INIT(Glob_MPIErrCode)
@@ -82,7 +82,7 @@ program main
 !Empty swap file as it may contain some garbage left
 !after last run (if there was a failure)
   if ((Glob_ProcID==0).and.Glob_UseSwapFile) then
-    open(1,file=Glob_SwapFileName,form='binary',status='replace',iostat=OpenFileErr)
+    open(1,file=Glob_SwapFileName,form='unformatted',status='replace',iostat=OpenFileErr)
     if (OpenFileErr==0) then
       write(1) 'Swap file is empty'
       close(1)
@@ -113,6 +113,14 @@ program main
           case('I')
             call BasisEnlI(Kstart,Kstop,Kstep,Glob_BBOP(i)%D,OptimizationType, &
                            Glob_BBOP(i)%E,Glob_BBOP(i)%Q,Glob_BBOP(i)%R)
+          case('Q')
+            call BasisEnlQ(Kstart,Kstop,Kstep,Glob_BBOP(i)%D,OptimizationType, &
+                           Glob_BBOP(i)%E,Glob_BBOP(i)%Q,Glob_BBOP(i)%R,QErrorCode)
+            if ((QErrorCode/=Q_METHOD_SUCCESS).and.(Glob_ProcID==0)) then
+              write(*,'(1x,a,1x,i0,1x,a,1x,i0)') &
+                'Error EC0013 in main: BASIS_ENL Q failed at BBOP step',i, &
+                'with status',QErrorCode
+            endif
           endselect
         else
           if (Glob_ProcID==0) then
@@ -141,6 +149,15 @@ program main
             call OptCycleI(Glob_BBOP(i)%A,Glob_BBOP(i)%B,Glob_BBOP(i)%C,Glob_BBOP(i)%D,  &
                            Glob_BBOP(i)%E,Glob_BBOP(i)%F,Glob_BBOP(i)%G,Glob_BBOP(i)%Q,Glob_BBOP(i)%R, &
                            Glob_BBOP(i)%H)
+          case('Q')
+            call OptCycleQ(Glob_BBOP(i)%A,Glob_BBOP(i)%B,Glob_BBOP(i)%C,Glob_BBOP(i)%D,  &
+                           Glob_BBOP(i)%E,Glob_BBOP(i)%F,Glob_BBOP(i)%G,Glob_BBOP(i)%Q,Glob_BBOP(i)%R, &
+                           Glob_BBOP(i)%H,QErrorCode)
+            if ((QErrorCode/=Q_METHOD_SUCCESS).and.(Glob_ProcID==0)) then
+              write(*,'(1x,a,1x,i0,1x,a,1x,i0)') &
+                'Error EC0012 in main: OPT_CYCLE Q failed at BBOP step',i, &
+                'with status',QErrorCode
+            endif
           endselect
         endif
       endif
@@ -151,12 +168,21 @@ program main
         select case (Glob_BBOP(i)%GSEPSolutionMethod)
         case('G')
           call FullOpt1G(Glob_BBOP(i)%B,Glob_BBOP(i)%C,Glob_BBOP(i)%D,Glob_BBOP(i)%Q, &
-                         Glob_BBOP(i)%R,real(Glob_BBOP(i)%E,wp),real(Glob_BBOP(i)%F,wp), &
+                         Glob_BBOP(i)%R,real(Glob_BBOP(i)%E,4),real(Glob_BBOP(i)%F,4), &
                          Glob_BBOP(i)%FileName1)
         case('I')
           call FullOpt1I(Glob_BBOP(i)%B,Glob_BBOP(i)%C,Glob_BBOP(i)%D,Glob_BBOP(i)%Q, &
-                         Glob_BBOP(i)%R,real(Glob_BBOP(i)%E,wp),real(Glob_BBOP(i)%F,wp), &
+                         Glob_BBOP(i)%R,real(Glob_BBOP(i)%E,4),real(Glob_BBOP(i)%F,4), &
                          Glob_BBOP(i)%FileName1)
+        case('Q')
+          call FullOpt1Q(Glob_BBOP(i)%B,Glob_BBOP(i)%C,Glob_BBOP(i)%D,Glob_BBOP(i)%Q, &
+                         Glob_BBOP(i)%R,real(Glob_BBOP(i)%E,4),real(Glob_BBOP(i)%F,4), &
+                         Glob_BBOP(i)%FileName1,QErrorCode)
+          if ((QErrorCode/=Q_METHOD_SUCCESS).and.(Glob_ProcID==0)) then
+            write(*,'(1x,a,1x,i0,1x,a,1x,i0)') &
+              'Error EC0014 in main: FULL_OPT1 Q failed at BBOP step',i, &
+              'with status',QErrorCode
+          endif
         endselect
       else
         if (Glob_ProcID==0) then
@@ -171,6 +197,9 @@ program main
         case('G')
           call EliminateLittleContribFunc(Glob_BBOP(i)%Q,Glob_BBOP(i)%FileName1, &
                                           Glob_ElimRoutPrintSpec)
+        case('Q')
+          call EliminateLittleContribFunc(Glob_BBOP(i)%Q,Glob_BBOP(i)%FileName1, &
+                                          Glob_ElimRoutPrintSpec,'Q')
         case('I')
           if (Glob_ProcID==0) write(*,*) 'Sorry, GSEP soluton method I does not work in ELIM_LCFN'
         endselect
@@ -186,6 +215,9 @@ program main
         select case (Glob_BBOP(i)%GSEPSolutionMethod)
         case('G')
           call EliminateLinDepFunc(Glob_BBOP(i)%Q,Glob_BBOP(i)%FileName1,Glob_ElimRoutPrintSpec)
+        case('Q')
+          call EliminateLinDepFunc(Glob_BBOP(i)%Q,Glob_BBOP(i)%FileName1, &
+                                   Glob_ElimRoutPrintSpec,'Q')
         case('I')
           if (Glob_ProcID==0) write(*,*) 'Sorry, GSEP soluton method I does not work in ELIM_LND1'
         endselect
@@ -202,6 +234,9 @@ program main
         case('G')
           call SeparateLinDepFunc(Glob_BBOP(i)%Q,Glob_BBOP(i)%R,Glob_BBOP(i)%FileName1, &
                                   Glob_ElimRoutPrintSpec)
+        case('Q')
+          call SeparateLinDepFunc(Glob_BBOP(i)%Q,Glob_BBOP(i)%R,Glob_BBOP(i)%FileName1, &
+                                  Glob_ElimRoutPrintSpec,'Q')
         case('I')
           if (Glob_ProcID==0) write(*,*) 'Sorry, GSEP soluton method I does not work in SEPR_LND1'
         endselect
@@ -218,8 +253,11 @@ program main
         case('G')
           call SeparateFuncLargeCoeff(Glob_BBOP(i)%Q,Glob_BBOP(i)%R,Glob_BBOP(i)%FileName1, &
                                       Glob_ElimRoutPrintSpec)
+        case('Q')
+          call SeparateFuncLargeCoeff(Glob_BBOP(i)%Q,Glob_BBOP(i)%R,Glob_BBOP(i)%FileName1, &
+                                      Glob_ElimRoutPrintSpec,'Q')
         case('I')
-          if (Glob_ProcID==0) write(*,*) 'Sorry, GSEP soluton method I does not work in SEPR_LND1'
+          if (Glob_ProcID==0) write(*,*) 'Sorry, GSEP soluton method I does not work in SEPR_FLCF'
         endselect
       else
         if (Glob_ProcID==0) then
@@ -230,14 +268,8 @@ program main
 
     case('EXPC_VALS')
       if (Glob_BBOP(i)%A==Glob_CurrBasisSize) then
-        select case (Glob_BBOP(i)%GSEPSolutionMethod)
-        case('G')
-          call ExpectationValuesG(1,Glob_FileNameNone,Glob_FileNameNone,Glob_FileNameNone, &
-                                  Glob_FileNameNone)
-        case('I')
-          if (Glob_ProcID==0) write(*,*) &
-            'Sorry, GSEP soluton method I has not been implemented in EXPC_VALS'
-        endselect
+        call ExpectationValues(Glob_BBOP(i)%Action,1,Glob_FileNameNone,Glob_FileNameNone, &
+                               Glob_FileNameNone,Glob_FileNameNone,Glob_BBOP(i)%GSEPSolutionMethod)
       else
         if (Glob_ProcID==0) then
           write(*,'(1x,a,1x,i0)') 'Error EC0008 in main: incorrect BBOP step',i
@@ -247,18 +279,23 @@ program main
 
     case('DENSITIES')
       if (Glob_BBOP(i)%A==Glob_CurrBasisSize) then
-        select case (Glob_BBOP(i)%GSEPSolutionMethod)
-        case('G')
-          call ExpectationValuesG(1,Glob_BBOP(i)%FileName1,Glob_BBOP(i)%FileName2, &
-                                  Glob_BBOP(i)%FileName3,Glob_BBOP(i)%FileName4)
-        case('I')
-          if (Glob_ProcID==0) write(*,*) &
-            'Sorry, GSEP soluton method I has not been implemented in DENSITIES'
-        endselect
+        call ExpectationValues(Glob_BBOP(i)%Action,1,Glob_BBOP(i)%FileName1,Glob_BBOP(i)%FileName2, &
+                               Glob_BBOP(i)%FileName3,Glob_BBOP(i)%FileName4,Glob_BBOP(i)%GSEPSolutionMethod)
       else
         if (Glob_ProcID==0) then
           write(*,'(1x,a,1x,i0)') 'Error EC0009 in main: incorrect BBOP step',i
-          write(*,*) 'Second parameters in DENSITIES is incorrect'
+          write(*,*) 'Second parameter in DENSITIES is incorrect'
+        endif
+      endif
+
+    case('MOMT_DENS')
+      if (Glob_BBOP(i)%A==Glob_CurrBasisSize) then
+        call ExpectationValues(Glob_BBOP(i)%Action,1,Glob_BBOP(i)%FileName1,Glob_BBOP(i)%FileName2, &
+                               Glob_BBOP(i)%FileName3,Glob_BBOP(i)%FileName4,Glob_BBOP(i)%GSEPSolutionMethod)
+      else
+        if (Glob_ProcID==0) then
+          write(*,'(1x,a,1x,i0)') 'Error EC0010 in main: incorrect BBOP step',i
+          write(*,*) 'Second parameter in MOMT_DENS is incorrect'
         endif
       endif
 
@@ -274,6 +311,18 @@ program main
         endif
       endif
 
+    case('SAVE_HSWF')
+      if (Glob_BBOP(i)%A==Glob_CurrBasisSize) then
+        call SaveHSWF(Glob_BBOP(i)%FileName1,Glob_BBOP(i)%FileName2, &
+                      Glob_BBOP(i)%FileName3,Glob_BBOP(i)%FileName4, &
+                      Glob_BBOP(i)%GSEPSolutionMethod)
+      else
+        if (Glob_ProcID==0) then
+          write(*,'(1x,a,1x,i0)') 'Error EC0011 in main: incorrect BBOP step',i
+          write(*,*) 'Second parameter in SAVE_HSEV is incorrect'
+        endif
+      endif
+
     endselect
   enddo
 
@@ -281,7 +330,7 @@ program main
     if (Glob_UseSwapFile) then
       !Empty swap file as it may contain the data saved after
       !the last basis building and optimization program step
-      open(1,file=Glob_SwapFileName,form='binary',status='replace',iostat=OpenFileErr)
+      open(1,file=Glob_SwapFileName,form='unformatted',status='replace',iostat=OpenFileErr)
       if (OpenFileErr==0) then
         write(1) 'Swap file is empty'
         close(1)
@@ -291,8 +340,9 @@ program main
     endif
     write(*,*) ' '
     write(*,*) 'Basis Building and Optimization Program is completed'
-    write(*,*) 'Program stopped'
+    write(*,*) 'Program has stopped'
   endif
+
 
   call MPI_FINALIZE(Glob_MPIErrCode)
 

@@ -157,7 +157,7 @@ contains
     real(wp) Skl5,Hkl5,Skl6,Hkl6,Skl7,Hkl7,Skl8,Hkl8
     real(wp) Vkl5,Tkl5,Vkl6,Tkl6,Vkl7,Tkl7,Vkl8,Tkl8
     real(wp) Ssum,Hsum
-    real(wp),allocatable :: Lh(:,:,:),Ah(:,:,:),MAh(:,:,:)
+    real(wp),allocatable :: Lh(:,:,:),Ah(:,:,:)
 !These arrays are not actually used but needed for proper calling
 !of subroutine MatrixElementsHS_RG_0S. Thus, one can set some small size
 !for them
@@ -174,9 +174,8 @@ contains
       return
     endif
 #endif
-    allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
-    call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
-                                  Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
+    allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax))
+    call PrecomputeMatrices_L_A(np,Nmax,Glob_NonlinParam(1:np,1:Nmax),Lh,Ah)
     Glob_HklBuff1(1:nb)=ZERO
     Glob_SklBuff1(1:nb)=ZERO
     i=0
@@ -207,7 +206,7 @@ contains
 !                Dk=6*Dk1-6*Dk5
 !                Dl=6*Dl1-6*Dl5
             call MatrixElementsHS_RG_2D(mk,mmk,ml,mml,Lh(1,1,k),Lh(1,1,l), &
-                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k), &
+                                  Ah(1,1,k),Ah(1,1,l), &
 #ifdef USE_CUDA
                                         Glob_YHYMatr(1,1,j), &
 #else
@@ -301,7 +300,7 @@ contains
     real(wp) Vkl1,Tkl1,Vkl2,Tkl2,Vkl3,Tkl3,Vkl4,Tkl4,Vkl,Tkl
     real(wp) Vkl5,Tkl5,Vkl6,Tkl6,Vkl7,Tkl7,Vkl8,Tkl8
     real(wp) Ssum,Hsum
-    real(wp),allocatable :: Lh(:,:,:),Ah(:,:,:),MAh(:,:,:)
+    real(wp),allocatable :: Lh(:,:,:),Ah(:,:,:)
     real(wp) Dk(Glob_n*(Glob_n+1))
     real(wp) Dl(Glob_n*(Glob_n+1))
     real(wp) Dksum(Glob_n*(Glob_n+1))
@@ -335,9 +334,8 @@ contains
     endif
 #endif
 
-    allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
-    call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
-                                  Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
+    allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax))
+    call PrecomputeMatrices_L_A(np,Nmax,Glob_NonlinParam(1:np,1:Nmax),Lh,Ah)
 
     Glob_HklBuff1(1:nb)=ZERO
     Glob_SklBuff1(1:nb)=ZERO
@@ -380,7 +378,7 @@ contains
 !                Dk=6*Dk1-6*Dk5
 !                Dl=6*Dl1-6*Dl5
             call MatrixElementsHS_RG_2D(mk,mmk,ml,mml,Lh(1,1,k),Lh(1,1,l), &
-                                  Ah(1,1,k),Ah(1,1,l),MAh(1,1,k), &
+                                  Ah(1,1,k),Ah(1,1,l), &
 #ifdef USE_CUDA
                                         Glob_YHYMatr(1,1,j), &
 #else

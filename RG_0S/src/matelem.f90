@@ -10,7 +10,7 @@ contains
 #ifdef USE_CUDA
   attributes(host,device) &
 #endif
-  subroutine MatrixElementsHS_RG_0S(Lk, Ll, Ak, Al, MAk, P, &
+  subroutine MatrixElementsHS_RG_0S(Lk, Ll, Ak, Al, P, &
                             Hkl, Skl, Dk, Dl, grad_k, grad_l)
 !This subroutine computes symmetry adapted matrix element with
 !two real L=0 correlated Gaussians:
@@ -24,11 +24,9 @@ contains
 !   Lk, Ll :: The lower-triangular Cholesky-style parameter matrices (the
 !             unpacked vechLk/vechLl). They depend only on one basis
 !             function, so the caller precomputes them once per function per
-!             sweep (PrecomputeMatrices_L_A_MA below) instead of this routine
-!             unpacking
-!             them for every (pair x term) call.
+!             sweep (PrecomputeMatrices_L_A below) instead of this routine
+!             unpacking them for every (pair x term) call.
 !   Ak, Al :: Ak=Lk*Lk', Al=Ll*Ll' -- precomputed for the same reason.
-!   MAk    :: Glob_MassMatrix*Ak -- precomputed for the kinetic-energy path.
 !   P   :: The symmetry permutation matrix of size n x n
 !   grad_k, grad_l :: Gradient flags
 !   grad_k=.true.  means that dHkldvechLk, dSkldvechLk need to be computed.
@@ -58,7 +56,6 @@ contains
     integer,parameter :: nn=Glob_n
     real(wp),intent(in)      :: Lk(nn,nn), Ll(nn,nn)
     real(wp),intent(in)      :: Ak(nn,nn), Al(nn,nn)
-    real(wp),intent(in)      :: MAk(nn,nn)
     real(wp),intent(in)      :: P(nn,nn)
     real(wp),intent(out)     :: Skl,Hkl
     real(wp),intent(out)     :: Dk(2*Glob_np),Dl(2*Glob_np)
@@ -459,23 +456,20 @@ contains
 
   end subroutine MatrixElementsHS_RG_0S
 
-  subroutine PrecomputeMatrices_L_A_MA(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
-!This subroutine precomputes the Lk, Ak, and MAk=M*Ak matrices for all basis functions, so that
+  subroutine PrecomputeMatrices_L_A(np, Nmax, NonlinParam, Lk, Ak)
+!This subroutine precomputes the Lk and Ak=Lk*Lk' matrices for all basis functions, so that
 !the matrix elements can be computed faster without having to recompute these matrices each time.
 !Input:
 !  np: number of nonlinear parameters per basis function
 !  Nmax: number of basis functions
 !  NonlinParam: nonlinear parameters for all basis functions (np x Nmax)
-!  MassMatrix: mass matrix (nn x nn)
 !Output:
 !  Lk: Lk matrices for all basis functions (nn x nn x Nmax)
 !  Ak: Ak matrices for all basis functions (nn x nn x Nmax)
-!  MAk: M*Ak matrices for all basis functions (nn x nn x Nmax)
     integer,parameter     :: nn=Glob_n
     integer, intent(in)   :: np, Nmax
-    real(wp),intent(in)   :: NonlinParam(np,Nmax), MassMatrix(nn,nn)
+    real(wp),intent(in)   :: NonlinParam(np,Nmax)
     real(wp),intent(out)  :: Lk(nn,nn,Nmax), Ak(nn,nn,Nmax)
-    real(wp),intent(out),optional :: MAk(nn,nn,Nmax)
     integer  :: f,i,j,k,indx
     real(wp) :: temp1
     do f=1,Nmax
@@ -497,22 +491,11 @@ contains
           Ak(j,i,f)=temp1
         enddo
       enddo
-      if (present(MAk)) then
-        do j=1,nn
-          do i=1,nn
-            temp1=ZERO
-            do k=1,nn
-              temp1=temp1+MassMatrix(i,k)*Ak(k,j,f)
-            enddo
-            MAk(i,j,f)=temp1
-          enddo
-        enddo
-      endif
     enddo
-  end subroutine PrecomputeMatrices_L_A_MA
+  end subroutine PrecomputeMatrices_L_A
 
   subroutine MatrixElementsAll_RG_0S(Lk, Ll, Ak, Al, Pbra, Pket, &
-                                       Hkl, Skl, Tkl, Trkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
+                                       Hkl, Skl, Tkl, Trelkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
                              MVkl, drach_MVkl1, drach_MVkl2, drach_MVkl3, Darwinkl, drach_Darwinkl, OOkl, rmrmkl, del2kl, prvalkl, &
                                        wf2originkl, NumCFGridPoints, CFGrid, CFkl, NumDensGridPoints, DensGrid, Denskl, &
                                        AreCorrFuncNeeded, ArePartDensNeeded, AreMCorrFuncNeeded, AreMomDensNeeded)
@@ -529,7 +512,7 @@ contains
 !   Hkl             ::        Hamiltonian
 !   Skl             ::        Overlap
 !   Tkl      :: Kinetic energy
-!   Trkl     :: Semi-relativistic kinetic energy
+!   Trelkl   :: Semi-relativistic kinetic energy
 !   Vkl      :: Potential energy
 !   rm2kl    :: 1/r_i^2, 1/r_{ij}^2
 !   rmkl     :: 1/r_i, 1/r_{ij}
@@ -567,7 +550,7 @@ contains
     integer,parameter :: nn=Glob_n
     real(wp),intent(in)   :: Lk(nn,nn),Ll(nn,nn),Ak(nn,nn),Al(nn,nn)
     real(wp),intent(in)   :: Pbra(Glob_n,Glob_n),Pket(Glob_n,Glob_n)
-    real(wp),intent(out)  :: Hkl,Skl,Tkl,Trkl,Vkl,MVkl,drach_MVkl1,drach_MVkl2,drach_MVkl3,Darwinkl,drach_Darwinkl,OOkl
+    real(wp),intent(out)  :: Hkl,Skl,Tkl,Trelkl,Vkl,MVkl,drach_MVkl1,drach_MVkl2,drach_MVkl3,Darwinkl,drach_Darwinkl,OOkl
     real(wp),intent(out)  :: rm2kl(Glob_n,Glob_n),rmkl(Glob_n,Glob_n)
     real(wp),intent(out)  :: rkl(Glob_n,Glob_n),r2kl(Glob_n,Glob_n)
     real(wp),intent(out)  :: deltarkl(Glob_n,Glob_n)
@@ -1478,11 +1461,11 @@ contains
       enddo
     endif
 
-    !Evaluate Trkl = Skl * sum_{i=1}^{n+1} m_i/alpha^2 * (F_1(tau)-1)
+    !Evaluate Trelkl = Skl * sum_{i=1}^{n+1} m_i/alpha^2 * (F_1(tau)-1)
     ! tau = (m_i/alpha)^2 / (4*eta_i),  eta_i = Eta(i,i)
     ! F_1(tau) = sqrt(tau/pi) * Ke_1(tau/2),  Ke_1 is the scaled modified Bessel function of the second kind
 
-    Trkl = ZERO
+    Trelkl = ZERO
     do i = 1, nn+1
       if (Eta(i,i) <= ZERO) then
         write(*,'(1x,a,1x,i0)') 'Non-positive semi-relativistic kinetic-energy width on MPI rank',Glob_ProcID
@@ -1494,10 +1477,10 @@ contains
       !Compute Ke_1(tau/2) and the cancellation-safe value F_1(tau)-1.
       call DBESK(ONEHALF*temp3,ONE,2,1,Bes,N_Bes,temp5)
 
-      !add the contribution to Trkl
-      Trkl = Trkl + temp2/Glob_FineStructConst*temp5
+      !add the contribution to Trelkl
+      Trelkl = Trelkl + temp2/Glob_FineStructConst*temp5
     enddo
-    Trkl = Skl * Trkl
+    Trelkl = Skl * Trelkl
 
   end subroutine MatrixElementsAll_RG_0S
 

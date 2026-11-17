@@ -16,16 +16,17 @@ Method `Q` is implemented in the four real-ECG energy codes:
 - `RG_2P`.
 
 It has also been ported to the two power-Gaussian energy codes, `PG_0S` and
-`PG_1P`, which reuse the same `qrlinalg.f90` and `qrupdate/` sources. This
-document describes the real-ECG implementations; where the power-Gaussian
-codes differ (their matrix-element interfaces and their additional BBOP
-commands), consult their local sources.
+`PG_1P`, and to the complex-Gaussian energy code `CG_0S`, which reuse the
+same `qrlinalg.f90` and `qrupdate/` sources. This document describes the
+real-ECG implementations; where the power-Gaussian codes differ (their
+matrix-element interfaces and their additional BBOP commands), consult their
+local sources. The Hermitian adaptation used in `CG_0S` is described in
+section 10.
 
 The implementations are intentionally local to each code because ECGPACK's
 energy variants have separate source trees and basis-specific matrix-element
 interfaces. `RG_0S` remains the reference implementation. The Q algorithms
-are not currently implemented in `CG_0S` or the off-diagonal matrix-element
-codes.
+are not implemented in the off-diagonal matrix-element codes.
 
 The following commands accept `Q` in the real-ECG energy codes:
 
@@ -477,6 +478,7 @@ interfaces and discrete metadata are not:
 | `RG_1P` | `Glob_ZIndex(i)` | `MatrixElementsHS_RG_1P` |
 | `RG_2D` | `Glob_Index(i,1:2)` | `MatrixElementsHS_RG_2D` |
 | `RG_2P` | `Glob_Index(i,1:2)` | `MatrixElementsHS_RG_2P` |
+| `CG_0S` | none | `MatrixElementsHS_CG_0S` |
 
 Consult the actual routine declaration before adapting a call. In particular,
 RG_2D and RG_2P use different argument ordering, and RG_2D returns additional
@@ -511,6 +513,39 @@ scheme 2: the two indices must be equal
 
 Do not replace RG_2D's newer `globvars.f90`, input/output support, candidate
 generation, or G/I index scans with files from an older branch while porting Q.
+
+### CG_0S: Hermitian matrices
+
+In `CG_0S` the basis functions are complex, so H and S are Hermitian rather
+than real symmetric and the linear coefficients are complex. The Q code has
+the same structure as in `RG_0S`; the differences are the following:
+
+- `QMethodWorkspace` holds a `qr_complex_state`, and its H/S columns, vectors,
+  and deltas are `complex(wp)`. Raw diagonal overlaps and nonlinear parameters
+  stay real.
+- The authoritative lower triangle stores `<phi_i|O|phi_j>` for `i>=j`, with
+  function `i` (the row index) being the bra, i.e. the complex-conjugated
+  function. The conceptual element `(i,j)` with `i<j` is the complex conjugate
+  of the stored element `(j,i)`. `QCanonicalMatrixElement`,
+  `GatherQCanonicalColumn`, and `StoreQCanonicalColumn` implement this rule,
+  and every staged column is a conceptual column: element `i` of the column
+  of function `k` is `<phi_i|O|phi_k>`. This is the convention qrlinalg uses
+  for `replace_symmetric` and `append_symmetric`.
+- `MatrixElementsHS_CG_0S` is called with the active function as the bra, so
+  `AssembleQTrial` stores the complex conjugate of the computed element in the
+  column of the active function, and the element itself in the column of the
+  other function when that one is active too. Diagonal elements are real;
+  their roundoff-sized imaginary parts are discarded.
+- In `Glob_D` the function whose parameters are differentiated is always the
+  bra (as in `StoreHSD`). The kernel returns the derivatives with respect to
+  the parameters of the ket for the other active function, so their complex
+  conjugates are stored. The diagonal derivative is twice the real part of
+  the bra derivative.
+- The energy gradient is `2*Re[conjg(c_k)*W] - |c_k|^2*(...)`, and the
+  overlap penalty depends on `|S_ij|^2`.
+- The physical residual uses `ZHEMV('L',...)`, and complex arrays are passed
+  to MPI as real arrays of twice the length.
+- The S-normalization is `c^H S c = 1`.
 
 ## 11. Memory and performance model
 
@@ -703,9 +738,11 @@ newer divergent branch:
 
 Do not copy an entire final `workproc.f90` over a sibling. Use a three-way
 merge or targeted patches so basis-specific physics, file formats, and newer
-local semantics remain intact. Treat `CG_0S` as a separate numerical design:
-Hermitian storage, conjugation, complex QR updates, and complex gradients need
-their own derivation and validation.
+local semantics remain intact. `CG_0S` needs additional care: Hermitian
+storage, conjugation, complex QR updates, and complex gradients follow the
+rules listed in section 10 and must be validated separately (finite-difference
+gradients, G/I/Q agreement on a fixed basis, and the real-Gaussian limit, in
+which `CG_0S` must reproduce `RG_0S`).
 
 ## 16. Production invariant checklist
 

@@ -76,10 +76,6 @@ module qrlinalg
       integer, intent(out) :: info
     end subroutine dgeqrf
 
-
-
-
-
     ! Generate explicit real Q from the reflectors returned by DGEQRF.
     subroutine dorgqr(m, n, k, a, lda, tau, work, lwork, info)
       import wp
@@ -89,10 +85,6 @@ module qrlinalg
       real(wp), intent(inout) :: work(*)
       integer, intent(out) :: info
     end subroutine dorgqr
-
-
-
-
 
     ! Compute a compact complex QR factorization in A and TAU.
     subroutine zgeqrf(m, n, a, lda, tau, work, lwork, info)
@@ -104,10 +96,6 @@ module qrlinalg
       integer, intent(out) :: info
     end subroutine zgeqrf
 
-
-
-
-
     ! Generate explicit complex Q from the reflectors returned by ZGEQRF.
     subroutine zungqr(m, n, k, a, lda, tau, work, lwork, info)
       import wp
@@ -117,10 +105,6 @@ module qrlinalg
       complex(wp), intent(inout) :: work(*)
       integer, intent(out) :: info
     end subroutine zungqr
-
-
-
-
 
     ! Multiply a real symmetric matrix by a vector using one stored triangle.
     subroutine dsymv(uplo, n, alpha, a, lda, x, incx, beta, y, incy)
@@ -132,10 +116,6 @@ module qrlinalg
       real(wp), intent(inout) :: y(*)
     end subroutine dsymv
 
-
-
-
-
     ! Multiply a complex Hermitian matrix by a vector using one triangle.
     subroutine zhemv(uplo, n, alpha, a, lda, x, incx, beta, y, incy)
       import wp
@@ -145,10 +125,6 @@ module qrlinalg
       complex(wp), intent(in) :: a(lda, *), x(*)
       complex(wp), intent(inout) :: y(*)
     end subroutine zhemv
-
-
-
-
 
     ! General real matrix-vector product, used for Q and R applications.
     subroutine dgemv(trans, m, n, alpha, a, lda, x, incx, beta, y, incy)
@@ -160,10 +136,6 @@ module qrlinalg
       real(wp), intent(inout) :: y(*)
     end subroutine dgemv
 
-
-
-
-
     ! General complex matrix-vector product, including conjugate transpose.
     subroutine zgemv(trans, m, n, alpha, a, lda, x, incx, beta, y, incy)
       import wp
@@ -174,10 +146,6 @@ module qrlinalg
       complex(wp), intent(inout) :: y(*)
     end subroutine zgemv
 
-
-
-
-
     ! Solve an upper-triangular real system in place.
     subroutine dtrsv(uplo, trans, diag, n, a, lda, x, incx)
       import wp
@@ -186,10 +154,6 @@ module qrlinalg
       real(wp), intent(in) :: a(lda, *)
       real(wp), intent(inout) :: x(*)
     end subroutine dtrsv
-
-
-
-
 
     ! Solve an upper-triangular complex system in place.
     subroutine ztrsv(uplo, trans, diag, n, a, lda, x, incx)
@@ -346,10 +310,6 @@ contains
     end select
   end function qr_status_message
 
-
-
-
-
   subroutine clear_real_state(self)
   !Subroutine clear_real_state releases every allocation owned by a real QR
   !state and restores the state to its default, uninitialized condition. It is
@@ -380,10 +340,6 @@ contains
     self%structural_updates = 0_int64
     self%updates_since_fresh = 0_int64
   end subroutine clear_real_state
-
-
-
-
 
   subroutine clear_complex_state(self)
   !Subroutine clear_complex_state releases every allocation owned by a complex
@@ -416,10 +372,6 @@ contains
     self%structural_updates = 0_int64
     self%updates_since_fresh = 0_int64
   end subroutine clear_complex_state
-
-
-
-
 
   subroutine real_initialize(self, capacity, info)
   !Subroutine real_initialize prepares a real QR state for symmetric matrices
@@ -523,10 +475,6 @@ contains
     info = QR_SUCCESS
   end subroutine real_initialize
 
-
-
-
-
   subroutine complex_initialize(self, capacity, info)
   !Subroutine complex_initialize prepares a complex QR state for Hermitian
   !matrices of order not greater than capacity. It follows the allocation and
@@ -617,10 +565,6 @@ contains
     self%capacity = capacity
     info = QR_SUCCESS
   end subroutine complex_initialize
-
-
-
-
 
   subroutine real_factorize_fresh(self, h, s, shift, info, active_order)
   !Subroutine real_factorize_fresh constructs a complete QR factorization of
@@ -773,10 +717,6 @@ contains
     self%updates_since_fresh = 0_int64
     info = QR_SUCCESS
   end subroutine real_factorize_fresh
-
-
-
-
 
   subroutine complex_factorize_fresh(self, h, s, shift, info, active_order)
   !Subroutine complex_factorize_fresh constructs a complete QR factorization
@@ -937,10 +877,6 @@ contains
     info = QR_SUCCESS
   end subroutine complex_factorize_fresh
 
-
-
-
-
   subroutine real_replace_symmetric(self, idx, delta_h, delta_s, info)
   !Subroutine real_replace_symmetric replaces one row and the corresponding
   !column of a real symmetric problem by updating the stored QR factors. If
@@ -1031,10 +967,6 @@ contains
     self%updates_since_fresh = self%updates_since_fresh + 1_int64
     info = QR_SUCCESS
   end subroutine real_replace_symmetric
-
-
-
-
 
   subroutine complex_replace_symmetric(self, idx, delta_h, delta_s, info)
   !Subroutine complex_replace_symmetric is the Hermitian counterpart of
@@ -1150,10 +1082,6 @@ contains
     info = QR_SUCCESS
   end subroutine complex_replace_symmetric
 
-
-
-
-
   subroutine real_append_symmetric(self, h_column, s_column, info)
   !Subroutine real_append_symmetric increases the active real symmetric
   !problem from order n to n+1 without recomputing a fresh factorization.
@@ -1247,10 +1175,6 @@ contains
     self%updates_since_fresh = self%updates_since_fresh + 1_int64
     info = QR_SUCCESS
   end subroutine real_append_symmetric
-
-
-
-
 
   subroutine complex_append_symmetric(self, h_column, s_column, info)
   !Subroutine complex_append_symmetric is the Hermitian counterpart of
@@ -1357,10 +1281,6 @@ contains
     info = QR_SUCCESS
   end subroutine complex_append_symmetric
 
-
-
-
-
   subroutine real_delete_symmetric(self, idx, info)
   !Subroutine real_delete_symmetric removes row idx and column idx from an
   !active real symmetric factorization. If P deletes component idx, the new
@@ -1435,10 +1355,6 @@ contains
     info = QR_SUCCESS
   end subroutine real_delete_symmetric
 
-
-
-
-
   subroutine complex_delete_symmetric(self, idx, info)
   !Subroutine complex_delete_symmetric is the Hermitian counterpart of
   !real_delete_symmetric. Deletion introduces no numerical values and therefore
@@ -1499,10 +1415,6 @@ contains
     self%updates_since_fresh = self%updates_since_fresh + 1_int64
     info = QR_SUCCESS
   end subroutine complex_delete_symmetric
-
-
-
-
 
   subroutine real_solve(self, s, v_initial, x, lambda, tol, max_iter, &
                         norm_mode, rel_acc, num_iter, info)
@@ -1777,10 +1689,6 @@ contains
     end select
   end subroutine real_solve
 
-
-
-
-
   subroutine complex_solve(self, s, v_initial, x, lambda, tol, max_iter, &
                            norm_mode, rel_acc, num_iter, info)
   !Subroutine complex_solve finds one eigenvalue and its eigenvector for the
@@ -2050,10 +1958,6 @@ contains
     end select
   end subroutine complex_solve
 
-
-
-
-
   subroutine real_factorization_residual(self, h, s, v, &
                                          absolute_residual, &
                                          relative_residual, info)
@@ -2169,10 +2073,6 @@ contains
     info = QR_SUCCESS
   end subroutine real_factorization_residual
 
-
-
-
-
   subroutine complex_factorization_residual(self, h, s, v, &
                                             absolute_residual, &
                                             relative_residual, info)
@@ -2277,10 +2177,6 @@ contains
     info = QR_SUCCESS
   end subroutine complex_factorization_residual
 
-
-
-
-
   pure function real_is_valid(self) result(factors_are_valid)
   !Function real_is_valid reports whether a real state contains a complete QR
   !factorization that may be used by solve and the structural-update methods.
@@ -2302,10 +2198,6 @@ contains
     factors_are_valid = self%valid
   end function real_is_valid
 
-
-
-
-
   pure function complex_is_valid(self) result(factors_are_valid)
   !Function complex_is_valid reports whether a complex state contains a
   !complete QR factorization that may be used by solve and the Hermitian
@@ -2323,10 +2215,6 @@ contains
 
     factors_are_valid = self%valid
   end function complex_is_valid
-
-
-
-
 
   pure function real_order(self) result(active_order)
   !Function real_order returns the active matrix order represented by a real
@@ -2347,10 +2235,6 @@ contains
     active_order = self%n
   end function real_order
 
-
-
-
-
   pure function complex_order(self) result(active_order)
   !Function complex_order returns the active matrix order represented by a
   !complex QR state. The result follows the same initialization,
@@ -2368,10 +2252,6 @@ contains
 
     active_order = self%n
   end function complex_order
-
-
-
-
 
   pure function real_get_capacity(self) result(allocated_capacity)
   !Function real_get_capacity returns the largest matrix order supported by
@@ -2392,10 +2272,6 @@ contains
     allocated_capacity = self%capacity
   end function real_get_capacity
 
-
-
-
-
   pure function complex_get_capacity(self) result(allocated_capacity)
   !Function complex_get_capacity returns the largest matrix order supported by
   !the storage currently owned by a complex QR state. Its meaning and lifecycle
@@ -2413,10 +2289,6 @@ contains
 
     allocated_capacity = self%capacity
   end function complex_get_capacity
-
-
-
-
 
   pure function real_get_shift(self) result(represented_shift)
   !Function real_get_shift returns the shift stored by a real QR state. When
@@ -2440,10 +2312,6 @@ contains
     represented_shift = self%shift
   end function real_get_shift
 
-
-
-
-
   pure function complex_get_shift(self) result(represented_shift)
   !Function complex_get_shift returns the real shift stored by a complex QR
   !state. When is_valid() is true, Q and R represent H-sigma*S at this shift,
@@ -2461,10 +2329,6 @@ contains
 
     represented_shift = self%shift
   end function complex_get_shift
-
-
-
-
 
   pure function real_get_update_count(self) result(update_count)
   !Function real_get_update_count returns the lifetime number of successful
@@ -2486,10 +2350,6 @@ contains
     update_count = self%structural_updates
   end function real_get_update_count
 
-
-
-
-
   pure function complex_get_update_count(self) result(update_count)
   !Function complex_get_update_count returns the lifetime number of successful
   !Hermitian replacement, append, and deletion operations recorded by a
@@ -2507,10 +2367,6 @@ contains
 
     update_count = self%structural_updates
   end function complex_get_update_count
-
-
-
-
 
   pure function real_get_updates_since_fresh(self) result(update_count)
   !Function real_get_updates_since_fresh returns the number of successful
@@ -2532,10 +2388,6 @@ contains
     update_count = self%updates_since_fresh
   end function real_get_updates_since_fresh
 
-
-
-
-
   pure function complex_get_updates_since_fresh(self) result(update_count)
   !Function complex_get_updates_since_fresh returns the number of successful
   !Hermitian structural operations applied after the most recent successful
@@ -2554,10 +2406,6 @@ contains
 
     update_count = self%updates_since_fresh
   end function complex_get_updates_since_fresh
-
-
-
-
 
   function real_norm_squared(n, x) result(norm_squared)
   !Function real_norm_squared computes the real Euclidean inner product
@@ -2585,10 +2433,6 @@ contains
     end do
   end function real_norm_squared
 
-
-
-
-
   function complex_norm_squared(n, x) result(norm_squared)
   !Function complex_norm_squared computes the Hermitian Euclidean inner
   !product
@@ -2615,10 +2459,6 @@ contains
       norm_squared = norm_squared + real(x(i), wp)**2 + aimag(x(i))**2
     end do
   end function complex_norm_squared
-
-
-
-
 
   function real_direction_difference(n, x, alpha, y, x_norm_squared) &
       result(relative_difference)
@@ -2655,10 +2495,6 @@ contains
     relative_difference = sqrt(difference_norm_squared / x_norm_squared)
   end function real_direction_difference
 
-
-
-
-
   function complex_direction_difference(n, x, alpha, y, x_norm_squared) &
       result(relative_difference)
   !Function complex_direction_difference computes the convergence measure
@@ -2694,10 +2530,6 @@ contains
     relative_difference = sqrt(difference_norm_squared / x_norm_squared)
   end function complex_direction_difference
 
-
-
-
-
   function complex_max_abs_real_or_imag(n, x) result(max_component)
   !Function complex_max_abs_real_or_imag returns
   !
@@ -2724,10 +2556,6 @@ contains
                           abs(aimag(x(i))))
     end do
   end function complex_max_abs_real_or_imag
-
-
-
-
 
   function real_upper_factor_is_singular(r, n) result(is_singular)
   !Function real_upper_factor_is_singular tests whether a real
@@ -2768,10 +2596,6 @@ contains
       end if
     end do
   end function real_upper_factor_is_singular
-
-
-
-
 
   function complex_upper_factor_is_singular(r, n) result(is_singular)
   !Function complex_upper_factor_is_singular tests whether a complex

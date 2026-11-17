@@ -28,6 +28,12 @@ module globvars
     Glob_FineStructConst=7.2973525643E-03_wp,         &  !CODATA 2022 value 0.0072973525643(11)
     Glob_EulerConst=0.57721566490153286060651209008240E0_wp
 
+!Complex constants
+  complex(wp),parameter :: &
+    COMPLEXZERO=(ZERO,ZERO),   &
+    COMPLEXONE=(ONE,ZERO),     &
+    IMAGINARYUNIT=(ZERO,ONE)
+
 !=============================================================
 !Global parameters
 !=============================================================
@@ -61,6 +67,7 @@ module globvars
   integer,parameter :: Glob_npt_MaxAllowed=2*Glob_np_MaxAllowed
 
   real(wp),parameter :: Glob_2Raised3n2=TWO**((3*Glob_n)/TWO)       !2^(3n/2)
+  real(wp),parameter :: Glob_PiRaised3n2=Glob_Pi**((3*Glob_n)/TWO) !pi^(3n/2)
 
 !Glob_CurrBasisSize is a variable whose value equals the current
 !size of the basis
@@ -101,7 +108,7 @@ module globvars
 
 !Glob_dmva2 is a constant depending on the masses of particles,
 !which is used in the evaluation of drachmanized mass-velocity correction
-  real(wp)   Glob_dmva2
+  real(wp)   Glob_dmva21, Glob_dmva22
 
 !Glob_dmvB, Glob_dmvM, and Glob_dmvMB are constant diagonal matrices used in
 !the evaluation of drachmanized mass-velocity correction. their elements depend
@@ -136,6 +143,7 @@ module globvars
   logical  ::  Glob_RepScalParamPlusSupplied=.false.
   logical  ::  Glob_RepScalParamMinusSupplied=.false.
   logical  ::  Glob_AttrScalParamSupplied=.false.
+  logical  ::  Glob_ArePseudoParticleMassesTheSame = .true.
 
 !Glob_YOperatorStringLength defines the length of string
 !Glob_YOperatorString
@@ -165,7 +173,10 @@ module globvars
   real(wp)   Glob_WorstEigvalTol
 
 !Array Glob_NonlinParam contains the nonlinear parameters of basis
-!functions (elements of the Cholesky matrix, L_k, and matrix B_k)
+!functions (elements of the Cholesky matrix, L_k, and matrix B_k).
+!For function k they are ordered as follows:
+! Glob_NonlinParam(1:Glob_np,k)            is vechL_k
+! Glob_NonlinParam(Glob_np+1:2*Glob_np,k)  is vechB_k
   real(wp),allocatable,dimension(:,:),save :: Glob_NonlinParam
 
 !Array Glob_FuncNum contains the basis function numbers
@@ -242,12 +253,14 @@ module globvars
 ! Glob_D(np+1:2*np,i,j)    is dHijdvechBi
 ! Glob_D(2*np+1:3*np,i,j)  is dSijdvechLi
 ! Glob_D(3*np+1:4*np,i,j)  is dSijdvechBi
+!In these derivatives function i is the bra (the complex conjugated
+!function), i.e. Hij=<phi_i|H|phi_j> and Sij=<phi_i|phi_j>.
 !If only partial optimization is carried out, that is if only
-!last several functions are optimized (= Glob_nfo) then index 2,
-!i, ranges from 1 to Glob_nfo although in fact it should have
+!last several functions are optimized (= Glob_nfo) then index 2 (i)
+!ranges from 1 to Glob_nfo although in fact it should have
 !been equal i+Glob_nfru.  This is done to avoid allocating
-!the space which is not used. So
-!Glob_D(1:np,i,j) is dH_{i+Glob_nfru,j}/dvechL_{i+Glob_nfru}
+!memory that will not be used. So
+!Glob_D(1:Glob_np,i,j) is dH_{i+Glob_nfru,j}/dvechL_{i+Glob_nfru}
 ! ....
 !Index j ranges from 1 to Glob_nfa
   complex(wp),allocatable,dimension(:,:,:),save  :: Glob_D
@@ -270,7 +283,7 @@ module globvars
 !Glob_HBuffer1,Glob_HBuffer2,Glob_SBuffer1, and Glob_SBuffer2
   integer  Glob_HSBuffLen
 
-!These 4 arrays are used as buffers to store and send/receive
+!These 2 arrays are used as buffers to store and send/receive
 !the Hamiltonian and the overlap matrix elements
   complex(wp),allocatable,dimension(:),save ::  &
     Glob_HklBuff1,Glob_HklBuff2,Glob_SklBuff1,Glob_SklBuff2
@@ -288,9 +301,9 @@ module globvars
   integer       Glob_nfo
 
 !This variable is introduced for the sake of convenience. It should
-!be set to be Glob_nfa-Glob_nfo every time any of the
-!latter two change their values. This is basically the number of
-!functions to remain unchanged
+!be set to be Glob_nfa-Glob_nfo every time when Glob_nfa or Glob_nfo
+!change their values. This is basically the number of functions to
+!remain unchanged
   integer       Glob_nfru
 
 !Glob_lbf is a variable whose value is equal to the number of the last

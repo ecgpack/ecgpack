@@ -3697,12 +3697,15 @@ CONTAINS
     !==================================================================
     ! Same penalty as ComputeOverlapPenalty, plus its contribution to the
     ! energy gradient: dP/da = 2*pen_coeff*Sij*dSij/da with Sij the
-    ! NORMALIZED overlap. Glob_D holds the derivative of the RAW overlap,
-    ! without the derivative of the normalization factor (which cancels in
-    ! dH - E*dS but not in a penalty on S alone), so that term is restored
-    ! here: the -ONEHALF*...*Glob_S contributions, with
-    ! temp2 = sqrt(Glob_diagS(i)/Glob_diagS(j)) multiplying the j-side and
-    ! dividing the i-side correction. The gradient is NOT reduced here; the
+    ! NORMALIZED overlap. Glob_D holds the derivative of the RAW overlap
+    ! scaled by the normalization factor, without the derivative of the
+    ! normalization factor itself (which cancels in dH - E*dS but not in a
+    ! penalty on S alone), so that term is restored here. For a parameter
+    ! of function j it is -ONEHALF*Sij*dSjj/da, where
+    ! dSjj/da = Glob_D(Glob_npt+m, j-Glob_nfru, j) is the derivative of the
+    ! diagonal overlap of function j already divided by that overlap (see
+    ! StoreHSD); for a parameter of function i it is the same expression
+    ! with i in place of j. The gradient is NOT reduced here; the
     ! caller reduces WkGR once, after this returns.
     ! Result: TotalPenalty (combined, same on all ranks); WkGR (added to in
     ! place, still partial per rank). With Glob_NpIndependent every rank
@@ -3732,7 +3735,6 @@ CONTAINS
     REAL(wp) :: pen_coeff  ! b/(1-t^2)
     REAL(wp) :: tp         ! this rank's partial sum
     REAL(wp) :: temp1      ! 2*pen_coeff*Sij
-    REAL(wp) :: temp2      ! sqrt(diagS(i)/diagS(j))
 
 
     !==================================================================
@@ -3773,11 +3775,10 @@ CONTAINS
           IF (Glob_S(j, i)*Glob_S(j, i) > OverlapThreshold2) THEN
             tp = tp+pen_coeff*(Glob_S(j, i)*Glob_S(j, i)-OverlapThreshold2)
             temp1 = 2*pen_coeff*Glob_S(j, i)
-            temp2 = SQRT(Glob_diagS(i)/Glob_diagS(j))
             DO m = 1, Glob_npt
               WkGR((j-Glob_nfru-1)*Glob_npt+m) = WkGR((j-Glob_nfru-1)*Glob_npt+m) &
                                                 +temp1*(Glob_D(Glob_npt+m, j-Glob_nfru, i) &
-                                                        -ONEHALF*Glob_D(Glob_npt+m, j-Glob_nfru, j)*Glob_S(j, i)*temp2)
+                                                        -ONEHALF*Glob_D(Glob_npt+m, j-Glob_nfru, j)*Glob_S(j, i))
             ENDDO
           ENDIF
         ENDDO
@@ -3790,16 +3791,15 @@ CONTAINS
           IF (Glob_S(j, i)*Glob_S(j, i) > OverlapThreshold2) THEN
             tp = tp+pen_coeff*(Glob_S(j, i)*Glob_S(j, i)-OverlapThreshold2)
             temp1 = 2*pen_coeff*Glob_S(j, i)
-            temp2 = SQRT(Glob_diagS(i)/Glob_diagS(j))
             DO m = 1, Glob_npt
               WkGR((i-Glob_nfru-1)*Glob_npt+m) = WkGR((i-Glob_nfru-1)*Glob_npt+m) &
                                                 +temp1*(Glob_D(Glob_npt+m, i-Glob_nfru, j) &
-                                                        -ONEHALF*Glob_D(Glob_npt+m, i-Glob_nfru, i)*Glob_S(j, i)/temp2)
+                                                        -ONEHALF*Glob_D(Glob_npt+m, i-Glob_nfru, i)*Glob_S(j, i))
             ENDDO
             DO m = 1, Glob_npt
               WkGR((j-Glob_nfru-1)*Glob_npt+m) = WkGR((j-Glob_nfru-1)*Glob_npt+m) &
                                                 +temp1*(Glob_D(Glob_npt+m, j-Glob_nfru, i) &
-                                                        -ONEHALF*Glob_D(Glob_npt+m, j-Glob_nfru, j)*Glob_S(j, i)*temp2)
+                                                        -ONEHALF*Glob_D(Glob_npt+m, j-Glob_nfru, j)*Glob_S(j, i))
             ENDDO
           ENDIF
         ENDDO
@@ -3819,11 +3819,10 @@ CONTAINS
           IF (Glob_S(j, i)*Glob_S(j, i) > OverlapThreshold2) THEN
             tp = tp+pen_coeff*(Glob_S(j, i)*Glob_S(j, i)-OverlapThreshold2)
             temp1 = 2*pen_coeff*Glob_S(j, i)
-            temp2 = SQRT(Glob_diagS(i)/Glob_diagS(j))
             DO m = 1, Glob_npt
               WkGR((j-Glob_nfru-1)*Glob_npt+m) = WkGR((j-Glob_nfru-1)*Glob_npt+m) &
                                                 +temp1*(Glob_D(Glob_npt+m, j-Glob_nfru, i) &
-                                                        -ONEHALF*Glob_D(Glob_npt+m, j-Glob_nfru, j)*Glob_S(j, i)*temp2)
+                                                        -ONEHALF*Glob_D(Glob_npt+m, j-Glob_nfru, j)*Glob_S(j, i))
             ENDDO
           ENDIF
         ENDDO
@@ -3848,16 +3847,15 @@ CONTAINS
           IF (Glob_S(j, i)*Glob_S(j, i) > OverlapThreshold2) THEN
             tp = tp+pen_coeff*(Glob_S(j, i)*Glob_S(j, i)-OverlapThreshold2)
             temp1 = 2*pen_coeff*Glob_S(j, i)
-            temp2 = SQRT(Glob_diagS(i)/Glob_diagS(j))
             DO m = 1, Glob_npt
               WkGR((i-Glob_nfru-1)*Glob_npt+m) = WkGR((i-Glob_nfru-1)*Glob_npt+m) &
                                                 +temp1*(Glob_D(Glob_npt+m, i-Glob_nfru, j) &
-                                                        -ONEHALF*Glob_D(Glob_npt+m, i-Glob_nfru, i)*Glob_S(j, i)/temp2)
+                                                        -ONEHALF*Glob_D(Glob_npt+m, i-Glob_nfru, i)*Glob_S(j, i))
             ENDDO
             DO m = 1, Glob_npt
               WkGR((j-Glob_nfru-1)*Glob_npt+m) = WkGR((j-Glob_nfru-1)*Glob_npt+m) &
                                                 +temp1*(Glob_D(Glob_npt+m, j-Glob_nfru, i) &
-                                                        -ONEHALF*Glob_D(Glob_npt+m, j-Glob_nfru, j)*Glob_S(j, i)*temp2)
+                                                        -ONEHALF*Glob_D(Glob_npt+m, j-Glob_nfru, j)*Glob_S(j, i))
             ENDDO
           ENDIF
         ENDDO
@@ -3879,16 +3877,15 @@ CONTAINS
             IF (Glob_S(j, i)*Glob_S(j, i) > OverlapThreshold2) THEN
               tp = tp+pen_coeff*(Glob_S(j, i)*Glob_S(j, i)-OverlapThreshold2)
               temp1 = 2*pen_coeff*Glob_S(j, i)
-              temp2 = SQRT(Glob_diagS(i)/Glob_diagS(j))
-              DO m = 1, Glob_npt
+                DO m = 1, Glob_npt
                 WkGR((i-Glob_nfru-1)*Glob_npt+m) = WkGR((i-Glob_nfru-1)*Glob_npt+m) &
                                                   +temp1*(Glob_D(Glob_npt+m, i-Glob_nfru, j) &
-                                                          -ONEHALF*Glob_D(Glob_npt+m, i-Glob_nfru, i)*Glob_S(j, i)/temp2)
+                                                          -ONEHALF*Glob_D(Glob_npt+m, i-Glob_nfru, i)*Glob_S(j, i))
               ENDDO
               DO m = 1, Glob_npt
                 WkGR((j-Glob_nfru-1)*Glob_npt+m) = WkGR((j-Glob_nfru-1)*Glob_npt+m) &
                                                   +temp1*(Glob_D(Glob_npt+m, j-Glob_nfru, i) &
-                                                          -ONEHALF*Glob_D(Glob_npt+m, j-Glob_nfru, j)*Glob_S(j, i)*temp2)
+                                                          -ONEHALF*Glob_D(Glob_npt+m, j-Glob_nfru, j)*Glob_S(j, i))
               ENDDO
             ENDIF
           ENDDO
@@ -4301,9 +4298,12 @@ CONTAINS
     IF (nfa == 1) THEN
 
       !==================================================================
-      ! Single basis function: energy is the Rayleigh quotient
+      ! Single basis function: the energy is the one diagonal element
       !==================================================================
-      Evalue = Glob_diagH(1)/Glob_diagS(1)
+      ! Glob_diagH(1) has already been divided by the diagonal overlap
+      ! (see StoreHSD), so it is the Rayleigh quotient itself.
+      !------------------------------------------------------------------
+      Evalue = Glob_diagH(1)
       Glob_c(1) = ONE
       ErrorCode = 0
 
@@ -4511,9 +4511,24 @@ CONTAINS
       !==================================================================
       ! Single basis function: the energy is the one diagonal element
       !==================================================================
-      EnergyIA = Glob_diagH(1)
+      ! Glob_H holds the SHIFTED matrix on this path (see StoreHS), so the
+      ! shift is added back. Glob_diagH is not allocated for 'I'.
+      !------------------------------------------------------------------
+      EnergyIA = Glob_H(1, 1)+Glob_ApproxEnergy
       NumOfIterations = 1
       ErrorCode = 0
+
+      ! The factorization of the shifted matrix is trivial for a single
+      ! function (L = 1, D = the only element). It is stored the way
+      ! GSEPIIS leaves it, because it is needed once the basis grows and the
+      ! factorization is updated rather than recomputed (see LDLTF in
+      ! linalg). A zero element means a singular shifted matrix, for which
+      ! GSEPIIS returns 1.
+      IF (Glob_H(1, 1) /= ZERO) THEN
+        Glob_invD(1) = ONE/Glob_H(1, 1)
+      ELSE
+        ErrorCode = 1
+      ENDIF
 
     ELSE
 
@@ -4609,8 +4624,9 @@ CONTAINS
     ! coefficients in Glob_c are usable for the rejection test. Differences
     ! from EnergyIA: GSEPIIS is called with SpecifNorm=0 (normalization);
     ! Glob_c is refreshed from Glob_LastEigvector after the solve; for
-    ! Nmax==1 the energy is Glob_H(1,1)+Glob_ApproxEnergy (Glob_H is
-    ! SHIFTED on this path) and the single coefficient is ONE. ErrorCode is
+    ! Nmax==1 the single coefficient is set to ONE (the energy is
+    ! Glob_H(1,1)+Glob_ApproxEnergy in both routines, because Glob_H is
+    ! SHIFTED on this path). ErrorCode is
     ! passed through from GSEPIIS; results are broadcast from rank 0.
     !==================================================================
 
@@ -4643,13 +4659,24 @@ CONTAINS
       ! Single basis function
       !==================================================================
       ! Glob_H holds the SHIFTED matrix here, so Glob_ApproxEnergy is
-      ! added back to recover the actual energy. Note this differs from
-      ! EnergyIA, which reads the unshifted Glob_diagH(1).
+      ! added back to recover the actual energy (as in EnergyIA).
       !------------------------------------------------------------------
       EnergyIAM = Glob_H(1, 1)+Glob_ApproxEnergy
       Glob_c(1) = ONE
       NumOfIterations = 1
       ErrorCode = 0
+
+      ! The factorization of the shifted matrix is trivial for a single
+      ! function (L = 1, D = the only element). It is stored the way
+      ! GSEPIIS leaves it, because it is needed once the basis grows and the
+      ! factorization is updated rather than recomputed (see LDLTF in
+      ! linalg). A zero element means a singular shifted matrix, for which
+      ! GSEPIIS returns 1.
+      IF (Glob_H(1, 1) /= ZERO) THEN
+        Glob_invD(1) = ONE/Glob_H(1, 1)
+      ELSE
+        ErrorCode = 1
+      ENDIF
 
     ELSE
 
@@ -4827,6 +4854,18 @@ CONTAINS
       Glob_c(1) = ONE
       NumOfIterations = 1
       ErrorCode = 0
+
+      ! The factorization of the shifted matrix is trivial for a single
+      ! function (L = 1, D = the only element). It is stored the way
+      ! GSEPIIS leaves it, because it is needed once the basis grows and the
+      ! factorization is updated rather than recomputed (see LDLTF in
+      ! linalg). A zero element means a singular shifted matrix, for which
+      ! GSEPIIS returns 1.
+      IF (Glob_H(1, 1) /= ZERO) THEN
+        Glob_invD(1) = ONE/Glob_H(1, 1)
+      ELSE
+        ErrorCode = 1
+      ENDIF
 
     ELSE
 
@@ -18025,9 +18064,12 @@ CONTAINS
         IF ((Glob_ProcID == 0) .AND. (Verbose >= 2)) WRITE(*, '(1x,a29)', ADVANCE='no') 'Solving eigenvalue problem...'
 
         ! A one-function basis has nothing to iterate on: the energy
-        ! is the single diagonal element.
+        ! is the single diagonal element. Glob_H holds the SHIFTED matrix
+        ! on this path (see StoreHS), so the shift is added back.
+        ! Glob_diagH is not allocated for 'I'.
         IF (cbs == 1) THEN
-          Glob_CurrEnergy = Glob_diagH(1)
+          Evalue = Glob_H(1, 1)+Glob_ApproxEnergy
+          Glob_c(1) = ONE
           NumOfIterations = 1
           ErrorCode = 0
         ELSE

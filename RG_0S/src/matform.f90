@@ -153,9 +153,9 @@ contains
     integer     kstart,lstart,kstop,lstop,n,np,np1,nb
     real(wp) Skl,Hkl
     real(wp) Ssum,Hsum
-!Hoisted per-function inputs of MatrixElementsHS_RG_0S (L, A=L*L', mass*A),
+!Hoisted per-function inputs of MatrixElementsHS_RG_0S (L, A=L*L'),
 !precomputed once per sweep instead of rebuilt in every (pair x term) call.
-    real(wp),allocatable :: Lh(:,:,:),Ah(:,:,:),MAh(:,:,:)
+    real(wp),allocatable :: Lh(:,:,:),Ah(:,:,:)
 !These arrays are not actually used but needed for proper calling
 !of subroutine MatrixElementsHS_RG_0S. Thus, one can set some small size
 !for them
@@ -172,9 +172,8 @@ contains
     endif
 #endif
 
-    allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
-    call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
-                                  Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
+    allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax))
+    call PrecomputeMatrices_L_A(np,Nmax,Glob_NonlinParam(1:np,1:Nmax),Lh,Ah)
 
     Glob_HklBuff1(1:nb)=ZERO
     Glob_SklBuff1(1:nb)=ZERO
@@ -192,7 +191,6 @@ contains
         do j=1,Glob_NumYHYTerms
           if (mod(q+j,Glob_NumOfProcs)==Glob_ProcID) then
             call MatrixElementsHS_RG_0S(Lh(1,1,k),Lh(1,1,l),Ah(1,1,k),Ah(1,1,l), &
-                                        MAh(1,1,k), &
 #ifdef USE_CUDA
                                         Glob_YHYMatr(1,1,j), &
 #else
@@ -283,7 +281,7 @@ contains
     real(wp) Skl,Hkl
     real(wp) Ssum,Hsum
 !Hoisted per-function inputs of MatrixElementsHS_RG_0S (see ComputeMatElem).
-    real(wp),allocatable :: Lh(:,:,:),Ah(:,:,:),MAh(:,:,:)
+    real(wp),allocatable :: Lh(:,:,:),Ah(:,:,:)
     real(wp) Dk(Glob_n*(Glob_n+1))
     real(wp) Dl(Glob_n*(Glob_n+1))
     real(wp) Dksum(Glob_n*(Glob_n+1))
@@ -301,9 +299,8 @@ contains
     endif
 #endif
 
-    allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax),MAh(nn,nn,Nmax))
-    call PrecomputeMatrices_L_A_MA(np,Nmax,Glob_NonlinParam(1:np,1:Nmax), &
-                                  Glob_MassMatrix(1:nn,1:nn),Lh,Ah,MAh)
+    allocate(Lh(nn,nn,Nmax),Ah(nn,nn,Nmax))
+    call PrecomputeMatrices_L_A(np,Nmax,Glob_NonlinParam(1:np,1:Nmax),Lh,Ah)
 
     Glob_HklBuff1(1:nb)=ZERO
     Glob_SklBuff1(1:nb)=ZERO
@@ -331,7 +328,6 @@ contains
         do j=1,Glob_NumYHYTerms
           if (mod(q+j,Glob_NumOfProcs)==Glob_ProcID) then
             call MatrixElementsHS_RG_0S(Lh(1,1,k),Lh(1,1,l),Ah(1,1,k),Ah(1,1,l), &
-                                        MAh(1,1,k), &
 #ifdef USE_CUDA
                                         Glob_YHYMatr(1,1,j), &
 #else

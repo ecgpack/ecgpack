@@ -25,15 +25,15 @@ The main code groups overlap:
 - Fine-structure coupling codes: `RG_0S-2D`, `RG_0S-2P`, `RG_1P-1P`, `RG_2D-2D`, `RG_2P-2D`, `RG_2P-2P`. These evaluate spin-orbit and non-contact spin-spin matrix elements.
 - Real ECG codes: all `RG_*` directories.
 - Power Gaussian codes: `PG_0S` ($L=0$, even parity) and `PG_1P` ($L=1$, odd parity). These use real ECGs premultiplied by an even power (up to 250) of $r_1$, the distance between particles 1 and 2. They are intended for systems where particles 1 and 2 are heavy and carry charges of the same sign, such as diatomic molecules.
-- Complex ECG codes: `CG_0S`. This code currently supports only the complex $L=0$ basis and is a work in progress that may lag behind the real-ECG codes.
+- Complex ECG codes: `CG_0S` (complex $L=0$ basis). It mirrors `RG_0S`, but has no CUDA backend and no semi-relativistic kinetic energy.
 
 `RG_0S` is the most complete reference implementation. Other codes intentionally share much of its source layout and Makefile structure.
 
-`CG_0S/list_of_things_to_do.txt` contains older development notes. Check them against the current sources before acting; some listed work, such as precomputing scaled charge products, is already implemented.
+`CG_0S/list_of_things_to_do.txt` contains older development notes. Check them against the current sources before acting; non-normalized Gaussians and precomputed scaled charge products are already implemented.
 
 Non-code directories:
 
-- `doc/`: project documentation (`compilation_and_execution.md`, `input_file_format.md`, `theoretical_background.md`, `use_of_visual_studio_code.md`); `doc/devnotes/` contains developer-facing design and maintenance guides (including `source_architecture.md` and `Q_method_design.md`), and `doc/img/` holds the project logos
+- `doc/`: project documentation (`compilation_and_execution.md`, `input_file_format.md`, `theoretical_background.md`, `use_of_visual_studio_code.md`); `doc/devnotes/` contains developer-facing design and maintenance guides (`Q_method_design.md` and the high-precision Bessel-function notes in `mod_Bessel_high_precision/`), and `doc/img/` holds the project logos
 - `utilities/`: helper scripts — input-file generation and merging (`input_file_manipulation/`), nuclear masses (`nuclear_masses/`), job monitoring (`job_monitoring/`), and a Young-tableaux spreadsheet (`permutational_symmetry/`)
 - `.agents/skills/`: skills shared by all AI coding agents, with identical copies for Claude Code in `.claude/skills/`; see Agent Skills below
 - `bin/`: generated/user-created binaries, not normally committed
@@ -147,20 +147,20 @@ The `run-sample-case` skill automates this for the energy codes (see Agent Skill
 
 ## Source Architecture
 
-The full description (the role of every source file, BBOP steps, compile-time dimensions, matrix-element interfaces, the CUDA layout, and solver storage rules) is in `doc/devnotes/source_architecture.md`. **Read it before editing `globvars.f90`, `matelem.f90`, `matform.f90`, `linalg.f90`, `qrlinalg.f90`, `workproc.f90`, `main.f90`, or `gpu_backend.f90`.** In brief:
+There is no separate architecture document: this section and the comments in the sources are the reference. **Read the header comments of the routines you touch before editing `globvars.f90`, `matelem.f90`, `matform.f90`, `linalg.f90`, `qrlinalg.f90`, `workproc.f90`, `main.f90`, or `gpu_backend.f90`.** In brief:
 
-- Module order in the four real-ECG energy codes and the two PG codes, which have the fullest source set: `wp_def_<PREC> -> globvars -> misc, linalg, spin -> matelem -> matform -> qrupdate -> qrlinalg -> workproc -> main`. CUDA builds add `gpu_backend` after `matelem`. `CG_0S` lacks `spin.f90`, `qrlinalg.f90`, and `qrupdate/` (no method `Q`, no `MOMT_DENS` or `SAVE_HSWF`). The off-diagonal codes carry only `wp_def_<PREC>`, `globvars`, `matelem`, `workproc`, `main`, and `spin` where spin coupling is needed.
+- Module order in the seven energy codes: `wp_def_<PREC> -> globvars -> misc, linalg, spin -> matelem -> matform -> qrupdate -> qrlinalg -> workproc -> main`. CUDA builds add `gpu_backend` after `matelem` (`CG_0S` has none). The off-diagonal codes carry only `wp_def_<PREC>`, `globvars`, `matelem`, `workproc`, `main`, and `spin` where spin coupling is needed.
 - `main.f90` executes a sequence of BBOP (Basis Building and Optimization Program) steps read from the input: `BASIS_ENL`, `OPT_CYCLE`, `FULL_OPT1`, `ELIM_LCFN`, `ELIM_LND1`, `SEPR_LND1`, `SEPR_FLCF`, `EXPC_VALS`, `DENSITIES`, `MOMT_DENS`, `SAVE_FILE`, `SAVE_HSWF`. The PG codes lack `MOMT_DENS` and add `SAVE_HS_R` and `OVERLAP_D`. Adding a calculation mode means adding a `case` in `main.f90` and a routine in `workproc.f90`, which holds the bulk of each program (I/O, basis enlargement, optimization, the eigensolvers `G`, `I`, and `Q`, expectation values, densities).
 
 Invariants that are easy to break:
 
 - `Glob_n`, `Glob_np`, `Glob_npt`, `Glob_2Raised3n2`, and `Glob_PiRaised3n2` are named constants fixed by the compiled-in particle count. Never assign or `MPI_BCAST` them, and pass full-size arrays to explicit-shape dummy arguments even on paths that never touch them (for example `Dk(2*Glob_np)` for `MatrixElementsHS_*`).
-- Hot paths read the precomputed `Glob_ScaledPseudoChargeMatrix` and the once-per-sweep outputs of `PrecomputeMatrices_L_A_MA`; do not recompute them per basis-function pair.
+- Hot paths read the precomputed `Glob_ScaledPseudoChargeMatrix` and the once-per-sweep outputs of `PrecomputeMatrices_L_A` (`PrecomputeMatrices_MA_L_A` in `PG_0S`, `PrecomputeMatrices_L_C` in `CG_0S`); do not recompute them per basis-function pair.
 - `linalg_setparam(n)` must remain a collective call on all MPI ranks and be repeated whenever the problem dimension changes.
-- Method `Q`: basis arrays stay in canonical order, and the lower triangles of `Glob_H` and `Glob_S` are authoritative. Read `doc/devnotes/Q_method_design.md` first. `qrlinalg.f90` is shared by the four real-ECG energy codes and the two PG codes, so a fix normally goes into all six.
+- Method `Q`: basis arrays stay in canonical order, and the lower triangles of `Glob_H` and `Glob_S` are authoritative. Read `doc/devnotes/Q_method_design.md` first. `qrlinalg.f90` is shared by all seven energy codes (`CG_0S` uses its complex state), so a fix normally goes into all of them.
 - `misc.f90` and the RNG-seeding `block` in `main.f90` are byte-identical in all seven energy codes; keep them that way. Use `urand` and `drnor` from `misc.f90`, never the intrinsic `random_number`/`random_seed`.
 - Each MPI rank seeds its generators differently, so a random choice that all ranks must agree on has to be made on rank 0 and broadcast, as `GenerateRndIntSeq` does.
-- CUDA builds share one arithmetic kernel between CPU and GPU (`MatrixElementsHS_<BASIS>`, or `MatrixElementsOpt` in `PG_0S`, marked `attributes(host,device)`). Do not duplicate the arithmetic, and keep the NVHPC loop workarounds described in the devnote.
+- CUDA builds share one arithmetic kernel between CPU and GPU (`MatrixElementsHS_<BASIS>`, or `MatrixElementsOpt` in `PG_0S`, marked `attributes(host,device)`). Do not duplicate the arithmetic, and keep the NVHPC workarounds noted in the comments of those kernels and of `gpu_backend.f90` (for example, no I/O in device code, and `cudaMemcpy` instead of array-section device assignments).
 
 ## Agent Skills
 
@@ -183,7 +183,6 @@ Available skills:
 - Input format: `doc/input_file_format.md`
 - Physics and notation: `doc/theoretical_background.md`
 - VS Code setup: `doc/use_of_visual_studio_code.md`
-- Source architecture, conventions, and invariants: `doc/devnotes/source_architecture.md`
 - Q-method architecture, canonical H/S layout, porting steps, and validation: `doc/devnotes/Q_method_design.md`
 
 For behavior questions, prefer these project docs over inference from code alone.

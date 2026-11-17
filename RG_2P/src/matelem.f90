@@ -10,7 +10,7 @@ contains
 #ifdef USE_CUDA
   attributes(host,device) &
 #endif
-  subroutine MatrixElementsHS_RG_2P(m_k, m_l, mm_k, mm_l, Lk, Ll, Ak, Al, MAk, P, &
+  subroutine MatrixElementsHS_RG_2P(m_k, m_l, mm_k, mm_l, Lk, Ll, Ak, Al, P, &
                               Hkl, Skl, Dk, Dl, grad_k, grad_l)
 !This subroutine computes symmetry adapted matrix element with
 !two real L=1 correlated Gaussians:
@@ -26,7 +26,6 @@ contains
 !                premultiplier of the Gaussian
 !   Lk, Ll :: Precomputed lower-triangular parameter matrices.
 !   Ak, Al :: Precomputed Ak=Lk*Lk' and Al=Ll*Ll'.
-!   MAk    :: Precomputed Glob_MassMatrix*Ak.
 !   P  :: The symmetry permutation matrix of size n x n
 !   grad_k, grad_l :: Gradient flags
 !   grad_k=.true.  means that dHkldvechLk, dSkldvechLk need to be computed.
@@ -45,7 +44,6 @@ contains
     integer,intent(in)          :: m_k,m_l,mm_k,mm_l
     real(wp),intent(in)      :: Lk(nn,nn), Ll(nn,nn)
     real(wp),intent(in)      :: Ak(nn,nn), Al(nn,nn)
-    real(wp),intent(in)      :: MAk(nn,nn)
     real(wp),intent(in)      :: P(nn,nn)
     real(wp),intent(out)     :: Skl,Hkl
     real(wp),intent(out)     :: Dk(2*Glob_np),Dl(2*Glob_np)
@@ -781,23 +779,20 @@ contains
 
   end subroutine MatrixElementsHS_RG_2P
 
-  subroutine PrecomputeMatrices_L_A_MA(np, Nmax, NonlinParam, MassMatrix, Lk, Ak, MAk)
-!This subroutine precomputes the Lk, Ak, and MAk=M*Ak matrices for all basis functions, so that
+  subroutine PrecomputeMatrices_L_A(np, Nmax, NonlinParam, Lk, Ak)
+!This subroutine precomputes the Lk and Ak=Lk*Lk' matrices for all basis functions, so that
 !the matrix elements can be computed faster without having to recompute these matrices each time.
 !Input:
 !  np: number of nonlinear parameters per basis function
 !  Nmax: number of basis functions
 !  NonlinParam: nonlinear parameters for all basis functions (np x Nmax)
-!  MassMatrix: mass matrix (nn x nn)
 !Output:
 !  Lk: Lk matrices for all basis functions (nn x nn x Nmax)
 !  Ak: Ak matrices for all basis functions (nn x nn x Nmax)
-!  MAk: M*Ak matrices for all basis functions (nn x nn x Nmax)
     integer,parameter     :: nn=Glob_n
     integer, intent(in)   :: np, Nmax
-    real(wp),intent(in)   :: NonlinParam(np,Nmax), MassMatrix(nn,nn)
+    real(wp),intent(in)   :: NonlinParam(np,Nmax)
     real(wp),intent(out)  :: Lk(nn,nn,Nmax), Ak(nn,nn,Nmax)
-    real(wp),intent(out),optional :: MAk(nn,nn,Nmax)
     integer  :: f,i,j,k,indx
     real(wp) :: temp1
     do f=1,Nmax
@@ -819,22 +814,11 @@ contains
           Ak(j,i,f)=temp1
         enddo
       enddo
-      if (present(MAk)) then
-        do j=1,nn
-          do i=1,nn
-            temp1=ZERO
-            do k=1,nn
-              temp1=temp1+MassMatrix(i,k)*Ak(k,j,f)
-            enddo
-            MAk(i,j,f)=temp1
-          enddo
-        enddo
-      endif
     enddo
-  end subroutine PrecomputeMatrices_L_A_MA
+  end subroutine PrecomputeMatrices_L_A
 
   subroutine MatrixElementsAll_RG_2P(m_k, m_l, mm_k, mm_l, Lk, Ll, Ak, Al, Pbra, Pket, &
-                                          Hkl, Skl, Tkl, Trkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
+                                          Hkl, Skl, Tkl, Trelkl, Vkl, rm2kl, rmkl, rkl, r2kl, deltarkl, drach_deltarkl, &
                                           MVkl, drach_MVkl1, drach_MVkl2, Darwinkl, drach_Darwinkl, OOkl, rmrmkl, prvalkl, &
                                           NumCFGridPoints, CFGrid, &
                                           CFkl, NumDensGridPoints, DensGrid, Denskl, &
@@ -846,7 +830,7 @@ contains
     integer,intent(in)       :: m_k,m_l,mm_k,mm_l
     real(wp),intent(in)   :: Lk(nn,nn),Ll(nn,nn),Ak(nn,nn),Al(nn,nn)
     real(wp),intent(in)   :: Pbra(Glob_n,Glob_n),Pket(Glob_n,Glob_n)
-    real(wp),intent(out)  :: Hkl,Skl,Tkl,Trkl,Vkl,MVkl,drach_MVkl1,drach_MVkl2,Darwinkl,drach_Darwinkl,OOkl
+    real(wp),intent(out)  :: Hkl,Skl,Tkl,Trelkl,Vkl,MVkl,drach_MVkl1,drach_MVkl2,Darwinkl,drach_Darwinkl,OOkl
     real(wp),intent(out)  :: rm2kl(Glob_n,Glob_n),rmkl(Glob_n,Glob_n)
     real(wp),intent(out)  :: rkl(Glob_n,Glob_n),r2kl(Glob_n,Glob_n)
     real(wp),intent(out)  :: deltarkl(Glob_n,Glob_n)
@@ -1872,14 +1856,14 @@ contains
     endif
 
 !Evaluation of the semi-relativistic kinetic energy matrix element
-!  Trkl = Ckl * sum_{i=1}^{n+1} m_i/alpha^2 * [2*D_i*q0(tau_i) - 2*K_i/(3*zeta_i)*q1(tau_i)],
+!  Trelkl = Ckl * sum_{i=1}^{n+1} m_i/alpha^2 * [2*D_i*q0(tau_i) - 2*K_i/(3*zeta_i)*q1(tau_i)],
 !where the sum runs over all physical particles, zeta_i=4*Zeta(i,i),
 !tau_i=(m_i/alpha)^2/zeta_i, and q0, q1 are evaluated by SemiRelKinHelpers.
 !D_i and K_i are the constant and quadratic coefficients of the momentum
 !density of particle i. With the halved lambdas used here (see the momentum
 !density section) and the normalization of Skl, this becomes
-!  Trkl = Ckl * sum_i m_i/alpha^2 * [temp44b*q0(tau_i) - temp55b/(3*Zeta(i,i))*q1(tau_i)]
-    Trkl=ZERO
+!  Trelkl = Ckl * sum_i m_i/alpha^2 * [temp44b*q0(tau_i) - temp55b/(3*Zeta(i,i))*q1(tau_i)]
+    Trelkl=ZERO
     do i=1,nn+1
       temp2=Zeta(i,i)
       if (temp2<=ZERO) then
@@ -1895,9 +1879,9 @@ contains
           -chi333*lambda_k2(i)*lambda_l1(i)-chi334*lambda_k1(i)*lambda_l2(i)
       temp3=Glob_Mass(i)/Glob_FineStructConst
       call SemiRelKinHelpers(temp3*temp3/(FOUR*temp2),temp4,temp5,temp6)
-      Trkl=Trkl+temp3/Glob_FineStructConst*(temp44b*temp4-ONETHIRD*temp55b*temp5/temp2)
+      Trelkl=Trelkl+temp3/Glob_FineStructConst*(temp44b*temp4-ONETHIRD*temp55b*temp5/temp2)
     enddo
-    Trkl=Ckl*Trkl
+    Trelkl=Ckl*Trelkl
 
   end subroutine MatrixElementsAll_RG_2P
 
