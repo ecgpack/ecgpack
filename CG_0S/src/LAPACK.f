@@ -26,7 +26,8 @@
 *---------------------------------------------------------------------
 *
 *  The real kind has been made selectable: DOUBLE PRECISION
-*  declarations were replaced by REAL(wp) and the corresponding
+*  declarations, including DGEQR2, DGEQRF, ZGEQR2, ZGEQRF, ZROT and
+*  ZLARTG, were replaced by REAL(wp) and the corresponding
 *  complex declarations by COMPLEX(wp), and the routines obtain the
 *  kind parameter wp from module wp_def, so that the codes can be
 *  built in double (fp64), extended (fp80) or quadruple (fp128)
@@ -175,6 +176,272 @@
 *  .. Executable Statements ..
       DISNAN = DLAISNAN(DIN,DIN)
       RETURN
+      END
+*####################################################################
+*> \brief \b ZLARTG
+*
+*  =========== DOCUMENTATION ===========
+*
+* Online html documentation available at
+*            http://www.netlib.org/lapack/explore-html/
+*
+*> \htmlonly
+*> Download ZLARTG + dependencies
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.tgz?format=tgz&filename=/lapack/lapack_routine/zlartg.f">
+*> [TGZ]</a>
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.zip?format=zip&filename=/lapack/lapack_routine/zlartg.f">
+*> [ZIP]</a>
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.txt?format=txt&filename=/lapack/lapack_routine/zlartg.f">
+*> [TXT]</a>
+*> \endhtmlonly
+*
+*  Definition:
+*  ===========
+*
+*       SUBROUTINE ZLARTG( F, G, CS, SN, R )
+*
+*       .. Scalar Arguments ..
+*       DOUBLE PRECISION   CS
+*       COMPLEX*16         F, G, R, SN
+*       ..
+*
+*
+*> \par Purpose:
+*  =============
+*>
+*> \verbatim
+*>
+*> ZLARTG generates a plane rotation so that
+*>
+*>    [  CS  SN  ]     [ F ]     [ R ]
+*>    [  __      ]  .  [   ]  =  [   ]   where CS**2 + |SN|**2 = 1.
+*>    [ -SN  CS  ]     [ G ]     [ 0 ]
+*>
+*> This is a faster version of the BLAS1 routine ZROTG, except for
+*> the following differences:
+*>    F and G are unchanged on return.
+*>    If G=0, then CS=1 and SN=0.
+*>    If F=0, then CS=0 and SN is chosen so that R is real.
+*> \endverbatim
+*
+*  Arguments:
+*  ==========
+*
+*> \param[in] F
+*> \verbatim
+*>          F is COMPLEX*16
+*>          The first component of vector to be rotated.
+*> \endverbatim
+*>
+*> \param[in] G
+*> \verbatim
+*>          G is COMPLEX*16
+*>          The second component of vector to be rotated.
+*> \endverbatim
+*>
+*> \param[out] CS
+*> \verbatim
+*>          CS is DOUBLE PRECISION
+*>          The cosine of the rotation.
+*> \endverbatim
+*>
+*> \param[out] SN
+*> \verbatim
+*>          SN is COMPLEX*16
+*>          The sine of the rotation.
+*> \endverbatim
+*>
+*> \param[out] R
+*> \verbatim
+*>          R is COMPLEX*16
+*>          The nonzero component of the rotated vector.
+*> \endverbatim
+*
+*  Authors:
+*  ========
+*
+*> \author Univ. of Tennessee
+*> \author Univ. of California Berkeley
+*> \author Univ. of Colorado Denver
+*> \author NAG Ltd.
+*
+*> \date November 2011
+*
+*> \ingroup complex16OTHERauxiliary
+*
+*> \par Further Details:
+*  =====================
+*>
+*> \verbatim
+*>
+*>  3-5-96 - Modified with a new algorithm by W. Kahan and J. Demmel
+*>
+*>  This version has a few statements commented out for thread safety
+*>  (machine parameters are computed on each entry). 10 feb 03, SJH.
+*> \endverbatim
+*>
+*  =====================================================================
+*
+      SUBROUTINE ZLARTG( F, G, CS, SN, R )
+      USE wp_def
+*
+*  -- LAPACK auxiliary routine (version 3.4.0) --
+*  -- LAPACK is a software package provided by Univ. of Tennessee,    --
+*  -- Univ. of California Berkeley, Univ. of Colorado Denver and NAG Ltd..--
+*     November 2011
+*
+*     .. Scalar Arguments ..
+      REAL(wp)          CS
+      COMPLEX(wp)       F, G, R, SN
+*     ..
+*
+*  =====================================================================
+*
+*     .. Parameters ..
+      REAL(wp)          TWO, ONE, ZERO
+      PARAMETER          ( TWO = 2.0_wp, ONE = 1.0_wp,
+     $                     ZERO = 0.0_wp )
+      COMPLEX(wp)       CZERO
+      PARAMETER          ( CZERO =
+     $                     CMPLX( 0.0_wp, 0.0_wp, KIND=wp ) )
+*     ..
+*     .. Local Scalars ..
+*     LOGICAL            FIRST
+      INTEGER            COUNT, I
+      REAL(wp)          D, DI, DR, EPS, F2, F2S, G2, G2S, SAFMIN,
+     $                   SAFMN2, SAFMX2, SCALE
+      COMPLEX(wp)       FF, FS, GS
+*     ..
+*     .. External Functions ..
+      REAL(wp)          DLAMCH, DLAPY2
+      EXTERNAL           DLAMCH, DLAPY2
+*     ..
+*     .. Intrinsic Functions ..
+      INTRINSIC          ABS, AIMAG, CONJG, INT, LOG, MAX, REAL, SQRT
+*     ..
+*     .. Statement Functions ..
+      REAL(wp)          ABS1, ABSSQ
+*     ..
+*     .. Save statement ..
+*     SAVE               FIRST, SAFMX2, SAFMIN, SAFMN2
+*     ..
+*     .. Data statements ..
+*     DATA               FIRST / .TRUE. /
+*     ..
+*     .. Statement Function definitions ..
+      ABS1( FF ) = MAX( ABS( REAL( FF, wp ) ), ABS( AIMAG( FF ) ) )
+      ABSSQ( FF ) = REAL( FF, wp )**2 + AIMAG( FF )**2
+*     ..
+*     .. Executable Statements ..
+*
+*     IF( FIRST ) THEN
+      SAFMIN = DLAMCH( 'S' )
+      EPS = DLAMCH( 'E' )
+      SAFMN2 = DLAMCH( 'B' )**INT( LOG( SAFMIN / EPS ) /
+     $         LOG( DLAMCH( 'B' ) ) / TWO )
+      SAFMX2 = ONE / SAFMN2
+*        FIRST = .FALSE.
+*     END IF
+      SCALE = MAX( ABS1( F ), ABS1( G ) )
+      FS = F
+      GS = G
+      COUNT = 0
+      IF( SCALE.GE.SAFMX2 ) THEN
+   10    CONTINUE
+         COUNT = COUNT + 1
+         FS = FS*SAFMN2
+         GS = GS*SAFMN2
+         SCALE = SCALE*SAFMN2
+         IF( SCALE.GE.SAFMX2 )
+     $      GO TO 10
+      ELSE IF( SCALE.LE.SAFMN2 ) THEN
+         IF( G.EQ.CZERO ) THEN
+            CS = ONE
+            SN = CZERO
+            R = F
+            RETURN
+         END IF
+   20    CONTINUE
+         COUNT = COUNT - 1
+         FS = FS*SAFMX2
+         GS = GS*SAFMX2
+         SCALE = SCALE*SAFMX2
+         IF( SCALE.LE.SAFMN2 )
+     $      GO TO 20
+      END IF
+      F2 = ABSSQ( FS )
+      G2 = ABSSQ( GS )
+      IF( F2.LE.MAX( G2, ONE )*SAFMIN ) THEN
+*
+*        This is a rare case: F is very small.
+*
+         IF( F.EQ.CZERO ) THEN
+            CS = ZERO
+            R = DLAPY2( REAL( G, wp ), AIMAG( G ) )
+*           Do complex/real division explicitly with two real divisions
+            D = DLAPY2( REAL( GS, wp ), AIMAG( GS ) )
+            SN = CMPLX( REAL( GS, wp ) / D, -AIMAG( GS ) / D,
+     $                  KIND=wp )
+            RETURN
+         END IF
+         F2S = DLAPY2( REAL( FS, wp ), AIMAG( FS ) )
+*        G2 and G2S are accurate
+*        G2 is at least SAFMIN, and G2S is at least SAFMN2
+         G2S = SQRT( G2 )
+*        Error in CS from underflow in F2S is at most
+*        UNFL / SAFMN2 .lt. sqrt(UNFL*EPS) .lt. EPS
+*        If MAX(G2,ONE)=G2, then F2 .lt. G2*SAFMIN,
+*        and so CS .lt. sqrt(SAFMIN)
+*        If MAX(G2,ONE)=ONE, then F2 .lt. SAFMIN
+*        and so CS .lt. sqrt(SAFMIN)/SAFMN2 = sqrt(EPS)
+*        Therefore, CS = F2S/G2S / sqrt( 1 + (F2S/G2S)**2 )
+*       = F2S/G2S
+         CS = F2S / G2S
+*        Make sure abs(FF) = 1
+*        Do complex/real division explicitly with 2 real divisions
+         IF( ABS1( F ).GT.ONE ) THEN
+            D = DLAPY2( REAL( F, wp ), AIMAG( F ) )
+            FF = CMPLX( REAL( F, wp ) / D, AIMAG( F ) / D,
+     $                  KIND=wp )
+         ELSE
+            DR = SAFMX2*REAL( F, wp )
+            DI = SAFMX2*AIMAG( F )
+            D = DLAPY2( DR, DI )
+            FF = CMPLX( DR / D, DI / D, KIND=wp )
+         END IF
+         SN = FF*CMPLX( REAL( GS, wp ) / G2S, -AIMAG( GS ) / G2S,
+     $                  KIND=wp )
+         R = CS*F + SN*G
+      ELSE
+*
+*        This is the most common case.
+*        Neither F2 nor F2/G2 are less than SAFMIN
+*        F2S cannot overflow, and it is accurate
+*
+         F2S = SQRT( ONE+G2 / F2 )
+*        Do the F2S(real)*FS(complex) multiply with two real multiplies
+         R = CMPLX( F2S*REAL( FS, wp ), F2S*AIMAG( FS ), KIND=wp )
+         CS = ONE / F2S
+         D = F2 + G2
+*        Do complex/real division explicitly with two real divisions
+         SN = CMPLX( REAL( R, wp ) / D, AIMAG( R ) / D, KIND=wp )
+         SN = SN*CONJG( GS )
+         IF( COUNT.NE.0 ) THEN
+            IF( COUNT.GT.0 ) THEN
+               DO 30 I = 1, COUNT
+                  R = R*SAFMX2
+   30          CONTINUE
+            ELSE
+               DO 40 I = 1, -COUNT
+                  R = R*SAFMN2
+   40          CONTINUE
+            END IF
+         END IF
+      END IF
+      RETURN
+*
+*     End of ZLARTG
+*
       END
 *####################################################################
 *> \brief \b DLACPY
@@ -15449,6 +15716,169 @@
       RETURN
       END
 *####################################################################
+*> \brief \b ZROT
+*
+*  =========== DOCUMENTATION ===========
+*
+* Online html documentation available at 
+*            http://www.netlib.org/lapack/explore-html/ 
+*
+*> \htmlonly
+*> Download ZROT + dependencies
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.tgz?format=tgz&filename=/lapack/lapack_routine/zrot.f">
+*> [TGZ]</a>
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.zip?format=zip&filename=/lapack/lapack_routine/zrot.f">
+*> [ZIP]</a>
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.txt?format=txt&filename=/lapack/lapack_routine/zrot.f">
+*> [TXT]</a>
+*> \endhtmlonly
+*
+*  Definition:
+*  ===========
+*
+*       SUBROUTINE ZROT( N, CX, INCX, CY, INCY, C, S )
+*
+*       .. Scalar Arguments ..
+*       INTEGER            INCX, INCY, N
+*       DOUBLE PRECISION   C
+*       COMPLEX*16         S
+*       ..
+*       .. Array Arguments ..
+*       COMPLEX*16         CX( * ), CY( * )
+*       ..
+*
+*
+*> \par Purpose:
+*  =============
+*>
+*> \verbatim
+*>
+*> ZROT   applies a plane rotation, where the cos (C) is real and the
+*> sin (S) is complex, and the vectors CX and CY are complex.
+*> \endverbatim
+*
+*  Arguments:
+*  ==========
+*
+*> \param[in] N
+*> \verbatim
+*>          N is INTEGER
+*>          The number of elements in the vectors CX and CY.
+*> \endverbatim
+*>
+*> \param[in,out] CX
+*> \verbatim
+*>          CX is COMPLEX*16 array, dimension (N)
+*>          On input, the vector X.
+*>          On output, CX is overwritten with C*X + S*Y.
+*> \endverbatim
+*>
+*> \param[in] INCX
+*> \verbatim
+*>          INCX is INTEGER
+*>          The increment between successive values of CY.  INCX <> 0.
+*> \endverbatim
+*>
+*> \param[in,out] CY
+*> \verbatim
+*>          CY is COMPLEX*16 array, dimension (N)
+*>          On input, the vector Y.
+*>          On output, CY is overwritten with -CONJG(S)*X + C*Y.
+*> \endverbatim
+*>
+*> \param[in] INCY
+*> \verbatim
+*>          INCY is INTEGER
+*>          The increment between successive values of CY.  INCX <> 0.
+*> \endverbatim
+*>
+*> \param[in] C
+*> \verbatim
+*>          C is DOUBLE PRECISION
+*> \endverbatim
+*>
+*> \param[in] S
+*> \verbatim
+*>          S is COMPLEX*16
+*>          C and S define a rotation
+*>             [  C          S  ]
+*>             [ -conjg(S)   C  ]
+*>          where C*C + S*CONJG(S) = 1.0.
+*> \endverbatim
+*
+*  Authors:
+*  ========
+*
+*> \author Univ. of Tennessee 
+*> \author Univ. of California Berkeley 
+*> \author Univ. of Colorado Denver 
+*> \author NAG Ltd. 
+*
+*> \date November 2011
+*
+*> \ingroup complex16OTHERauxiliary
+*
+*  =====================================================================
+      SUBROUTINE ZROT( N, CX, INCX, CY, INCY, C, S )
+      USE wp_def
+*
+*  -- LAPACK auxiliary routine (version 3.4.0) --
+*  -- LAPACK is a software package provided by Univ. of Tennessee,    --
+*  -- Univ. of California Berkeley, Univ. of Colorado Denver and NAG Ltd..--
+*     November 2011
+*
+*     .. Scalar Arguments ..
+      INTEGER            INCX, INCY, N
+      REAL(wp)          C
+      COMPLEX(wp)       S
+*     ..
+*     .. Array Arguments ..
+      COMPLEX(wp)       CX( * ), CY( * )
+*     ..
+*
+* =====================================================================
+*
+*     .. Local Scalars ..
+      INTEGER            I, IX, IY
+      COMPLEX(wp)       STEMP
+*     ..
+*     .. Intrinsic Functions ..
+      INTRINSIC          CONJG
+*     ..
+*     .. Executable Statements ..
+*
+      IF( N.LE.0 )
+     $   RETURN
+      IF( INCX.EQ.1 .AND. INCY.EQ.1 )
+     $   GO TO 20
+*
+*     Code for unequal increments or equal increments not equal to 1
+*
+      IX = 1
+      IY = 1
+      IF( INCX.LT.0 )
+     $   IX = ( -N+1 )*INCX + 1
+      IF( INCY.LT.0 )
+     $   IY = ( -N+1 )*INCY + 1
+      DO 10 I = 1, N
+         STEMP = C*CX( IX ) + S*CY( IY )
+         CY( IY ) = C*CY( IY ) - CONJG( S )*CX( IX )
+         CX( IX ) = STEMP
+         IX = IX + INCX
+         IY = IY + INCY
+   10 CONTINUE
+      RETURN
+*
+*     Code for both increments equal to 1
+*
+   20 CONTINUE
+      DO 30 I = 1, N
+         STEMP = C*CX( I ) + S*CY( I )
+         CY( I ) = C*CY( I ) - CONJG( S )*CX( I )
+         CX( I ) = STEMP
+   30 CONTINUE
+      RETURN
+      END
 *> \brief \b ILADLR
 *
 *  =========== DOCUMENTATION ===========
@@ -26855,6 +27285,939 @@
       RETURN
 *
 *     End of ZUNMTR
+*
+      END
+*####################################################################
+*####################################################################
+*> \brief \b DGEQR2
+*
+*  =========== DOCUMENTATION ===========
+*
+* Online html documentation available at
+*            http://www.netlib.org/lapack/explore-html/
+*
+*> \htmlonly
+*> Download DGEQR2 + dependencies
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.tgz?format=tgz&filename=/lapack/lapack_routine/dgeqr2.f">
+*> [TGZ]</a>
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.zip?format=zip&filename=/lapack/lapack_routine/dgeqr2.f">
+*> [ZIP]</a>
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.txt?format=txt&filename=/lapack/lapack_routine/dgeqr2.f">
+*> [TXT]</a>
+*> \endhtmlonly
+*
+*  Definition:
+*  ===========
+*
+*       SUBROUTINE DGEQR2( M, N, A, LDA, TAU, WORK, INFO )
+*
+*       .. Scalar Arguments ..
+*       INTEGER            INFO, LDA, M, N
+*       ..
+*       .. Array Arguments ..
+*       DOUBLE PRECISION   A( LDA, * ), TAU( * ), WORK( * )
+*       ..
+*
+*
+*> \par Purpose:
+*  =============
+*>
+*> \verbatim
+*>
+*> DGEQR2 computes a QR factorization of a real m by n matrix A:
+*> A = Q * R.
+*> \endverbatim
+*
+*  Arguments:
+*  ==========
+*
+*> \param[in] M
+*> \verbatim
+*>          M is INTEGER
+*>          The number of rows of the matrix A.  M >= 0.
+*> \endverbatim
+*>
+*> \param[in] N
+*> \verbatim
+*>          N is INTEGER
+*>          The number of columns of the matrix A.  N >= 0.
+*> \endverbatim
+*>
+*> \param[in,out] A
+*> \verbatim
+*>          A is DOUBLE PRECISION array, dimension (LDA,N)
+*>          On entry, the m by n matrix A.
+*>          On exit, the elements on and above the diagonal of the array
+*>          contain the min(m,n) by n upper trapezoidal matrix R (R is
+*>          upper triangular if m >= n); the elements below the diagonal,
+*>          with the array TAU, represent the orthogonal matrix Q as a
+*>          product of elementary reflectors (see Further Details).
+*> \endverbatim
+*>
+*> \param[in] LDA
+*> \verbatim
+*>          LDA is INTEGER
+*>          The leading dimension of the array A.  LDA >= max(1,M).
+*> \endverbatim
+*>
+*> \param[out] TAU
+*> \verbatim
+*>          TAU is DOUBLE PRECISION array, dimension (min(M,N))
+*>          The scalar factors of the elementary reflectors (see Further
+*>          Details).
+*> \endverbatim
+*>
+*> \param[out] WORK
+*> \verbatim
+*>          WORK is DOUBLE PRECISION array, dimension (N)
+*> \endverbatim
+*>
+*> \param[out] INFO
+*> \verbatim
+*>          INFO is INTEGER
+*>          = 0: successful exit
+*>          < 0: if INFO = -i, the i-th argument had an illegal value
+*> \endverbatim
+*
+*  Authors:
+*  ========
+*
+*> \author Univ. of Tennessee
+*> \author Univ. of California Berkeley
+*> \author Univ. of Colorado Denver
+*> \author NAG Ltd.
+*
+*> \date November 2011
+*
+*> \ingroup doubleGEcomputational
+*
+*> \par Further Details:
+*  =====================
+*>
+*> \verbatim
+*>
+*>  The matrix Q is represented as a product of elementary reflectors
+*>
+*>     Q = H(1) H(2) . . . H(k), where k = min(m,n).
+*>
+*>  Each H(i) has the form
+*>
+*>     H(i) = I - tau * v * v**T
+*>
+*>  where tau is a real scalar, and v is a real vector with
+*>  v(1:i-1) = 0 and v(i) = 1; v(i+1:m) is stored on exit in A(i+1:m,i),
+*>  and tau in TAU(i).
+*> \endverbatim
+*>
+*  =====================================================================
+      SUBROUTINE DGEQR2( M, N, A, LDA, TAU, WORK, INFO )
+      USE wp_def, ONLY: wp
+*
+*  -- LAPACK computational routine (version 3.4.0) --
+*  -- LAPACK is a software package provided by Univ. of Tennessee,    --
+*  -- Univ. of California Berkeley, Univ. of Colorado Denver and NAG Ltd..--
+*     November 2011
+*
+*     .. Scalar Arguments ..
+      INTEGER            INFO, LDA, M, N
+*     ..
+*     .. Array Arguments ..
+      REAL(wp)   A( LDA, * ), TAU( * ), WORK( * )
+*     ..
+*
+*  =====================================================================
+*
+*     .. Parameters ..
+      REAL(wp)   ONE
+      PARAMETER          ( ONE = 1.0_wp )
+*     ..
+*     .. Local Scalars ..
+      INTEGER            I, K
+      REAL(wp)   AII
+*     ..
+*     .. External Subroutines ..
+      EXTERNAL           DLARF, DLARFG, XERBLA
+*     ..
+*     .. Intrinsic Functions ..
+      INTRINSIC          MAX, MIN
+*     ..
+*     .. Executable Statements ..
+*
+*     Test the input arguments
+*
+      INFO = 0
+      IF( M.LT.0 ) THEN
+         INFO = -1
+      ELSE IF( N.LT.0 ) THEN
+         INFO = -2
+      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+         INFO = -4
+      END IF
+      IF( INFO.NE.0 ) THEN
+         CALL XERBLA( 'DGEQR2', -INFO )
+         RETURN
+      END IF
+*
+      K = MIN( M, N )
+*
+      DO 10 I = 1, K
+*
+*        Generate elementary reflector H(i) to annihilate A(i+1:m,i)
+*
+         CALL DLARFG( M-I+1, A( I, I ), A( MIN( I+1, M ), I ), 1,
+     $                TAU( I ) )
+         IF( I.LT.N ) THEN
+*
+*           Apply H(i) to A(i:m,i+1:n) from the left
+*
+            AII = A( I, I )
+            A( I, I ) = ONE
+            CALL DLARF( 'Left', M-I+1, N-I, A( I, I ), 1, TAU( I ),
+     $                  A( I, I+1 ), LDA, WORK )
+            A( I, I ) = AII
+         END IF
+   10 CONTINUE
+      RETURN
+*
+*     End of DGEQR2
+*
+      END
+*####################################################################
+*> \brief \b ZGEQR2
+*
+*  =========== DOCUMENTATION ===========
+*
+* Online html documentation available at
+*            http://www.netlib.org/lapack/explore-html/
+*
+*> \htmlonly
+*> Download ZGEQR2 + dependencies
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.tgz?format=tgz&filename=/lapack/lapack_routine/zgeqr2.f">
+*> [TGZ]</a>
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.zip?format=zip&filename=/lapack/lapack_routine/zgeqr2.f">
+*> [ZIP]</a>
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.txt?format=txt&filename=/lapack/lapack_routine/zgeqr2.f">
+*> [TXT]</a>
+*> \endhtmlonly
+*
+*  Definition:
+*  ===========
+*
+*       SUBROUTINE ZGEQR2( M, N, A, LDA, TAU, WORK, INFO )
+*
+*       .. Scalar Arguments ..
+*       INTEGER            INFO, LDA, M, N
+*       ..
+*       .. Array Arguments ..
+*       COMPLEX*16         A( LDA, * ), TAU( * ), WORK( * )
+*       ..
+*
+*
+*> \par Purpose:
+*  =============
+*>
+*> \verbatim
+*>
+*> ZGEQR2 computes a QR factorization of a complex m by n matrix A:
+*> A = Q * R.
+*> \endverbatim
+*
+*  Arguments:
+*  ==========
+*
+*> \param[in] M
+*> \verbatim
+*>          M is INTEGER
+*>          The number of rows of the matrix A.  M >= 0.
+*> \endverbatim
+*>
+*> \param[in] N
+*> \verbatim
+*>          N is INTEGER
+*>          The number of columns of the matrix A.  N >= 0.
+*> \endverbatim
+*>
+*> \param[in,out] A
+*> \verbatim
+*>          A is COMPLEX*16 array, dimension (LDA,N)
+*>          On entry, the m by n matrix A.
+*>          On exit, the elements on and above the diagonal of the array
+*>          contain the min(m,n) by n upper trapezoidal matrix R (R is
+*>          upper triangular if m >= n); the elements below the diagonal,
+*>          with the array TAU, represent the unitary matrix Q as a
+*>          product of elementary reflectors (see Further Details).
+*> \endverbatim
+*>
+*> \param[in] LDA
+*> \verbatim
+*>          LDA is INTEGER
+*>          The leading dimension of the array A.  LDA >= max(1,M).
+*> \endverbatim
+*>
+*> \param[out] TAU
+*> \verbatim
+*>          TAU is COMPLEX*16 array, dimension (min(M,N))
+*>          The scalar factors of the elementary reflectors (see Further
+*>          Details).
+*> \endverbatim
+*>
+*> \param[out] WORK
+*> \verbatim
+*>          WORK is COMPLEX*16 array, dimension (N)
+*> \endverbatim
+*>
+*> \param[out] INFO
+*> \verbatim
+*>          INFO is INTEGER
+*>          = 0: successful exit
+*>          < 0: if INFO = -i, the i-th argument had an illegal value
+*> \endverbatim
+*
+*  Authors:
+*  ========
+*
+*> \author Univ. of Tennessee
+*> \author Univ. of California Berkeley
+*> \author Univ. of Colorado Denver
+*> \author NAG Ltd.
+*
+*> \date November 2011
+*
+*> \ingroup complex16GEcomputational
+*
+*> \par Further Details:
+*  =====================
+*>
+*> \verbatim
+*>
+*>  The matrix Q is represented as a product of elementary reflectors
+*>
+*>     Q = H(1) H(2) . . . H(k), where k = min(m,n).
+*>
+*>  Each H(i) has the form
+*>
+*>     H(i) = I - tau * v * v**H
+*>
+*>  where tau is a complex scalar, and v is a complex vector with
+*>  v(1:i-1) = 0 and v(i) = 1; v(i+1:m) is stored on exit in A(i+1:m,i),
+*>  and tau in TAU(i).
+*> \endverbatim
+*>
+*  =====================================================================
+      SUBROUTINE ZGEQR2( M, N, A, LDA, TAU, WORK, INFO )
+      USE wp_def, ONLY: wp
+*
+*  -- LAPACK computational routine (version 3.4.0) --
+*  -- LAPACK is a software package provided by Univ. of Tennessee,    --
+*  -- Univ. of California Berkeley, Univ. of Colorado Denver and NAG Ltd..--
+*     November 2011
+*
+*     .. Scalar Arguments ..
+      INTEGER            INFO, LDA, M, N
+*     ..
+*     .. Array Arguments ..
+      COMPLEX(wp)         A( LDA, * ), TAU( * ), WORK( * )
+*     ..
+*
+*  =====================================================================
+*
+*     .. Parameters ..
+      COMPLEX(wp)         ONE
+      PARAMETER          ( ONE = CMPLX( 1.0_wp, 0.0_wp, KIND=wp ) )
+*     ..
+*     .. Local Scalars ..
+      INTEGER            I, K
+      COMPLEX(wp)         ALPHA
+*     ..
+*     .. External Subroutines ..
+      EXTERNAL           XERBLA, ZLARF, ZLARFG
+*     ..
+*     .. Intrinsic Functions ..
+      INTRINSIC          CONJG, MAX, MIN
+*     ..
+*     .. Executable Statements ..
+*
+*     Test the input arguments
+*
+      INFO = 0
+      IF( M.LT.0 ) THEN
+         INFO = -1
+      ELSE IF( N.LT.0 ) THEN
+         INFO = -2
+      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+         INFO = -4
+      END IF
+      IF( INFO.NE.0 ) THEN
+         CALL XERBLA( 'ZGEQR2', -INFO )
+         RETURN
+      END IF
+*
+      K = MIN( M, N )
+*
+      DO 10 I = 1, K
+*
+*        Generate elementary reflector H(i) to annihilate A(i+1:m,i)
+*
+         CALL ZLARFG( M-I+1, A( I, I ), A( MIN( I+1, M ), I ), 1,
+     $                TAU( I ) )
+         IF( I.LT.N ) THEN
+*
+*           Apply H(i)**H to A(i:m,i+1:n) from the left
+*
+            ALPHA = A( I, I )
+            A( I, I ) = ONE
+            CALL ZLARF( 'Left', M-I+1, N-I, A( I, I ), 1,
+     $                  CONJG( TAU( I ) ), A( I, I+1 ), LDA, WORK )
+            A( I, I ) = ALPHA
+         END IF
+   10 CONTINUE
+      RETURN
+*
+*     End of ZGEQR2
+*
+      END
+*####################################################################
+*> \brief \b DGEQRF
+*
+*  =========== DOCUMENTATION ===========
+*
+* Online html documentation available at
+*            http://www.netlib.org/lapack/explore-html/
+*
+*> \htmlonly
+*> Download DGEQRF + dependencies
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.tgz?format=tgz&filename=/lapack/lapack_routine/dgeqrf.f">
+*> [TGZ]</a>
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.zip?format=zip&filename=/lapack/lapack_routine/dgeqrf.f">
+*> [ZIP]</a>
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.txt?format=txt&filename=/lapack/lapack_routine/dgeqrf.f">
+*> [TXT]</a>
+*> \endhtmlonly
+*
+*  Definition:
+*  ===========
+*
+*       SUBROUTINE DGEQRF( M, N, A, LDA, TAU, WORK, LWORK, INFO )
+*
+*       .. Scalar Arguments ..
+*       INTEGER            INFO, LDA, LWORK, M, N
+*       ..
+*       .. Array Arguments ..
+*       DOUBLE PRECISION   A( LDA, * ), TAU( * ), WORK( * )
+*       ..
+*
+*
+*> \par Purpose:
+*  =============
+*>
+*> \verbatim
+*>
+*> DGEQRF computes a QR factorization of a real M-by-N matrix A:
+*> A = Q * R.
+*> \endverbatim
+*
+*  Arguments:
+*  ==========
+*
+*> \param[in] M
+*> \verbatim
+*>          M is INTEGER
+*>          The number of rows of the matrix A.  M >= 0.
+*> \endverbatim
+*>
+*> \param[in] N
+*> \verbatim
+*>          N is INTEGER
+*>          The number of columns of the matrix A.  N >= 0.
+*> \endverbatim
+*>
+*> \param[in,out] A
+*> \verbatim
+*>          A is DOUBLE PRECISION array, dimension (LDA,N)
+*>          On entry, the M-by-N matrix A.
+*>          On exit, the elements on and above the diagonal of the array
+*>          contain the min(M,N)-by-N upper trapezoidal matrix R (R is
+*>          upper triangular if m >= n); the elements below the diagonal,
+*>          with the array TAU, represent the orthogonal matrix Q as a
+*>          product of min(m,n) elementary reflectors (see Further
+*>          Details).
+*> \endverbatim
+*>
+*> \param[in] LDA
+*> \verbatim
+*>          LDA is INTEGER
+*>          The leading dimension of the array A.  LDA >= max(1,M).
+*> \endverbatim
+*>
+*> \param[out] TAU
+*> \verbatim
+*>          TAU is DOUBLE PRECISION array, dimension (min(M,N))
+*>          The scalar factors of the elementary reflectors (see Further
+*>          Details).
+*> \endverbatim
+*>
+*> \param[out] WORK
+*> \verbatim
+*>          WORK is DOUBLE PRECISION array, dimension (MAX(1,LWORK))
+*>          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
+*> \endverbatim
+*>
+*> \param[in] LWORK
+*> \verbatim
+*>          LWORK is INTEGER
+*>          The dimension of the array WORK.  LWORK >= max(1,N).
+*>          For optimum performance LWORK >= N*NB, where NB is
+*>          the optimal blocksize.
+*>
+*>          If LWORK = -1, then a workspace query is assumed; the routine
+*>          only calculates the optimal size of the WORK array, returns
+*>          this value as the first entry of the WORK array, and no error
+*>          message related to LWORK is issued by XERBLA.
+*> \endverbatim
+*>
+*> \param[out] INFO
+*> \verbatim
+*>          INFO is INTEGER
+*>          = 0:  successful exit
+*>          < 0:  if INFO = -i, the i-th argument had an illegal value
+*> \endverbatim
+*
+*  Authors:
+*  ========
+*
+*> \author Univ. of Tennessee
+*> \author Univ. of California Berkeley
+*> \author Univ. of Colorado Denver
+*> \author NAG Ltd.
+*
+*> \date November 2011
+*
+*> \ingroup doubleGEcomputational
+*
+*> \par Further Details:
+*  =====================
+*>
+*> \verbatim
+*>
+*>  The matrix Q is represented as a product of elementary reflectors
+*>
+*>     Q = H(1) H(2) . . . H(k), where k = min(m,n).
+*>
+*>  Each H(i) has the form
+*>
+*>     H(i) = I - tau * v * v**T
+*>
+*>  where tau is a real scalar, and v is a real vector with
+*>  v(1:i-1) = 0 and v(i) = 1; v(i+1:m) is stored on exit in A(i+1:m,i),
+*>  and tau in TAU(i).
+*> \endverbatim
+*>
+*  =====================================================================
+      SUBROUTINE DGEQRF( M, N, A, LDA, TAU, WORK, LWORK, INFO )
+      USE wp_def, ONLY: wp
+*
+*  -- LAPACK computational routine (version 3.4.0) --
+*  -- LAPACK is a software package provided by Univ. of Tennessee,    --
+*  -- Univ. of California Berkeley, Univ. of Colorado Denver and NAG Ltd..--
+*     November 2011
+*
+*     .. Scalar Arguments ..
+      INTEGER            INFO, LDA, LWORK, M, N
+*     ..
+*     .. Array Arguments ..
+      REAL(wp)   A( LDA, * ), TAU( * ), WORK( * )
+*     ..
+*
+*  =====================================================================
+*
+*     .. Local Scalars ..
+      LOGICAL            LQUERY
+      INTEGER            I, IB, IINFO, IWS, K, LDWORK, LWKOPT, NB,
+     $                   NBMIN, NX
+*     ..
+*     .. External Subroutines ..
+      EXTERNAL           DGEQR2, DLARFB, DLARFT, XERBLA
+*     ..
+*     .. Intrinsic Functions ..
+      INTRINSIC          MAX, MIN
+*     ..
+*     .. External Functions ..
+      INTEGER            ILAENV
+      EXTERNAL           ILAENV
+*     ..
+*     .. Executable Statements ..
+*
+*     Test the input arguments
+*
+      INFO = 0
+      NB = ILAENV( 1, 'DGEQRF', ' ', M, N, -1, -1 )
+      LWKOPT = N*NB
+      WORK( 1 ) = LWKOPT
+      LQUERY = ( LWORK.EQ.-1 )
+      IF( M.LT.0 ) THEN
+         INFO = -1
+      ELSE IF( N.LT.0 ) THEN
+         INFO = -2
+      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+         INFO = -4
+      ELSE IF( LWORK.LT.MAX( 1, N ) .AND. .NOT.LQUERY ) THEN
+         INFO = -7
+      END IF
+      IF( INFO.NE.0 ) THEN
+         CALL XERBLA( 'DGEQRF', -INFO )
+         RETURN
+      ELSE IF( LQUERY ) THEN
+         RETURN
+      END IF
+*
+*     Quick return if possible
+*
+      K = MIN( M, N )
+      IF( K.EQ.0 ) THEN
+         WORK( 1 ) = 1
+         RETURN
+      END IF
+*
+      NBMIN = 2
+      NX = 0
+      IWS = N
+      IF( NB.GT.1 .AND. NB.LT.K ) THEN
+*
+*        Determine when to cross over from blocked to unblocked code.
+*
+         NX = MAX( 0, ILAENV( 3, 'DGEQRF', ' ', M, N, -1, -1 ) )
+         IF( NX.LT.K ) THEN
+*
+*           Determine if workspace is large enough for blocked code.
+*
+            LDWORK = N
+            IWS = LDWORK*NB
+            IF( LWORK.LT.IWS ) THEN
+*
+*              Not enough workspace to use optimal NB:  reduce NB and
+*              determine the minimum value of NB.
+*
+               NB = LWORK / LDWORK
+               NBMIN = MAX( 2, ILAENV( 2, 'DGEQRF', ' ', M, N, -1,
+     $                 -1 ) )
+            END IF
+         END IF
+      END IF
+*
+      IF( NB.GE.NBMIN .AND. NB.LT.K .AND. NX.LT.K ) THEN
+*
+*        Use blocked code initially
+*
+         DO 10 I = 1, K - NX, NB
+            IB = MIN( K-I+1, NB )
+*
+*           Compute the QR factorization of the current block
+*           A(i:m,i:i+ib-1)
+*
+            CALL DGEQR2( M-I+1, IB, A( I, I ), LDA, TAU( I ), WORK,
+     $                   IINFO )
+            IF( I+IB.LE.N ) THEN
+*
+*              Form the triangular factor of the block reflector
+*              H = H(i) H(i+1) . . . H(i+ib-1)
+*
+               CALL DLARFT( 'Forward', 'Columnwise', M-I+1, IB,
+     $                      A( I, I ), LDA, TAU( I ), WORK, LDWORK )
+*
+*              Apply H**T to A(i:m,i+ib:n) from the left
+*
+               CALL DLARFB( 'Left', 'Transpose', 'Forward',
+     $                      'Columnwise', M-I+1, N-I-IB+1, IB,
+     $                      A( I, I ), LDA, WORK, LDWORK, A( I, I+IB ),
+     $                      LDA, WORK( IB+1 ), LDWORK )
+            END IF
+   10    CONTINUE
+      ELSE
+         I = 1
+      END IF
+*
+*     Use unblocked code to factor the last or only block.
+*
+      IF( I.LE.K )
+     $   CALL DGEQR2( M-I+1, N-I+1, A( I, I ), LDA, TAU( I ), WORK,
+     $                IINFO )
+*
+      WORK( 1 ) = IWS
+      RETURN
+*
+*     End of DGEQRF
+*
+      END
+*####################################################################
+*> \brief \b ZGEQRF
+*
+*  =========== DOCUMENTATION ===========
+*
+* Online html documentation available at
+*            http://www.netlib.org/lapack/explore-html/
+*
+*> \htmlonly
+*> Download ZGEQRF + dependencies
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.tgz?format=tgz&filename=/lapack/lapack_routine/zgeqrf.f">
+*> [TGZ]</a>
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.zip?format=zip&filename=/lapack/lapack_routine/zgeqrf.f">
+*> [ZIP]</a>
+*> <a href="http://www.netlib.org/cgi-bin/netlibfiles.txt?format=txt&filename=/lapack/lapack_routine/zgeqrf.f">
+*> [TXT]</a>
+*> \endhtmlonly
+*
+*  Definition:
+*  ===========
+*
+*       SUBROUTINE ZGEQRF( M, N, A, LDA, TAU, WORK, LWORK, INFO )
+*
+*       .. Scalar Arguments ..
+*       INTEGER            INFO, LDA, LWORK, M, N
+*       ..
+*       .. Array Arguments ..
+*       COMPLEX*16         A( LDA, * ), TAU( * ), WORK( * )
+*       ..
+*
+*
+*> \par Purpose:
+*  =============
+*>
+*> \verbatim
+*>
+*> ZGEQRF computes a QR factorization of a complex M-by-N matrix A:
+*> A = Q * R.
+*> \endverbatim
+*
+*  Arguments:
+*  ==========
+*
+*> \param[in] M
+*> \verbatim
+*>          M is INTEGER
+*>          The number of rows of the matrix A.  M >= 0.
+*> \endverbatim
+*>
+*> \param[in] N
+*> \verbatim
+*>          N is INTEGER
+*>          The number of columns of the matrix A.  N >= 0.
+*> \endverbatim
+*>
+*> \param[in,out] A
+*> \verbatim
+*>          A is COMPLEX*16 array, dimension (LDA,N)
+*>          On entry, the M-by-N matrix A.
+*>          On exit, the elements on and above the diagonal of the array
+*>          contain the min(M,N)-by-N upper trapezoidal matrix R (R is
+*>          upper triangular if m >= n); the elements below the diagonal,
+*>          with the array TAU, represent the unitary matrix Q as a
+*>          product of min(m,n) elementary reflectors (see Further
+*>          Details).
+*> \endverbatim
+*>
+*> \param[in] LDA
+*> \verbatim
+*>          LDA is INTEGER
+*>          The leading dimension of the array A.  LDA >= max(1,M).
+*> \endverbatim
+*>
+*> \param[out] TAU
+*> \verbatim
+*>          TAU is COMPLEX*16 array, dimension (min(M,N))
+*>          The scalar factors of the elementary reflectors (see Further
+*>          Details).
+*> \endverbatim
+*>
+*> \param[out] WORK
+*> \verbatim
+*>          WORK is COMPLEX*16 array, dimension (MAX(1,LWORK))
+*>          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
+*> \endverbatim
+*>
+*> \param[in] LWORK
+*> \verbatim
+*>          LWORK is INTEGER
+*>          The dimension of the array WORK.  LWORK >= max(1,N).
+*>          For optimum performance LWORK >= N*NB, where NB is
+*>          the optimal blocksize.
+*>
+*>          If LWORK = -1, then a workspace query is assumed; the routine
+*>          only calculates the optimal size of the WORK array, returns
+*>          this value as the first entry of the WORK array, and no error
+*>          message related to LWORK is issued by XERBLA.
+*> \endverbatim
+*>
+*> \param[out] INFO
+*> \verbatim
+*>          INFO is INTEGER
+*>          = 0:  successful exit
+*>          < 0:  if INFO = -i, the i-th argument had an illegal value
+*> \endverbatim
+*
+*  Authors:
+*  ========
+*
+*> \author Univ. of Tennessee
+*> \author Univ. of California Berkeley
+*> \author Univ. of Colorado Denver
+*> \author NAG Ltd.
+*
+*> \date November 2011
+*
+*> \ingroup complex16GEcomputational
+*
+*> \par Further Details:
+*  =====================
+*>
+*> \verbatim
+*>
+*>  The matrix Q is represented as a product of elementary reflectors
+*>
+*>     Q = H(1) H(2) . . . H(k), where k = min(m,n).
+*>
+*>  Each H(i) has the form
+*>
+*>     H(i) = I - tau * v * v**H
+*>
+*>  where tau is a complex scalar, and v is a complex vector with
+*>  v(1:i-1) = 0 and v(i) = 1; v(i+1:m) is stored on exit in A(i+1:m,i),
+*>  and tau in TAU(i).
+*> \endverbatim
+*>
+*  =====================================================================
+      SUBROUTINE ZGEQRF( M, N, A, LDA, TAU, WORK, LWORK, INFO )
+      USE wp_def, ONLY: wp
+*
+*  -- LAPACK computational routine (version 3.4.0) --
+*  -- LAPACK is a software package provided by Univ. of Tennessee,    --
+*  -- Univ. of California Berkeley, Univ. of Colorado Denver and NAG Ltd..--
+*     November 2011
+*
+*     .. Scalar Arguments ..
+      INTEGER            INFO, LDA, LWORK, M, N
+*     ..
+*     .. Array Arguments ..
+      COMPLEX(wp)         A( LDA, * ), TAU( * ), WORK( * )
+*     ..
+*
+*  =====================================================================
+*
+*     .. Local Scalars ..
+      LOGICAL            LQUERY
+      INTEGER            I, IB, IINFO, IWS, K, LDWORK, LWKOPT, NB,
+     $                   NBMIN, NX
+*     ..
+*     .. External Subroutines ..
+      EXTERNAL           XERBLA, ZGEQR2, ZLARFB, ZLARFT
+*     ..
+*     .. Intrinsic Functions ..
+      INTRINSIC          MAX, MIN
+*     ..
+*     .. External Functions ..
+      INTEGER            ILAENV
+      EXTERNAL           ILAENV
+*     ..
+*     .. Executable Statements ..
+*
+*     Test the input arguments
+*
+      INFO = 0
+      NB = ILAENV( 1, 'ZGEQRF', ' ', M, N, -1, -1 )
+      LWKOPT = N*NB
+      WORK( 1 ) = LWKOPT
+      LQUERY = ( LWORK.EQ.-1 )
+      IF( M.LT.0 ) THEN
+         INFO = -1
+      ELSE IF( N.LT.0 ) THEN
+         INFO = -2
+      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+         INFO = -4
+      ELSE IF( LWORK.LT.MAX( 1, N ) .AND. .NOT.LQUERY ) THEN
+         INFO = -7
+      END IF
+      IF( INFO.NE.0 ) THEN
+         CALL XERBLA( 'ZGEQRF', -INFO )
+         RETURN
+      ELSE IF( LQUERY ) THEN
+         RETURN
+      END IF
+*
+*     Quick return if possible
+*
+      K = MIN( M, N )
+      IF( K.EQ.0 ) THEN
+         WORK( 1 ) = 1
+         RETURN
+      END IF
+*
+      NBMIN = 2
+      NX = 0
+      IWS = N
+      IF( NB.GT.1 .AND. NB.LT.K ) THEN
+*
+*        Determine when to cross over from blocked to unblocked code.
+*
+         NX = MAX( 0, ILAENV( 3, 'ZGEQRF', ' ', M, N, -1, -1 ) )
+         IF( NX.LT.K ) THEN
+*
+*           Determine if workspace is large enough for blocked code.
+*
+            LDWORK = N
+            IWS = LDWORK*NB
+            IF( LWORK.LT.IWS ) THEN
+*
+*              Not enough workspace to use optimal NB:  reduce NB and
+*              determine the minimum value of NB.
+*
+               NB = LWORK / LDWORK
+               NBMIN = MAX( 2, ILAENV( 2, 'ZGEQRF', ' ', M, N, -1,
+     $                 -1 ) )
+            END IF
+         END IF
+      END IF
+*
+      IF( NB.GE.NBMIN .AND. NB.LT.K .AND. NX.LT.K ) THEN
+*
+*        Use blocked code initially
+*
+         DO 10 I = 1, K - NX, NB
+            IB = MIN( K-I+1, NB )
+*
+*           Compute the QR factorization of the current block
+*           A(i:m,i:i+ib-1)
+*
+            CALL ZGEQR2( M-I+1, IB, A( I, I ), LDA, TAU( I ), WORK,
+     $                   IINFO )
+            IF( I+IB.LE.N ) THEN
+*
+*              Form the triangular factor of the block reflector
+*              H = H(i) H(i+1) . . . H(i+ib-1)
+*
+               CALL ZLARFT( 'Forward', 'Columnwise', M-I+1, IB,
+     $                      A( I, I ), LDA, TAU( I ), WORK, LDWORK )
+*
+*              Apply H**H to A(i:m,i+ib:n) from the left
+*
+               CALL ZLARFB( 'Left', 'Conjugate transpose', 'Forward',
+     $                      'Columnwise', M-I+1, N-I-IB+1, IB,
+     $                      A( I, I ), LDA, WORK, LDWORK, A( I, I+IB ),
+     $                      LDA, WORK( IB+1 ), LDWORK )
+            END IF
+   10    CONTINUE
+      ELSE
+         I = 1
+      END IF
+*
+*     Use unblocked code to factor the last or only block.
+*
+      IF( I.LE.K )
+     $   CALL ZGEQR2( M-I+1, N-I+1, A( I, I ), LDA, TAU( I ), WORK,
+     $                IINFO )
+*
+      WORK( 1 ) = IWS
+      RETURN
+*
+*     End of ZGEQRF
 *
       END
 *####################################################################
