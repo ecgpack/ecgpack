@@ -1373,15 +1373,18 @@ CONTAINS
           ErrorInDataFile = .TRUE.
         ENDIF
 
-        ! The premultiplier power indexes the precomputed gamma tables in
-        ! globvars.f90
+        ! The premultiplier power must be an even number within the range of
+        ! the precomputed gamma tables in globvars.f90
         ! (0-based: a power of 0 is a plain Gaussian).
         ! Out of range it reads past the end of those tables, which surfaces
-        ! far away inside MatrixElementsOpt instead of here.
-        IF ((Glob_PWR(i) < 0) .OR. (Glob_PWR(i) > Glob_MaxPowerAllowed)) THEN
+        ! far away inside MatrixElementsOpt instead of here. The matrix
+        ! elements are derived for even powers only (MatrixElementsOpt halves
+        ! the power), so an odd power would give wrong results without error.
+        IF ((Glob_PWR(i) < 0) .OR. (Glob_PWR(i) > Glob_MaxPowerAllowed) .OR. &
+            (MOD(Glob_PWR(i), 2) /= 0)) THEN
           WRITE(*, *) 'Error EC0237 in data file: nonlinear parameter block'
           IF (Verbose >= 2) WRITE(*, *) 'Record', i, 'has premultiplier power', Glob_PWR(i), &
-            'outside the allowed range 0 ..', Glob_MaxPowerAllowed
+            'which is not an even number in the range 0 ..', Glob_MaxPowerAllowed
           ErrorInDataFile = .TRUE.
         ENDIF
 
@@ -3186,7 +3189,7 @@ CONTAINS
     !   Method 2 - one normal draw r (0,Glob_RG_s2) scales every parameter
     !              by (1+r); redrawn while |1+r| lies in [0.8,1.2], which
     !              would give a nearly linearly dependent function.
-    ! Powers are EVEN and lie in 2..PWRMax (PWRMax = largest even value
+    ! Powers are EVEN and lie in 0..PWRMax (PWRMax = largest even value
     ! <= Glob_MaxPowerAllowed). Method 1 keeps the prototype's power with
     ! probability PWRChangeProb, else draws a different even one; method 2
     ! always inherits it.
@@ -3241,7 +3244,7 @@ CONTAINS
       !==================================================================
       ! There is no prototype to perturb, so the nonlinear parameters come
       ! from a flat distribution on [Lmin,Lmax] and the power from a flat
-      ! distribution over the even values in 2..PWRMax.
+      ! distribution over the even values in 0..PWRMax.
       !------------------------------------------------------------------
       DO i = 1, nfun
 
@@ -3251,7 +3254,7 @@ CONTAINS
         ENDDO
 
         r = urand()
-        m(i) = 2*(1+INT(r*(PWRMax/2)))
+        m(i) = 2*INT(r*(PWRMax/2+1))
         IF (m(i) > PWRMax) m(i) = PWRMax
 
       ENDDO
@@ -3298,7 +3301,7 @@ CONTAINS
               m(i) = j
               DO WHILE (m(i) == j)
                 r = urand()
-                m(i) = 2*(1+INT(r*(PWRMax/2)))
+                m(i) = 2*INT(r*(PWRMax/2+1))
                 IF (m(i) > PWRMax) m(i) = PWRMax
               ENDDO
 
@@ -3358,10 +3361,10 @@ CONTAINS
 
             r = urand()
 
-            ! The PWRMax<4 guard leaves fewer than two even powers to
+            ! The PWRMax<2 guard leaves fewer than two even powers to
             ! choose from, which would make the redraw loop below spin
             ! forever; in that case the prototype's power is kept.
-            IF ((r > PWRChangeProb) .OR. (PWRMax < 4)) THEN
+            IF ((r > PWRChangeProb) .OR. (PWRMax < 2)) THEN
 
               m(i) = Glob_PWR(k+i-1)
 
@@ -3371,7 +3374,7 @@ CONTAINS
               m(i) = j
               DO WHILE (m(i) == j)
                 r = urand()
-                m(i) = 2*(1+INT(r*(PWRMax/2)))
+                m(i) = 2*INT(r*(PWRMax/2+1))
                 IF (m(i) > PWRMax) m(i) = PWRMax
               ENDDO
 
@@ -8753,7 +8756,7 @@ CONTAINS
     REAL(wp) :: t
     ! Largest legal premultiplier power: the greatest EVEN value not
     ! exceeding Glob_MaxPowerAllowed (GenerateTrialParam only ever produces
-    ! even powers), so the power scan steps through 2,4,...,PWRMax.
+    ! even powers), so the power scan steps through 0,2,...,PWRMax.
     INTEGER, PARAMETER :: PWRMax = 2*(Glob_MaxPowerAllowed/2)
     ! Candidate block and the best candidate block found so far
     REAL(wp), ALLOCATABLE, DIMENSION(:, :) :: ParSet, ParSetBest
@@ -9067,7 +9070,7 @@ CONTAINS
           ! Step 2: premultiplier powers, one function at a time
           !------------------------------------------------------------------
           ! Each function of the block is tried with every legal EVEN power
-          ! 2,4,...,PWRMax and the best is kept; the functions are visited
+          ! 0,2,...,PWRMax and the best is kept; the functions are visited
           ! in random order. The power is part of the basis function but not
           ! a DRMNG variable, so every alternative is tested with the same
           ! append/delete transaction as a random candidate, and the winning
@@ -9083,7 +9086,7 @@ CONTAINS
             ii = PWROptSequence(i)
             j = Glob_PWR(nfru+ii)
             jbest = j
-            DO jj = 2, PWRMax, 2
+            DO jj = 0, PWRMax, 2
               IF (jj /= j) THEN
                 Glob_PWR(nfru+ii) = jj
                 CALL EvaluateQAppendedTrial(nfru, K, Evalue, ErrCode)
@@ -10559,7 +10562,7 @@ CONTAINS
     ! Largest legal premultiplier power: the greatest EVEN value not
     ! exceeding Glob_MaxPowerAllowed. Powers are always even in this
     ! frame - GenerateTrialParam only ever produces even ones - so the
-    ! power scan below steps through 2,4,...,PWRMax.
+    ! power scan below steps through 0,2,...,PWRMax.
     INTEGER, PARAMETER :: PWRMax = 2*(Glob_MaxPowerAllowed/2)
 
     ! Candidate block and the best candidate block found so far
@@ -10966,8 +10969,8 @@ CONTAINS
           ! Step 2: premultiplier powers, one function at a time
           !------------------------------------------------------------------
           ! Each function in the window is tried with every legal EVEN power
-          ! 2,4,...,PWRMax and the best is kept; the functions are visited in
-          ! random order. This exhaustive scan costs PWRMax/2 - 1 energy
+          ! 0,2,...,PWRMax and the best is kept; the functions are visited in
+          ! random order. This exhaustive scan costs PWRMax/2 energy
           ! evaluations per function (a 1-D minimizer or a window around the
           ! current power would be cheaper).
           !------------------------------------------------------------------
@@ -10982,7 +10985,7 @@ CONTAINS
             ii = PWROptSequence(i)
             j = Glob_PWR(nfru+ii)
             jbest = j
-            DO jj = 2, PWRMax, 2
+            DO jj = 0, PWRMax, 2
               IF (jj /= j) THEN
                 Glob_PWR(nfru+ii) = jj
                 Evalue = EnergyGA(nfrup1, K, .TRUE., ErrCode)
@@ -11518,7 +11521,7 @@ CONTAINS
     ! Largest legal premultiplier power: the greatest EVEN value not
     ! exceeding Glob_MaxPowerAllowed. Powers are always even in this
     ! frame - GenerateTrialParam only ever produces even ones - so the
-    ! power scan below steps through 2,4,...,PWRMax.
+    ! power scan below steps through 0,2,...,PWRMax.
     INTEGER, PARAMETER :: PWRMax = 2*(Glob_MaxPowerAllowed/2)
 
     ! Candidate block and the best candidate block found so far
@@ -12001,8 +12004,8 @@ CONTAINS
           ! Step 2: premultiplier powers, one function at a time
           !------------------------------------------------------------------
           ! Each function in the window is tried with every legal EVEN power
-          ! 2,4,...,PWRMax and the best is kept; the functions are visited in
-          ! random order. This exhaustive scan costs PWRMax/2 - 1 energy
+          ! 0,2,...,PWRMax and the best is kept; the functions are visited in
+          ! random order. This exhaustive scan costs PWRMax/2 energy
           ! evaluations per function (a 1-D minimizer or a window around the
           ! current power would be cheaper).
           !------------------------------------------------------------------
@@ -12017,7 +12020,7 @@ CONTAINS
             ii = PWROptSequence(i)
             j = Glob_PWR(nfru+ii)
             jbest = j
-            DO jj = 2, PWRMax, 2
+            DO jj = 0, PWRMax, 2
               IF (jj /= j) THEN
                 Glob_PWR(nfru+ii) = jj
                 Evalue = EnergyIA(nfrup1, K, .TRUE., ErrCode)
