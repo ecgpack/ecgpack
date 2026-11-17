@@ -409,7 +409,10 @@ CONTAINS
       ! each completed column streamed once per panel. Bitwise identical to the unblocked algorithm.
       IF ((Glob_LDLTF_SModeType /= 0) .OR. (Glob_ProcID == 0)) THEN
         IF ((ibs > 1) .AND. (n > m)) ALLOCATE(Pnl(ibs, n))
-        DO i0 = m, n, ibs
+        ! A zero pivot leaves this loop with EXIT, not RETURN: with SModeType 0
+        ! the other ranks are waiting in the broadcasts below, and rank 0 must
+        ! reach them too (see the comment there).
+        SerialPanels: DO i0 = m, n, ibs
           ib = MIN(ibs, n-i0+1)
           IF (ib == 1) THEN
             ! Plain column algorithm (original unblocked code)
@@ -435,7 +438,7 @@ CONTAINS
             ENDDO
             IF (x == ZERO) THEN
               ErrorCode = 1
-              RETURN
+              EXIT SerialPanels
             ENDIF
             invD(i) = ONE/x
           ELSE
@@ -491,19 +494,27 @@ CONTAINS
               ENDDO
               IF (x == ZERO) THEN
                 ErrorCode = 1
-                RETURN
+                EXIT SerialPanels
               ENDIF
               invD(i) = ONE/x
             ENDDO
           ENDIF
-        ENDDO
+        ENDDO SerialPanels
       ENDIF
+
+      ! SModeType 0: rank 0 factorized alone and sends the factor to the other
+      ! ranks. ErrorCode goes FIRST, so that every rank learns about a zero
+      ! pivot at the same point and leaves together; the factor follows only
+      ! when it is complete. (With ErrorCode last, a zero pivot made rank 0
+      ! return before these broadcasts while the other ranks waited in them:
+      ! the ranks fell out of step and the job hung in MPI_Bcast.)
       IF (Glob_LDLTF_SModeType == 0) THEN
+        CALL MPI_BCAST(ErrorCode, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+        IF (ErrorCode /= 0) RETURN
         DO i = m, n
           CALL MPI_BCAST(A(1:i-1, i), i-1, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
         ENDDO
         CALL MPI_BCAST(invD(m:n), n-m+1, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
-        CALL MPI_BCAST(ErrorCode, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
       ENDIF
     ELSE
       ! Parallel version (far from being perfect...)
@@ -633,7 +644,8 @@ CONTAINS
       ! so the kernels are real multiply-adds. May differ from the unblocked algorithm in the last bits.
       IF ((Glob_LDLHF_SModeType /= 0) .OR. (Glob_ProcID == 0)) THEN
         IF ((ibs > 1) .AND. (n > m)) ALLOCATE(PnR(ibs, n), PnI(ibs, n))
-        DO i0 = m, n, ibs
+        ! A zero pivot leaves this loop with EXIT, not RETURN (see LDLTF)
+        SerialPanels: DO i0 = m, n, ibs
           ib = MIN(ibs, n-i0+1)
           IF (ib == 1) THEN
             ! Plain column algorithm (original unblocked code)
@@ -660,7 +672,7 @@ CONTAINS
             ENDDO
             IF (x == ZERO) THEN
               ErrorCode = 1
-              RETURN
+              EXIT SerialPanels
             ENDIF
             invD(i) = ONE/x
           ELSE
@@ -725,19 +737,22 @@ CONTAINS
               ENDDO
               IF (x == ZERO) THEN
                 ErrorCode = 1
-                RETURN
+                EXIT SerialPanels
               ENDIF
               invD(i) = ONE/x
             ENDDO
           ENDIF
-        ENDDO
+        ENDDO SerialPanels
       ENDIF
+
+      ! SModeType 0: ErrorCode first, the factor only when complete (see LDLTF)
       IF (Glob_LDLHF_SModeType == 0) THEN
+        CALL MPI_BCAST(ErrorCode, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+        IF (ErrorCode /= 0) RETURN
         DO i = m, n
           CALL MPI_BCAST(A(1:i-1, i), 2*(i-1), MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
         ENDDO
         CALL MPI_BCAST(invD(m:n), 2*(n-m+1), MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
-        CALL MPI_BCAST(ErrorCode, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
       ENDIF
     ELSE
       ! Parallel version (far from being perfect...)
