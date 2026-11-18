@@ -29,8 +29,6 @@ The main code groups overlap:
 
 `RG_0S` is the most complete reference implementation. Other codes intentionally share much of its source layout and Makefile structure.
 
-`CG_0S/list_of_things_to_do.txt` contains older development notes. Check them against the current sources before acting; non-normalized Gaussians and precomputed scaled charge products are already implemented.
-
 Non-code directories:
 
 - `doc/`: project documentation (`compilation_and_execution.md`, `input_file_format.md`, `theoretical_background.md`, `use_of_visual_studio_code.md`); `doc/devnotes/` contains developer-facing design and maintenance guides (`Q_method_design.md` and the high-precision Bessel-function notes in `mod_Bessel_high_precision/`), and `doc/img/` holds the project logos
@@ -75,7 +73,7 @@ Full details (machines, toolchains, precision and linear-algebra support, OpenMP
 ./build.bash machine=linux-generic toolchain=systemdefault config=release code=RG_0S nparticles=4 precision=8 linalg=netlib openmp=no
 ```
 
-- Run it from the repository root. Only `nparticles` (2 through 19) is required. Defaults: `machine=linux-generic`, `toolchain=systemdefault`, `config=debug,release`, `precision=8`, `linalg=netlib`, `openmp=no`, `gpu=no`, and every code `build.bash` knows except `CG_0S`. Every argument except `machine`, `gpu`, and `cuda_arch` accepts a comma-separated list.
+- Run it from the repository root. Only `nparticles` (2 through 19) is required. Defaults: `machine=linux-generic`, `toolchain=systemdefault`, `config=debug,release`, `precision=8`, `linalg=netlib`, `openmp=no`, `gpu=no`, and every code `build.bash` knows. Every argument except `machine`, `gpu`, and `cuda_arch` accepts a comma-separated list.
 - Binaries go to `bin/[<machine>/]<toolchain>/<config>/<CODE>_N<nparticles>_P<precision>_<linalg>[_omp][_gpu]`. The `<machine>/` segment appears only for `puma`, `ocelote`, and `elgato`; the `<linalg>` suffix is always present.
 - `build.bash` does not know `PG_1P` yet (it rejects `code=PG_1P`); build that code with its Makefile.
 - Skipped or rejected combinations: `precision=10`/`16` build only `linalg=netlib`; `openmp=yes` applies only to `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`; `gpu=yes` requires an `nvhpc-*` toolchain, `precision=8`, and one of `PG_0S`, `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`.
@@ -126,7 +124,7 @@ Where present, the positional value or values in `inp.txt` select the requested 
 
 There is no general automated test suite. Validation is usually done by running sample physical cases and comparing energies, expectation values, or matrix elements against documented reference values.
 
-Sample inputs live under each code's `sample_input/` directory; every code except `CG_0S` provides worked examples. The example READMEs document the calculation, expected runtime, and reference values:
+Sample inputs live under each code's `sample_input/` directory; every code provides worked examples. The example READMEs document the calculation, expected runtime, and reference values:
 
 - Energy-code cases are single directories containing `inout.txt`. Recurring case types include `basis_generation_*`, `expected_values_*`, `densities_*`, and `store_wavefunction_*`. `PG_0S` adds `basis_health_checking_*` (`SAVE_HS_R`), `linear_c_elimination_*` (`ELIM_LCFN`), `linear_depen_elimination_*` (`ELIM_LND1`), and `overlap_diagonalization_*` (`OVERLAP_D`).
 - Transition-dipole cases are named `transition_dipole_moment_*` and put a `README.md` in each case directory.

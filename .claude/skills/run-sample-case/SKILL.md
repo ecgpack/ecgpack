@@ -61,7 +61,7 @@ Set these environment variables to change the defaults:
   differences. To compare results before and after a code change, use the
   same `nprocs` in both runs.
 - The script handles the energy codes that `build.bash` can build: `RG_0S`,
-  `RG_1P`, `RG_2D`, `RG_2P`, and `PG_0S`. `build.bash` does not know `PG_1P`
+  `RG_1P`, `RG_2D`, `RG_2P`, `PG_0S`, and `CG_0S`. `build.bash` does not know `PG_1P`
   yet: build that binary through `PG_1P/Makefile` first, and the script will
   then use it.
 - The off-diagonal codes (`RG_0S-1P` and the like) read wave-function files

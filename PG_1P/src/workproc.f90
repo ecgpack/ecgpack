@@ -9374,6 +9374,8 @@ CONTAINS
       nfrup1 = nfru+1
       nv = nfo*npt
       E_init = Glob_CurrEnergy
+      Glob_InvItTempCounter1 = 0
+      Glob_InvItTempCounter2 = 0
       IF (Glob_ProcID == 0) THEN
         WRITE(*, *)
         IF (Verbose >= 1) WRITE(*, '(1x,a,1x,i0)') 'Current basis size is', Glob_CurrBasisSize
@@ -9850,6 +9852,8 @@ CONTAINS
             WRITE(*, '(1x,i6,a,i0,a,i0)', ADVANCE='no') nfru+i, ':x', Glob_X_index(nfru+i), ' r^', Glob_PWR(nfru+i)
             CALL writerealarradv(6, Glob_NonlinParam(1:npt, nfru+i), npt)
           ENDDO
+          IF (Verbose >= 1) WRITE (*, '(1x,a,f7.3)') 'Average number of iterations in SolveQ: ', &
+            (Glob_InvItTempCounter2*ONE)/MAX(Glob_InvItTempCounter1, 1)
         ELSEIF (OptimizationType == 0) THEN
           CALL WriteStepEnergy(Glob_CurrEnergy, '(parameters not optimized)')
         ELSEIF (ANY(Glob_NonlinParam(1:npt, nfrup1:K) /= ParSetBest(1:npt, 1:nfo)) .OR. &
@@ -10244,6 +10248,8 @@ CONTAINS
           IF (Glob_ProcID == 0) WRITE(*, *) 'Error EC0152 in OptCycleQ: active Q transaction cannot be initialized'
           CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
         ENDIF
+        Glob_InvItTempCounter1 = 0
+        Glob_InvItTempCounter2 = 0
         IF (Glob_ProcID == 0) THEN
           IF (Verbose >= 1) WRITE(*, *)
           IF (nfo > 1) THEN
@@ -10466,6 +10472,8 @@ CONTAINS
                   ' r^', Glob_PWR(ActiveI)
               CALL writerealarradv(6, Glob_NonlinParam(1:npt, ActiveI), npt)
             ENDDO
+            IF (Verbose >= 1) WRITE (*, '(1x,a,f7.3)') 'Average number of iterations in SolveQ: ', &
+              (Glob_InvItTempCounter2*ONE)/MAX(Glob_InvItTempCounter1, 1)
           ENDIF
         ENDIF
         EnergyFailed = (ErrCode /= Q_METHOD_SUCCESS)
@@ -13032,7 +13040,7 @@ CONTAINS
         ELSE
           CALL WriteStepEnergy(Glob_CurrEnergy, '(parameters not changed by the optimization)')
         ENDIF
-        IF (Verbose >= 1) WRITE (*, *) 'Average number of iterations in GSEPIIS: ', &
+        IF (Verbose >= 1) WRITE (*, '(1x,a41,f7.3)') 'Average number of iterations in GSEPIIS: ', &
           (Glob_InvItTempCounter2*ONE)/Glob_InvItTempCounter1
       ENDIF
 
@@ -14933,7 +14941,7 @@ CONTAINS
                   ' r^', Glob_PWR(nfru+i)
               CALL writerealarradv(6, Glob_NonlinParam(1:npt, nfru+i), npt)
             ENDDO
-            IF (Verbose >= 1) WRITE (*, '(1x,a41,f8.4)') 'Average number of iterations in GSEPIIS: ', &
+            IF (Verbose >= 1) WRITE (*, '(1x,a41,f7.3)') 'Average number of iterations in GSEPIIS: ', &
               (Glob_InvItTempCounter2*ONE)/Glob_InvItTempCounter1
           ENDIF
         ENDIF

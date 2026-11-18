@@ -5602,6 +5602,8 @@ contains
       Glob_nfo=nfo
       call linalg_setparam(K)
       E_init=Glob_CurrEnergy
+      Glob_InvItTempCounter1=0
+      Glob_InvItTempCounter2=0
 
       if (Glob_ProcID==0) then
         write(*,*)
@@ -5819,6 +5821,8 @@ contains
           write(*,'(1x,i6,a1)',advance='no') nfru+i,':'
           call writerealarradv(6,Glob_NonlinParam(1:npt,nfru+i),npt)
         enddo
+        write(*,'(1x,a,f7.3)') 'Average number of iterations in SolveQ: ', &
+          (Glob_InvItTempCounter2*ONE)/max(Glob_InvItTempCounter1,1)
         if (wmu==1) then
           rgm1_counter=rgm1_counter+1
           if (nfru>nfo) then
@@ -6073,6 +6077,8 @@ contains
           call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
         endif
 
+        Glob_InvItTempCounter1=0
+        Glob_InvItTempCounter2=0
         if (Glob_ProcID==0) then
           write(*,*)
           if (nfo>1) then
@@ -6245,6 +6251,8 @@ contains
               write(*,'(1x,i6,a1)',advance='no') Glob_FuncNum(ActiveI),':'
               call writerealarradv(6,Glob_NonlinParam(1:npt,ActiveI),npt)
             enddo
+            write(*,'(1x,a,f7.3)') 'Average number of iterations in SolveQ: ', &
+              (Glob_InvItTempCounter2*ONE)/max(Glob_InvItTempCounter1,1)
           endif
         endif
 
@@ -7744,7 +7752,7 @@ contains
           write(*,'(1x,i6,a1)',advance='no') nfru+i,':'
           call writerealarradv(6,Glob_NonlinParam(1:npt,nfru+i),npt)
         enddo
-        write (*,'(1x,a41,f8.4)') 'Average number of iterations in GHEPIIS: ', &
+        write (*,'(1x,a41,f7.3)') 'Average number of iterations in GHEPIIS: ', &
           (Glob_InvItTempCounter2*ONE)/Glob_InvItTempCounter1
       endif
 
@@ -8843,7 +8851,7 @@ contains
               write(*,'(1x,i6,a1)',advance='no') Glob_FuncNum(nfru+i),':'
               call writerealarradv(6,Glob_NonlinParam(1:npt,nfru+i),npt)
             enddo
-            write (*,'(1x,a41,f8.4)') 'Average number of iterations in GHEPIIS: ', &
+            write (*,'(1x,a41,f7.3)') 'Average number of iterations in GHEPIIS: ', &
               (Glob_InvItTempCounter2*ONE)/Glob_InvItTempCounter1
           endif
         endif
