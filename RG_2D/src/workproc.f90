@@ -10906,8 +10906,6 @@ contains
       if (abs(Glob_c(i))>=LinCoeffThreshold) then
         NonlinParamTemp(1:npt,i-j)=Glob_NonlinParam(1:npt,i)
         IndTemp(i-j,1:2)=Glob_Index(i,1:2)
-        IndTemp(i-j,1)=IndTemp(i,1)
-        IndTemp(i-j,2)=IndTemp(i,2)
       else
         if ((j==0).and.(Glob_ProcID==0)) write(*,*) 'Little contributing function list:'
         j=j+1
