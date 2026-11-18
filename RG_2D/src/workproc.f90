@@ -3353,7 +3353,7 @@ contains
     if (Glob_GSEPSolutionMethod=='I') then
       !In case Glob_GSEPSolutionMethod=='I' we need to fill out the
       !upper triangle of Glob_S
-      do i=fb,fe
+      do i=fb,Glob_CurrBasisSize
         do j=1,i-1
           Glob_S(j,i)=Glob_S(i,j)
         enddo
@@ -3476,7 +3476,7 @@ contains
     if (Glob_GSEPSolutionMethod=='I') then
       !In case Glob_GSEPSolutionMethod=='I' we need to fill out the
       !upper triangle of Glob_S
-      do i=fb1,fe2
+      do i=fb1,Glob_CurrBasisSize
         do j=1,i-1
           Glob_S(j,i)=Glob_S(i,j)
         enddo
@@ -3612,7 +3612,7 @@ contains
     if (Glob_GSEPSolutionMethod=='I') then
       !In case Glob_GSEPSolutionMethod=='I' we need to fill out the
       !upper triangle of Glob_S
-      do i=fb,fe
+      do i=fb,Glob_CurrBasisSize
         do j=1,i-1
           Glob_S(j,i)=Glob_S(i,j)
         enddo
@@ -3883,7 +3883,7 @@ contains
     if (Glob_GSEPSolutionMethod=='I') then
       !In case Glob_GSEPSolutionMethod=='I' we need to fill out the
       !upper triangle of Glob_S
-      do i=fb,fe
+      do i=fb,Glob_CurrBasisSize
         do j=1,i-1
           Glob_S(j,i)=Glob_S(i,j)
         enddo
