@@ -33,6 +33,9 @@ module workproc
   integer,parameter :: Q_METHOD_ALLOCATION_ERROR=QR_ERR_ALLOCATION
   integer,parameter :: Q_METHOD_INVALID_STATE=QR_ERR_INVALID_STATE
   integer,parameter :: Q_METHOD_DIMENSION_MISMATCH=QR_ERR_DIMENSION_MISMATCH
+!Number of structural QR updates after which SolveQ repeats the factorization
+!probe even though no other condition asks for it.
+  integer,parameter :: Q_FACTOR_PROBE_INTERVAL=64
 
   type :: QMethodWorkspace
     !The QR state is meaningful only on rank zero. Keeping it in the same
@@ -82,15 +85,22 @@ module workproc
 
     !These diagnostics distinguish inverse-iteration accuracy from agreement
     !between the updated factors and the physical matrices. Both are relative
-    !action residuals evaluated for the most recently returned eigenvector.
+    !action residuals. LastEigenpairResidual belongs to the most recently
+    !returned eigenpair. LastFactorResidual is the result of the most recent
+    !factorization probe, which SolveQ does not repeat after every solve; it
+    !is huge while the current factors have not been probed yet.
+    !FactorProbeUpdateCount is the lifetime structural-update count of Factors
+    !at that probe and, like Factors, is meaningful only on rank zero.
     real(wp) :: LastEigenpairResidual=huge(ONE)
     real(wp) :: LastFactorResidual=huge(ONE)
+    integer(int64) :: FactorProbeUpdateCount=0_int64
     integer :: FreshFactorizations=0
 
-    !The qrlinalg solve requires distinct input and output vectors. DeltaH and
-    !DeltaS hold one replacement column and are also useful for residual and
-    !fresh-factorization checks. They are replicated because the surrounding
-    !transaction is collective, but only rank zero passes them to qrlinalg.
+    !The qrlinalg solve requires distinct input and output vectors; the
+    !factorization probe reuses InitialVector for its probe vector. DeltaH and
+    !DeltaS hold one replacement column. They are replicated because the
+    !surrounding transaction is collective, but only rank zero passes them to
+    !qrlinalg.
     real(wp),allocatable :: InitialVector(:),SolvedVector(:)
     real(wp),allocatable :: DeltaH(:),DeltaS(:)
   end type QMethodWorkspace
@@ -4828,6 +4838,10 @@ contains
     if ((size(Glob_S,1)<Q_Workspace%MatrixOrder).or. &
         (size(Glob_S,2)<Q_Workspace%MatrixOrder)) return
 
+    !The stored factorization residual describes the factors that are about to
+    !be replaced. Marking it unknown makes the next SolveQ probe the new ones.
+    Q_Workspace%LastFactorResidual=huge(ONE)
+
     RootError=Q_METHOD_SUCCESS
     if (Glob_ProcID==0) then
       !Initialization is separated from fresh factorization in qrlinalg. Reuse
@@ -5169,59 +5183,54 @@ contains
 
   end subroutine ApplyQTrial
 
-  subroutine ComputeQEigenpairResidual(Evalue,Eigenvector,AbsoluteResidual, &
-                                       RelativeResidual,ErrorCode)
-!Subroutine ComputeQEigenpairResidual measures the residual of the physical
-!generalized eigenproblem, independently of qrlinalg's direction-change test:
+  subroutine ProbeQFactorization(ErrorCode)
+!Subroutine ProbeQFactorization measures how well the QR factors, which may
+!have accumulated many structural updates, still reproduce the action of the
+!physical shifted matrix:
 !
-!                  r = H*c-Evalue*S*c .
+!                  r = (H-shift*S)*v-Q*(R*v) .
 !
-!The returned relative value is ||r||/(||H*c||+|E|*||S*c||+tiny). Only the
-!canonical lower triangles are read. This routine is serial and is called on
-!rank zero; it performs no allocation and does not modify H, S, or c.
+!The probe v is a fixed dense vector. The eigenvector must not be used because
+!it is nearly a null vector of the deliberately near-eigenvalue shifted
+!matrix, which amplifies harmless factorization roundoff in the relative
+!action ratio. The relative residual is stored in
+!Q_Workspace%LastFactorResidual together with the structural-update count of
+!the probed factors; a failed measurement leaves the residual unknown (huge).
+!
+!This routine is serial and must be called on rank zero only. It costs four
+!O(n**2) matrix-vector products, overwrites Q_Workspace%InitialVector, and
+!does not modify H, S, or the factors. The caller broadcasts the result.
 !
 !Arguments:
-    real(wp),intent(in)  :: Evalue,Eigenvector(:)
-    real(wp),intent(out) :: AbsoluteResidual,RelativeResidual
-    integer,intent(out)  :: ErrorCode
+    integer,intent(out) :: ErrorCode
 !Local variables:
-    integer MatrixOrder
-    real(wp) HNorm2,SNorm2,ResidualNorm2
+    integer i,MatrixOrder
+    real(wp) AbsoluteResidual,FactorResidual
 
-    AbsoluteResidual=ZERO
-    RelativeResidual=ZERO
     ErrorCode=Q_METHOD_INVALID_ARGUMENT
     MatrixOrder=Q_Workspace%MatrixOrder
     if (MatrixOrder<1) return
-    if (size(Eigenvector)/=MatrixOrder) return
-    if (.not.allocated(Q_Workspace%DeltaH)) return
-    if (.not.allocated(Q_Workspace%DeltaS)) return
+    if (.not.allocated(Q_Workspace%InitialVector)) return
+    if (size(Q_Workspace%InitialVector)<MatrixOrder) return
 
-    !The earlier scalar double loop performed the same two symmetric products
-    !but left optimized BLAS performance unused. DSYMV reads exactly the
-    !authoritative lower triangles, handles the physical leading dimension,
-    !and is substantially faster for the residual that follows every Q solve.
-    !This helper is called only on rank zero, so calling BLAS directly is also
-    !important: the MPI-routing MTMVL wrapper is collective for some calibrated
-    !matrix sizes and therefore cannot be entered by the root alone.
-    call DSYMV('L',MatrixOrder,ONE,Glob_H,size(Glob_H,1),Eigenvector,1, &
-      ZERO,Q_Workspace%DeltaH,1)
-    call DSYMV('L',MatrixOrder,ONE,Glob_S,size(Glob_S,1),Eigenvector,1, &
-      ZERO,Q_Workspace%DeltaS,1)
-    HNorm2=dot_product(Q_Workspace%DeltaH(1:MatrixOrder), &
-                      Q_Workspace%DeltaH(1:MatrixOrder))
-    SNorm2=dot_product(Q_Workspace%DeltaS(1:MatrixOrder), &
-                      Q_Workspace%DeltaS(1:MatrixOrder))
-    Q_Workspace%DeltaH(1:MatrixOrder)=Q_Workspace%DeltaH(1:MatrixOrder)- &
-      Evalue*Q_Workspace%DeltaS(1:MatrixOrder)
-    ResidualNorm2=dot_product(Q_Workspace%DeltaH(1:MatrixOrder), &
-                             Q_Workspace%DeltaH(1:MatrixOrder))
-    AbsoluteResidual=sqrt(ResidualNorm2)
-    RelativeResidual=AbsoluteResidual/ &
-      (sqrt(HNorm2)+abs(Evalue)*sqrt(SNorm2)+tiny(ONE))
-    ErrorCode=Q_METHOD_SUCCESS
+    do i=1,MatrixOrder
+      Q_Workspace%InitialVector(i)=ONE+ &
+        real(mod(17*i,23),wp)/real(23,wp)
+      if (mod(i,2)==0) Q_Workspace%InitialVector(i)= &
+        -Q_Workspace%InitialVector(i)
+    enddo
+    call Q_Workspace%Factors%factorization_residual(Glob_H,Glob_S, &
+      Q_Workspace%InitialVector(1:MatrixOrder),AbsoluteResidual, &
+      FactorResidual,ErrorCode)
+    if (ErrorCode==Q_METHOD_SUCCESS) then
+      Q_Workspace%LastFactorResidual=FactorResidual
+      Q_Workspace%FactorProbeUpdateCount= &
+        Q_Workspace%Factors%get_update_count()
+    else
+      Q_Workspace%LastFactorResidual=huge(ONE)
+    endif
 
-  end subroutine ComputeQEigenpairResidual
+  end subroutine ProbeQFactorization
 
   subroutine SolveQ(Evalue,ErrorCode)
 !Subroutine SolveQ calls qrlinalg inverse iteration on rank zero with
@@ -5231,14 +5240,26 @@ contains
 !only when the independent physical generalized-eigenpair residual satisfies
 !the requested tolerance; otherwise one fresh-factorization retry is made.
 !
+!The solve receives the physical H and S. It forms H*c and S*c once and
+!returns both the Rayleigh quotient and the relative residual
+!
+!        ||H*c-E*S*c||/(||H*c||+|E|*||S*c||+tiny)
+!
+!of the physical generalized eigenproblem. Only the canonical lower triangles
+!are read. The factorization probe (see ProbeQFactorization) is a separate
+!diagnostic with four more O(n**2) matrix products, so it is not repeated
+!after every solve: it runs for factors that have not been probed since their
+!fresh factorization, after every Q_FACTOR_PROBE_INTERVAL structural updates,
+!and whenever the eigenpair residual or the last probe is out of tolerance.
+!
 !Arguments:
     real(wp),intent(out) :: Evalue
     integer,intent(out)  :: ErrorCode
 !Local variables:
     integer i,MatrixOrder,NumOfIterations,RootError,RefreshError,SolveStatus
     integer RetryMaxIterations
-    integer(int64) UpdatesSinceFresh,RefreshLimit
-    real(wp) AbsoluteResidual,RelativeResidual,FactorResidual
+    integer(int64) UpdatesSinceFresh,RefreshLimit,UpdatesSinceProbe
+    real(wp) RelativeResidual,EigenpairResidual
     real(wp) RefreshTolerance,SolveTolerance
     logical RefreshNeeded
 
@@ -5269,6 +5290,8 @@ contains
       Glob_c(1)=ONE/sqrt(Glob_S(1,1))
       Q_Workspace%LastEigenpairResidual=ZERO
       Q_Workspace%LastFactorResidual=ZERO
+      if (Glob_ProcID==0) Q_Workspace%FactorProbeUpdateCount= &
+        Q_Workspace%Factors%get_update_count()
       Glob_LastEigvalTol=ZERO
       Glob_InvItTempCounter1=Glob_InvItTempCounter1+1
       Glob_InvItTempCounter2=Glob_InvItTempCounter2+1
@@ -5306,8 +5329,8 @@ contains
     endif
 
     RootError=Q_METHOD_SUCCESS
-    AbsoluteResidual=ZERO
     RelativeResidual=ZERO
+    EigenpairResidual=huge(ONE)
     NumOfIterations=0
     if (Glob_ProcID==0) then
       Q_Workspace%InitialVector(1:MatrixOrder)=Glob_c(1:MatrixOrder)
@@ -5319,7 +5342,8 @@ contains
       call Q_Workspace%Factors%solve(Glob_S, &
         Q_Workspace%InitialVector(1:MatrixOrder), &
         Q_Workspace%SolvedVector(1:MatrixOrder),Evalue,Glob_EigvalTol, &
-        Glob_MaxIterForGSEPIIS,0,RelativeResidual,NumOfIterations,RootError)
+        Glob_MaxIterForGSEPIIS,0,RelativeResidual,NumOfIterations,RootError, &
+        h=Glob_H,eigen_residual=EigenpairResidual)
       Glob_c(1:MatrixOrder)=Q_Workspace%SolvedVector(1:MatrixOrder)
     endif
     call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
@@ -5337,35 +5361,31 @@ contains
       return
     endif
 
-    !Measure both independent numerical relationships. The physical residual
-    !checks H*c=E*S*c. The factor residual checks Q*R=(H-shift*S) with a fixed
-    !dense probe. The eigenvector must not be used for the latter because it
-    !is nearly a null vector of the deliberately near-eigenvalue shifted
-    !matrix, which amplifies harmless factorization roundoff in the relative
-    !action ratio. QR_ERR_NO_CONVERGENCE still contains an approximation; it is
-    !accepted only when this independent physical residual satisfies the
-    !caller tolerance. Either diagnostic may request one fresh-factorization
-    !retry.
+    !Two independent numerical relationships are monitored. The physical
+    !residual checks H*c=E*S*c; the solve has just returned it from the
+    !products it needed for the Rayleigh quotient. The factor residual checks
+    !Q*R=(H-shift*S) with a fixed dense probe. Factors that passed the probe
+    !degrade only slowly through further updates, and a loss of accuracy that
+    !matters shows up in the physical residual, so the probe is repeated only
+    !when it can tell something new: the stored value is unknown (fresh
+    !factors) or out of tolerance, Q_FACTOR_PROBE_INTERVAL structural updates
+    !have been applied since the last probe, or the physical residual is out
+    !of tolerance. QR_ERR_NO_CONVERGENCE still contains an approximation; it
+    !is accepted only when the physical residual satisfies the caller
+    !tolerance. Either diagnostic may request one fresh-factorization retry.
     if (Glob_ProcID==0) then
       RootError=Q_METHOD_SUCCESS
-      call ComputeQEigenpairResidual(Evalue,Glob_c(1:MatrixOrder), &
-        AbsoluteResidual,Q_Workspace%LastEigenpairResidual,RootError)
-      if (RootError==Q_METHOD_SUCCESS) then
-        do i=1,MatrixOrder
-          Q_Workspace%InitialVector(i)=ONE+ &
-            real(mod(17*i,23),wp)/real(23,wp)
-          if (mod(i,2)==0) Q_Workspace%InitialVector(i)= &
-            -Q_Workspace%InitialVector(i)
-        enddo
-        call Q_Workspace%Factors%factorization_residual(Glob_H,Glob_S, &
-          Q_Workspace%InitialVector(1:MatrixOrder),AbsoluteResidual, &
-          FactorResidual,RootError)
-        Q_Workspace%LastFactorResidual=FactorResidual
-      endif
+      Q_Workspace%LastEigenpairResidual=EigenpairResidual
       RefreshTolerance=max(1000*epsilon(ONE)*MatrixOrder, &
                            10*abs(Glob_EigvalTol))
       SolveTolerance=max(1000*epsilon(ONE)*MatrixOrder, &
                          100*abs(Glob_EigvalTol))
+      UpdatesSinceProbe=Q_Workspace%Factors%get_update_count()- &
+        Q_Workspace%FactorProbeUpdateCount
+      if ((.not.(Q_Workspace%LastFactorResidual<=RefreshTolerance)).or. &
+          (.not.(Q_Workspace%LastEigenpairResidual<=SolveTolerance)).or. &
+          (UpdatesSinceProbe>=Q_FACTOR_PROBE_INTERVAL).or. &
+          (UpdatesSinceProbe<0)) call ProbeQFactorization(RootError)
       RefreshNeeded=(RootError==Q_METHOD_SUCCESS).and. &
         ((.not.(Q_Workspace%LastFactorResidual<=RefreshTolerance)).or. &
          (.not.(Q_Workspace%LastEigenpairResidual<=SolveTolerance)))
@@ -5397,7 +5417,8 @@ contains
         call Q_Workspace%Factors%solve(Glob_S, &
           Q_Workspace%InitialVector(1:MatrixOrder), &
           Q_Workspace%SolvedVector(1:MatrixOrder),Evalue,Glob_EigvalTol, &
-          RetryMaxIterations,0,RelativeResidual,NumOfIterations,RootError)
+          RetryMaxIterations,0,RelativeResidual,NumOfIterations,RootError, &
+          h=Glob_H,eigen_residual=EigenpairResidual)
         Glob_c(1:MatrixOrder)=Q_Workspace%SolvedVector(1:MatrixOrder)
       endif
       call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
@@ -5412,21 +5433,9 @@ contains
       if ((RootError==Q_METHOD_SUCCESS).or. &
           (RootError==QR_ERR_NO_CONVERGENCE)) then
         if (Glob_ProcID==0) then
-          RootError=Q_METHOD_SUCCESS
-          call ComputeQEigenpairResidual(Evalue,Glob_c(1:MatrixOrder), &
-            AbsoluteResidual,Q_Workspace%LastEigenpairResidual,RootError)
-          if (RootError==Q_METHOD_SUCCESS) then
-            do i=1,MatrixOrder
-              Q_Workspace%InitialVector(i)=ONE+ &
-                real(mod(17*i,23),wp)/real(23,wp)
-              if (mod(i,2)==0) Q_Workspace%InitialVector(i)= &
-                -Q_Workspace%InitialVector(i)
-            enddo
-            call Q_Workspace%Factors%factorization_residual(Glob_H,Glob_S, &
-              Q_Workspace%InitialVector(1:MatrixOrder),AbsoluteResidual, &
-              FactorResidual,RootError)
-            Q_Workspace%LastFactorResidual=FactorResidual
-          endif
+          !The factors are fresh, so their probe is always due here.
+          Q_Workspace%LastEigenpairResidual=EigenpairResidual
+          call ProbeQFactorization(RootError)
           if ((RootError==Q_METHOD_SUCCESS).and. &
               (.not.(Q_Workspace%LastEigenpairResidual<=SolveTolerance))) &
             RootError=QR_ERR_NO_CONVERGENCE

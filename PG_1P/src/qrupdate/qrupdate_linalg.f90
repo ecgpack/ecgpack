@@ -28,20 +28,12 @@ module qrupdate_linalg
             real(wp), intent(inout) :: dy(*)
         end subroutine daxpy
 
-
-
-
-
         subroutine dcopy(n, dx, incx, dy, incy)
             import wp
             integer, intent(in) :: n, incx, incy
             real(wp), intent(in) :: dx(*)
             real(wp), intent(inout) :: dy(*)
         end subroutine dcopy
-
-
-
-
 
         function ddot(n, dx, incx, dy, incy) result(res)
             import wp
@@ -50,20 +42,12 @@ module qrupdate_linalg
             real(wp) :: res
         end function ddot
 
-
-
-
-
         function dnrm2(n, x, incx) result(res)
             import wp
             integer, intent(in) :: n, incx
             real(wp), intent(in) :: x(*)
             real(wp) :: res
         end function dnrm2
-
-
-
-
 
         subroutine dscal(n, da, dx, incx)
             import wp
@@ -72,20 +56,12 @@ module qrupdate_linalg
             real(wp), intent(inout) :: dx(*)
         end subroutine dscal
 
-
-
-
-
         subroutine drot(n, dx, incx, dy, incy, c, s)
             import wp
             integer, intent(in) :: n, incx, incy
             real(wp), intent(inout) :: dx(*), dy(*)
             real(wp), intent(in) :: c, s
         end subroutine drot
-
-
-
-
 
         subroutine zaxpy(n, za, zx, incx, zy, incy)
             import wp
@@ -94,20 +70,12 @@ module qrupdate_linalg
             complex(wp), intent(inout) :: zy(*)
         end subroutine zaxpy
 
-
-
-
-
         subroutine zcopy(n, zx, incx, zy, incy)
             import wp
             integer, intent(in) :: n, incx, incy
             complex(wp), intent(in) :: zx(*)
             complex(wp), intent(inout) :: zy(*)
         end subroutine zcopy
-
-
-
-
 
         function zdotc(n, zx, incx, zy, incy) result(res)
             import wp
@@ -116,10 +84,6 @@ module qrupdate_linalg
             complex(wp) :: res
         end function zdotc
 
-
-
-
-
         function dznrm2(n, x, incx) result(res)
             import wp
             integer, intent(in) :: n, incx
@@ -127,20 +91,12 @@ module qrupdate_linalg
             real(wp) :: res
         end function dznrm2
 
-
-
-
-
         subroutine zdscal(n, da, zx, incx)
             import wp
             integer, intent(in) :: n, incx
             real(wp), intent(in) :: da
             complex(wp), intent(inout) :: zx(*)
         end subroutine zdscal
-
-
-
-
 
         subroutine zrot(n, cx, incx, cy, incy, c, s)
             import wp
@@ -150,19 +106,11 @@ module qrupdate_linalg
             complex(wp), intent(in) :: s
         end subroutine zrot
 
-
-
-
-
         function dlamch(cmach) result(res)
             import wp
             character, intent(in) :: cmach
             real(wp) :: res
         end function dlamch
-
-
-
-
 
         subroutine dlartg(f, g, c, s, r)
             import wp
@@ -170,20 +118,12 @@ module qrupdate_linalg
             real(wp), intent(out) :: c, s, r
         end subroutine dlartg
 
-
-
-
-
         subroutine zlartg(f, g, c, s, r)
             import wp
             complex(wp), intent(in) :: f, g
             real(wp), intent(out) :: c
             complex(wp), intent(out) :: s, r
         end subroutine zlartg
-
-
-
-
 
         subroutine xerbla(srname, info)
             character(len=*), intent(in) :: srname

@@ -57,10 +57,6 @@ contains
         global_error_handler => p_handler
     end subroutine qrupdate_set_error
 
-
-
-
-
     !> \brief Sets auxiliary data for the error handler.
     !>
     !> \param[in] p_aux
@@ -73,10 +69,6 @@ contains
         class(*), pointer :: p_aux
         global_error_aux => p_aux
     end subroutine qrupdate_set_error_data
-
-
-
-
 
 !> \brief Dispatches error reporting to the handler.
 !>

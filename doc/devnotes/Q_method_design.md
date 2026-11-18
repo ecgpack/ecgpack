@@ -177,10 +177,10 @@ The production code uses these operations:
 | --- | --- |
 | `initialize(capacity,info)` | Allocates capacity-sized state but creates no valid factorization. Reinitialization discards previous factors. |
 | `factorize_fresh(H,S,shift,info,active_order=N)` | Reads the lower triangle of the active leading block and constructs factors for `H-shift*S`. Physical leading dimensions may exceed N. |
-| `replace_symmetric(index,delta_h,delta_s,info)` | Applies a symmetric row/column change at any one-based canonical index. Both delta vectors have conceptual length N. |
+| `replace_symmetric(index,delta_h,delta_s,info)` | Applies a symmetric row/column change at any one-based canonical index as two rank-one QR updates. Both delta vectors have conceptual length N. |
 | `append_symmetric(h_column,s_column,info)` | Appends the last row/column to an existing nonempty state. The first function must be factorized fresh. |
 | `delete_symmetric(index,info)` | Deletes an arbitrary canonical row/column and preserves survivor order. It cannot represent order zero. |
-| `solve(S,v_initial,x,lambda,tol,max_iter,norm_mode,rel_acc,num_iter,info)` | Performs inverse iteration using distinct input/output vectors. ECGPACK passes `norm_mode=0` for S normalization. |
+| `solve(S,v_initial,x,lambda,tol,max_iter,norm_mode,rel_acc,num_iter,info[,h,eigen_residual])` | Performs inverse iteration using distinct input/output vectors. ECGPACK passes `norm_mode=0` for S normalization. With the optional physical `h`, `H*x` and `S*x` are formed once; they give the Rayleigh quotient and, through `eigen_residual`, the relative physical eigenpair residual. Without `h` the quotient is formed from the factors as `Q*(R*x)` and no physical residual is available. |
 | `factorization_residual(H,S,v,absolute,relative,info)` | Checks the factor action against `(H-shift*S)*v` without changing state. This is not the physical eigenpair residual. |
 | metadata queries | Report validity, order, capacity, shift, and structural updates since the last fresh factorization. |
 | `clear()` | Releases the private state. |
@@ -206,7 +206,9 @@ leaves such diagonals through near-linear dependence alone. Whether the
 resulting eigenpair is usable is decided by the independent residual checks.
 
 `QR_ERR_NO_CONVERGENCE` may carry an approximate eigenpair. ECGPACK accepts it
-only when the independently computed physical residual meets the Q tolerance.
+only when the physical residual, which is computed from H and S and is
+independent of the direction-change test and of the factors, meets the Q
+tolerance.
 
 ## 4. Q workspace and ownership
 
@@ -372,7 +374,9 @@ functions.
 ## 8. Solve, residuals, and refresh policy
 
 Two residuals monitor different numerical relationships and neither may be
-removed:
+removed. They are not evaluated equally often: the physical residual is a
+by-product of every solve, while the factorization residual is a separate
+probe that runs only when it can tell something new.
 
 ### Physical generalized-eigenpair residual
 
@@ -383,9 +387,23 @@ relative = ||r_eig|| /
            (||H*c|| + |E|*||S*c|| + tiny)
 ```
 
-`ComputeQEigenpairResidual` evaluates the two symmetric products with
-`DSYMV('L',...)`, reading only the authoritative lower triangles. It is called
-on rank zero and must use BLAS directly rather than an MPI-collective wrapper.
+`SolveQ` passes the physical H to the qrlinalg `solve`. After the last
+inverse iteration `solve` forms `H*c` and `S*c` once with `DSYMV('L',...)`
+(`ZHEMV('L',...)` in `CG_0S`), reading only the authoritative lower triangles.
+The same two products give the energy as the shifted Rayleigh quotient
+
+```text
+E = sigma + c^T*(H*c - sigma*S*c) / (c^T*S*c)
+```
+
+and the relative residual above, which `solve` returns as `eigen_residual`.
+The residual does not depend on the normalization of c and is therefore
+evaluated before the S normalization. It is measured after every solve, at no
+matrix-vector cost beyond the products the energy needs. Because the energy
+and the residual are computed from H and S themselves, they stay meaningful
+when the factors have drifted. These products run on rank zero inside the
+serial qrlinalg and must use BLAS directly rather than an MPI-collective
+wrapper.
 
 ### Factorization residual
 
@@ -397,6 +415,31 @@ qrlinalg evaluates this action residual with a deterministic dense probe. The
 eigenvector is intentionally not used as the probe because it is nearly a
 null vector of the shifted matrix and can make harmless factorization error
 look disproportionately large.
+
+The probe costs four O(N^2) matrix-vector products (two symmetric ones and
+two dense ones with R and Q). That is not negligible next to a solve that
+converges in one or two inverse iterations, and the result changes only
+slowly from one structural update to the next. `SolveQ` therefore calls
+`ProbeQFactorization` after a solve only when at least one of these
+conditions holds:
+
+- the current factors have not been probed yet: `FactorizeQFresh` and the
+  workspace resets mark `LastFactorResidual` unknown (`huge`), so the first
+  solve after every fresh factorization probes the new factors;
+- `Q_FACTOR_PROBE_INTERVAL` (64) or more structural updates have been applied
+  since the last probe;
+- the physical eigenpair residual of the solve just completed exceeds its
+  tolerance, in which case the probe runs before the refresh decision; or
+- the stored factor residual itself exceeds its tolerance.
+
+Otherwise `Q_Workspace%LastFactorResidual` keeps the value of the last probe.
+The update count at the last probe (`FactorProbeUpdateCount`) lives on rank
+zero like the factors; both residual values are broadcast after every solve
+as before. Between two probes the physical residual is the safety net: when
+the factors no longer represent `H-sigma*S` well enough for the inverse
+iteration to reach an acceptable eigenpair, the physical residual stays above
+its tolerance, and that triggers the probe and the fresh-factorization retry
+below. The retry always probes its fresh factors.
 
 ### Current refresh thresholds
 
@@ -412,6 +455,8 @@ After a solve, a fresh factorization and one retry are requested when either
 ```text
 factor residual > max(1000*epsilon*N, 10*EIGVAL_TOLERANCE)
 ```
+
+(the value of the most recent probe, see above)
 
 or
 
@@ -543,8 +588,11 @@ the same structure as in `RG_0S`; the differences are the following:
   the bra derivative.
 - The energy gradient is `2*Re[conjg(c_k)*W] - |c_k|^2*(...)`, and the
   overlap penalty depends on `|S_ij|^2`.
-- The physical residual uses `ZHEMV('L',...)`, and complex arrays are passed
-  to MPI as real arrays of twice the length.
+- The physical residual and the Rayleigh quotient use `ZHEMV('L',...)` in the
+  complex `solve`, with the Hermitian forms `c^H*(...)`, and complex arrays
+  are passed to MPI as real arrays of twice the length.
+- In `replace_symmetric` the second rank-one update needs `Q^H*e_idx`, which
+  is the complex conjugate of row `idx` of Q.
 - The S-normalization is `c^H S c = 1`.
 
 ## 11. Memory and performance model
@@ -554,9 +602,15 @@ For matrix order N and active block size M:
 - physical H and S remain O(N^2) replicated storage, as in existing methods;
 - rank zero additionally owns dense Q and R, approximately 2*N^2 values;
 - staged current/previous active columns require O(M*N) storage;
-- one symmetric replacement costs O(N^2);
+- one symmetric replacement costs O(N^2): two rank-one QR updates, the second
+  of which has the unit left factor `e_idx` and reads `Q^T*e_idx` as row
+  `idx` of Q (`qr1up_unit`) instead of forming it by N dot products;
 - one inverse-iteration step costs O(N^2);
-- both residual checks cost O(N^2);
+- the energy and the physical residual together cost two symmetric
+  matrix-vector products per solve;
+- the factorization probe costs four O(N^2) matrix-vector products and runs
+  once per fresh factorization and per 64 structural updates in normal
+  operation;
 - an M-function trial costs O(M*N^2), excluding matrix-element evaluation;
 - fresh factorization costs O(N^3); and
 - append/delete operations use QR structural updates, with fresh rebuild as
@@ -628,6 +682,13 @@ The imported revision is
 per-directory `COPYING` files, README provenance, and
 `THIRD-PARTY-NOTICES.md` entry when updating or copying the implementation.
 
+The bundled copy carries one ECGPACK addition that is not part of upstream:
+`qr1up_unit` (`real_qr1up_unit` and `complex_qr1up_unit`), the rank-one update
+`A + e_j*v^H` of a full factorization. It is marked as a modification in the
+three affected source files, in `src/qrupdate/README.md`, and in
+`THIRD-PARTY-NOTICES.md`, and has to be carried over when the snapshot is
+updated.
+
 ## 13. Source map
 
 The primary production entry points are:
@@ -639,13 +700,13 @@ The primary production entry points are:
 | `src/workproc.f90` | `SetQActiveFunctions`, `CaptureQMatrixParameters`. |
 | `src/workproc.f90` | `QCanonicalMatrixElement`, `GatherQCanonicalColumn`, `StoreQCanonicalColumn`. |
 | `src/workproc.f90` | `AssembleQTrial`, `ApplyQTrial`, `AppendQTrial`, `EvaluateQAppendedTrial`, `TrimQFactors`. |
-| `src/workproc.f90` | `FactorizeQFresh`, `SolveQ`, `ComputeQEigenpairResidual`. |
+| `src/workproc.f90` | `FactorizeQFresh`, `SolveQ`, `ProbeQFactorization`. |
 | `src/workproc.f90` | `ComputeQOverlapPenalty`, `ComputeQOverlapPenaltyAndAddGradient`, `GetQOverlapStatistics`. |
 | `src/workproc.f90` | `EnergyQA`, `EnergyQAM`, `EnergyQB`. |
 | `src/workproc.f90` | `BasisEnlQ`, `OptCycleQ`, `FullOpt1Q`. |
 | `src/workproc.f90` | `DeleteQMaskedFunctions` and Q branches in cleanup/output routines. |
 | `src/main.f90` | BBOP dispatch for method Q. |
-| `src/qrlinalg.f90` | QR state, structural updates, inverse iteration, and factor residual. |
+| `src/qrlinalg.f90` | QR state, structural updates, inverse iteration with the physical eigenpair residual, and factor residual. |
 | `src/qrupdate/` | Generic real/complex QR-update kernels. |
 | `src/BLAS.f`, `src/LAPACK.f` | Bundled Netlib provider shared by ECGPACK and qrlinalg. |
 | `Makefile` | Dependency order, preprocessing, provider selection, and OpenMP build isolation. |
@@ -758,7 +819,8 @@ Before approving a Q change, confirm all of the following:
 - every factor status and eigenpair is synchronized across MPI ranks;
 - failed or uncertain transactions recover through proven physical state and
   fresh factorization;
-- physical and factorization residuals are both monitored;
+- physical and factorization residuals are both monitored: the physical one
+  after every solve, the factorization one by the probe policy of section 8;
 - saved H/S and wave functions remain in canonical user-visible order;
 - basis-specific metadata follows every accepted, deleted, or saved function;
   and

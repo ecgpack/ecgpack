@@ -24,7 +24,7 @@
 module qrlinalg
   use iso_fortran_env, only: int64
   use wp_def, only: wp
-  use qrupdate, only: qr1up, qrinc, qrdec, qrinr, qrder
+  use qrupdate, only: qr1up, qr1up_unit, qrinc, qrdec, qrinr, qrder
   implicit none
   private
 
@@ -890,9 +890,12 @@ contains
   !                 d*e_idx^T + e_idx*(d-d(idx)*e_idx)^T .
   !
   !The subtraction of d(idx)*e_idx prevents the diagonal change from being
-  !applied twice. The operation applies these two rank-one terms sequentially
-  !with qr1up. qr1up overwrites its u and v arguments, so both calls use
-  !state-owned copies and leave delta_h and delta_s unchanged.
+  !applied twice. The operation applies these two rank-one terms sequentially.
+  !The first uses qr1up, which may overwrite its u and v arguments. The left
+  !factor of the second term is the unit vector e_idx, so that term uses
+  !qr1up_unit, which reads Q^T*e_idx from row idx of Q instead of forming it
+  !by n dot products. Both calls use state-owned copies and leave delta_h and
+  !delta_s unchanged.
   !
   !  Input parameters:
   !    idx     - One-based index of the replaced row and column.
@@ -914,8 +917,8 @@ contains
   !              length other than n.
   !
   !All validation precedes modification of Q or R, so every error status
-  !preserves the complete state. The validated qr1up calls have no numerical
-  !failure return. No allocation is performed.
+  !preserves the complete state. The validated qr1up and qr1up_unit calls have
+  !no numerical failure return. No allocation is performed.
     class(qr_real_state), intent(inout) :: self
     integer, intent(in) :: idx
     real(wp), intent(in) :: delta_h(:), delta_s(:)
@@ -950,18 +953,17 @@ contains
                self%update_work(2 * matrix_n + 1:4 * matrix_n))
 
     !Then apply e_idx*(d-d(idx)*e_idx)^T. Reconstruct d because qr1up is
-    !permitted to overwrite both vectors supplied to the first call.
+    !permitted to overwrite both vectors supplied to the first call. The unit
+    !left factor is passed as its index.
     do i = 1, matrix_n
-      self%update_work(i) = 0.0_wp
       self%update_work(matrix_n + i) = delta_h(i) - &
                                            self%shift * delta_s(i)
     end do
-    self%update_work(idx) = 1.0_wp
     self%update_work(matrix_n + idx) = 0.0_wp
-    call qr1up(matrix_n, matrix_n, matrix_n, self%q, self%capacity, &
-               self%r, self%capacity, self%update_work(1:matrix_n), &
-               self%update_work(matrix_n + 1:2 * matrix_n), &
-               self%update_work(2 * matrix_n + 1:4 * matrix_n))
+    call qr1up_unit(matrix_n, matrix_n, self%q, self%capacity, &
+                    self%r, self%capacity, idx, &
+                    self%update_work(matrix_n + 1:2 * matrix_n), &
+                    self%update_work(2 * matrix_n + 1:4 * matrix_n))
 
     self%structural_updates = self%structural_updates + 1_int64
     self%updates_since_fresh = self%updates_since_fresh + 1_int64
@@ -982,7 +984,9 @@ contains
   !
   !An accepted roundoff-sized imaginary part is discarded before either
   !rank-one update. qr1up interprets its complex update as u*v^H, so the two
-  !terms reconstruct the conjugate row without modifying caller arrays.
+  !terms reconstruct the conjugate row without modifying caller arrays. The
+  !second term has the unit left factor e_idx and is applied by qr1up_unit,
+  !which reads Q^H*e_idx as the conjugated row idx of Q.
   !
   !  Input parameters:
   !    idx     - One-based index of the replaced row and column.
@@ -1062,20 +1066,19 @@ contains
                self%real_work(1:matrix_n))
 
     !Apply e_idx*(d-d(idx)*e_idx)^H. Re-form d after the destructive first
-    !call and set its diagonal component to exact complex zero.
+    !call and set its diagonal component to exact complex zero. The unit left
+    !factor is passed as its index.
     do i = 1, matrix_n
-      self%update_work(i) = cmplx(0.0_wp, 0.0_wp, kind=wp)
       self%update_work(matrix_n + i) = delta_h(i) - &
         cmplx(self%shift, 0.0_wp, kind=wp) * delta_s(i)
     end do
-    self%update_work(idx) = cmplx(1.0_wp, 0.0_wp, kind=wp)
     self%update_work(matrix_n + idx) = &
       cmplx(0.0_wp, 0.0_wp, kind=wp)
-    call qr1up(matrix_n, matrix_n, matrix_n, self%q, self%capacity, &
-               self%r, self%capacity, self%update_work(1:matrix_n), &
-               self%update_work(matrix_n + 1:2 * matrix_n), &
-               self%update_work(2 * matrix_n + 1:3 * matrix_n), &
-               self%real_work(1:matrix_n))
+    call qr1up_unit(matrix_n, matrix_n, self%q, self%capacity, &
+                    self%r, self%capacity, idx, &
+                    self%update_work(matrix_n + 1:2 * matrix_n), &
+                    self%update_work(2 * matrix_n + 1:3 * matrix_n), &
+                    self%real_work(1:matrix_n))
 
     self%structural_updates = self%structural_updates + 1_int64
     self%updates_since_fresh = self%updates_since_fresh + 1_int64
@@ -1417,7 +1420,8 @@ contains
   end subroutine complex_delete_symmetric
 
   subroutine real_solve(self, s, v_initial, x, lambda, tol, max_iter, &
-                        norm_mode, rel_acc, num_iter, info)
+                        norm_mode, rel_acc, num_iter, info, h, &
+                        eigen_residual)
   !Subroutine real_solve finds one eigenvalue and its eigenvector for the real
   !generalized symmetric eigenvalue problem
   !
@@ -1467,11 +1471,22 @@ contains
   !
   ! lambda = shift + (x^T*(H-shift*S)*x)/(x^T*S*x).
   !
-  !The state does not store H-shift*S separately. Its action on x is evaluated
-  !as Q*(R*x). S may have physical extents larger than n; DSYMV uses its actual
-  !first extent as the leading dimension and references only the lower triangle
-  !of the leading n by n block. The upper triangle and inactive storage may
-  !contain unrelated values.
+  !The state does not store H-shift*S separately. When the caller supplies the
+  !physical matrix H, the two products H*x and S*x are formed once and the
+  !numerator is accumulated as x^T*(H*x-shift*S*x). The same two products then
+  !give, at no further matrix-vector cost, the relative residual of the
+  !physical generalized eigenproblem,
+  !
+  ! eigen_residual = ||H*x-lambda*S*x||_2 /
+  !                  (||H*x||_2+abs(lambda)*||S*x||_2+tiny(1.0_wp)) ,
+  !
+  !which does not depend on the normalization of x. Without H, the action of
+  !H-shift*S on x is evaluated from the stored factors as Q*(R*x); lambda is
+  !then the Rayleigh quotient of the matrix represented by the factors, and no
+  !physical residual is available. S and H may have physical extents larger
+  !than n; DSYMV uses the actual first extent as the leading dimension and
+  !references only the lower triangle of the leading n by n block. The upper
+  !triangle and inactive storage may contain unrelated values.
   !
   !  Input parameters:
   !    s         - Real array with at least n rows and n columns. The lower
@@ -1488,6 +1503,11 @@ contains
   !                  0: x^T*S*x = 1;
   !                  1: x^T*x = 1;
   !                other: max(abs(x)) = 1.
+  !    h         - Optional real array with at least n rows and n columns. The
+  !                lower triangle of its leading n by n block contains the
+  !                symmetric matrix H whose shifted factors are stored in self.
+  !                When present, lambda is computed from H and S as described
+  !                above instead of from Q and R.
   !
   !  Input/output parameter:
   !    self      - A valid real QR state of active order n. Q, R, n, shift,
@@ -1515,8 +1535,13 @@ contains
   !                subnormal, or not finite, or when an iteration produces a
   !                numerically zero or non-finite vector;
   !                QR_ERR_NO_CONVERGENCE when max_iter is reached. In this
-  !                case x, lambda, rel_acc, and num_iter describe the best
-  !                approximation reached.
+  !                case x, lambda, rel_acc, eigen_residual, and num_iter
+  !                describe the best approximation reached.
+  !    eigen_residual - Optional relative residual of the physical eigenpair
+  !                (lambda,x) defined above. It requires h:
+  !                QR_ERR_INVALID_ARGUMENT is returned when eigen_residual is
+  !                present and h is absent. It is huge until lambda has been
+  !                computed.
   !
   !No allocation is performed. On an error detected before the first
   !iteration, x and lambda are zero, num_iter is zero, and rel_acc is huge.
@@ -1529,16 +1554,21 @@ contains
     integer, intent(in) :: max_iter, norm_mode
     real(wp), intent(out) :: rel_acc
     integer, intent(out) :: num_iter, info
-    integer :: matrix_n
+    real(wp), intent(in), contiguous, optional :: h(:,:)
+    real(wp), intent(out), optional :: eigen_residual
+    integer :: i, matrix_n
     real(wp) :: coefficient, current_norm_squared, eigenvector_norm_squared
     real(wp) :: max_component, norm_of_diff, norm_of_diff_previous
     real(wp) :: overlap_norm_squared, shifted_numerator
+    real(wp) :: h_norm_squared, residual_element, residual_norm_squared
+    real(wp) :: s_norm_squared
     logical :: not_converged
 
     x = 0.0_wp
     lambda = 0.0_wp
     rel_acc = huge(1.0_wp)
     num_iter = 0
+    if (present(eigen_residual)) eigen_residual = huge(1.0_wp)
     info = QR_ERR_INVALID_STATE
 
     !Verify the factorization state, array dimensions, iteration limit, and
@@ -1550,6 +1580,15 @@ contains
     if (size(s, 1) < matrix_n .or. size(s, 2) < matrix_n .or. &
         size(v_initial) /= matrix_n .or. size(x) /= matrix_n) then
       info = QR_ERR_DIMENSION_MISMATCH
+      return
+    end if
+    if (present(h)) then
+      if (size(h, 1) < matrix_n .or. size(h, 2) < matrix_n) then
+        info = QR_ERR_DIMENSION_MISMATCH
+        return
+      end if
+    else if (present(eigen_residual)) then
+      info = QR_ERR_INVALID_ARGUMENT
       return
     end if
     if (max_iter <= 0) then
@@ -1662,16 +1701,53 @@ contains
       return
     end if
 
-    !Evaluate M*x as Q*(R*x), form x^T*M*x, and add the stored shift to the
-    !quotient. This requires two matrix-vector products but no stored M matrix.
-    call dgemv('N', matrix_n, matrix_n, 1.0_wp, self%r, self%capacity, &
-               x, 1, 0.0_wp, &
-               self%solve_work(matrix_n + 1:2 * matrix_n), 1)
-    call dgemv('N', matrix_n, matrix_n, 1.0_wp, self%q, self%capacity, &
-               self%solve_work(matrix_n + 1:2 * matrix_n), 1, 0.0_wp, &
-               self%solve_work(1:matrix_n), 1)
-    shifted_numerator = dot_product(x, self%solve_work(1:matrix_n))
-    lambda = self%shift + shifted_numerator / overlap_norm_squared
+    if (present(h)) then
+      !solve_work(1:n) still holds S*x. Form H*x in the second slice from the
+      !lower triangle of H and accumulate x^T*(H*x-shift*S*x). One symmetric
+      !product replaces the two dense products with R and Q used below, and
+      !the quotient refers to the physical matrices rather than to factors
+      !that may have drifted through structural updates.
+      call dsymv('L', matrix_n, 1.0_wp, h, size(h, 1), x, 1, 0.0_wp, &
+                 self%solve_work(matrix_n + 1:2 * matrix_n), 1)
+      shifted_numerator = 0.0_wp
+      do i = 1, matrix_n
+        shifted_numerator = shifted_numerator + x(i) * &
+          (self%solve_work(matrix_n + i) - &
+           self%shift * self%solve_work(i))
+      end do
+      lambda = self%shift + shifted_numerator / overlap_norm_squared
+
+      !The relative physical residual reuses H*x and S*x. It is invariant
+      !under the scaling of x, so it is evaluated before normalization.
+      if (present(eigen_residual)) then
+        h_norm_squared = 0.0_wp
+        s_norm_squared = 0.0_wp
+        residual_norm_squared = 0.0_wp
+        do i = 1, matrix_n
+          residual_element = self%solve_work(matrix_n + i) - &
+                             lambda * self%solve_work(i)
+          h_norm_squared = h_norm_squared + &
+                           self%solve_work(matrix_n + i)**2
+          s_norm_squared = s_norm_squared + self%solve_work(i)**2
+          residual_norm_squared = residual_norm_squared + &
+                                  residual_element**2
+        end do
+        eigen_residual = sqrt(residual_norm_squared) / &
+          (sqrt(h_norm_squared) + abs(lambda) * sqrt(s_norm_squared) + &
+           tiny(1.0_wp))
+      end if
+    else
+      !Evaluate M*x as Q*(R*x), form x^T*M*x, and add the stored shift to the
+      !quotient. This requires two matrix-vector products but no M matrix.
+      call dgemv('N', matrix_n, matrix_n, 1.0_wp, self%r, self%capacity, &
+                 x, 1, 0.0_wp, &
+                 self%solve_work(matrix_n + 1:2 * matrix_n), 1)
+      call dgemv('N', matrix_n, matrix_n, 1.0_wp, self%q, self%capacity, &
+                 self%solve_work(matrix_n + 1:2 * matrix_n), 1, 0.0_wp, &
+                 self%solve_work(1:matrix_n), 1)
+      shifted_numerator = dot_product(x, self%solve_work(1:matrix_n))
+      lambda = self%shift + shifted_numerator / overlap_norm_squared
+    end if
 
     !Apply the normalization requested by the caller. No scaling is required
     !for other norm_mode values because each inverse iterate already has unit
@@ -1690,7 +1766,8 @@ contains
   end subroutine real_solve
 
   subroutine complex_solve(self, s, v_initial, x, lambda, tol, max_iter, &
-                           norm_mode, rel_acc, num_iter, info)
+                           norm_mode, rel_acc, num_iter, info, h, &
+                           eigen_residual)
   !Subroutine complex_solve finds one eigenvalue and its eigenvector for the
   !complex generalized Hermitian eigenvalue problem
   !
@@ -1735,11 +1812,21 @@ contains
   !
   ! lambda = shift + real(x^H*(H-shift*S)*x)/(x^H*S*x).
   !
-  !The product (H-shift*S)*x is evaluated as Q*(R*x). S may have physical
-  !extents larger than n; ZHEMV uses size(S,1) as its leading dimension and
-  !references only the lower triangle of the leading n by n block. Diagonal
-  !elements of that block are assumed real and S is expected to be positive
-  !definite. Upper-triangular and inactive entries are ignored.
+  !When the caller supplies the physical Hermitian matrix H, the products H*x
+  !and S*x are formed once, the numerator is accumulated as
+  !real(x^H*(H*x-shift*S*x)), and the same two products give the relative
+  !residual of the physical generalized eigenproblem,
+  !
+  ! eigen_residual = ||H*x-lambda*S*x||_2 /
+  !                  (||H*x||_2+abs(lambda)*||S*x||_2+tiny(1.0_wp)) ,
+  !
+  !which does not depend on the normalization or phase of x. Without H, the
+  !product (H-shift*S)*x is evaluated as Q*(R*x) and no physical residual is
+  !available. S and H may have physical extents larger than n; ZHEMV uses the
+  !actual first extent as its leading dimension and references only the lower
+  !triangle of the leading n by n block. Diagonal elements of that block are
+  !assumed real and S is expected to be positive definite. Upper-triangular
+  !and inactive entries are ignored.
   !
   !  Input parameters:
   !    s         - Complex array with at least n rows and n columns. The lower
@@ -1755,6 +1842,10 @@ contains
   !                  1: x^H*x = 1;
   !                other: the largest magnitude among every real and imaginary
   !                       component of x is one.
+  !    h         - Optional complex array with at least n rows and n columns
+  !                whose leading lower triangle contains the Hermitian matrix
+  !                H represented by the stored shifted factors. When present,
+  !                lambda is computed from H and S instead of from Q and R.
   !
   !  Input/output parameter:
   !    self      - A valid complex QR state of active order n. Numerical
@@ -1781,6 +1872,11 @@ contains
   !                diagonal of R, or a zero or non-finite iterate;
   !                QR_ERR_NO_CONVERGENCE when max_iter is reached. The latter
   !                status still returns the final eigenpair approximation.
+  !    eigen_residual - Optional real relative residual of the physical
+  !                eigenpair (lambda,x) defined above. It requires h:
+  !                QR_ERR_INVALID_ARGUMENT is returned when eigen_residual is
+  !                present and h is absent. It is huge until lambda has been
+  !                computed.
   !
   !No allocation is performed. Before-iteration errors return zero x and
   !lambda, zero num_iter, and huge rel_acc.
@@ -1793,11 +1889,14 @@ contains
     integer, intent(in) :: max_iter, norm_mode
     real(wp), intent(out) :: rel_acc
     integer, intent(out) :: num_iter, info
-    integer :: matrix_n
+    complex(wp), intent(in), contiguous, optional :: h(:,:)
+    real(wp), intent(out), optional :: eigen_residual
+    integer :: i, matrix_n
     real(wp) :: current_norm_squared, eigenvector_norm_squared
     real(wp) :: max_component, norm_of_diff, norm_of_diff_previous
     real(wp) :: overlap_norm_squared, shifted_numerator
-    complex(wp) :: coefficient
+    real(wp) :: h_norm_squared, residual_norm_squared, s_norm_squared
+    complex(wp) :: coefficient, residual_element
     complex(wp), parameter :: complex_one = (1.0_wp, 0.0_wp)
     complex(wp), parameter :: complex_zero = (0.0_wp, 0.0_wp)
     logical :: not_converged
@@ -1806,6 +1905,7 @@ contains
     lambda = 0.0_wp
     rel_acc = huge(1.0_wp)
     num_iter = 0
+    if (present(eigen_residual)) eigen_residual = huge(1.0_wp)
     info = QR_ERR_INVALID_STATE
 
     !Verify all state, dimension, iteration-limit, and starting-vector
@@ -1817,6 +1917,15 @@ contains
     if (size(s, 1) < matrix_n .or. size(s, 2) < matrix_n .or. &
         size(v_initial) /= matrix_n .or. size(x) /= matrix_n) then
       info = QR_ERR_DIMENSION_MISMATCH
+      return
+    end if
+    if (present(h)) then
+      if (size(h, 1) < matrix_n .or. size(h, 2) < matrix_n) then
+        info = QR_ERR_DIMENSION_MISMATCH
+        return
+      end if
+    else if (present(eigen_residual)) then
+      info = QR_ERR_INVALID_ARGUMENT
       return
     end if
     if (max_iter <= 0) then
@@ -1929,19 +2038,60 @@ contains
       return
     end if
 
-    !Evaluate M*x=Q*(R*x), form real(x^H*M*x), and add the stored shift. The
-    !imaginary roundoff part of the Hermitian quadratic form is discarded.
-    call zgemv('N', matrix_n, matrix_n, complex_one, self%r, &
-               self%capacity, x, 1, complex_zero, &
-               self%solve_work(matrix_n + 1:2 * matrix_n), 1)
-    call zgemv('N', matrix_n, matrix_n, complex_one, self%q, &
-               self%capacity, &
-               self%solve_work(matrix_n + 1:2 * matrix_n), 1, &
-               complex_zero, self%solve_work(1:matrix_n), 1)
-    shifted_numerator = real( &
-                            dot_product(x, &
-                              self%solve_work(1:matrix_n)), wp)
-    lambda = self%shift + shifted_numerator / overlap_norm_squared
+    if (present(h)) then
+      !solve_work(1:n) still holds S*x. Form H*x in the second slice from the
+      !lower triangle of H and accumulate real(x^H*(H*x-shift*S*x)); the
+      !imaginary roundoff part of the Hermitian quadratic form is discarded.
+      !One Hermitian product replaces the two dense products with R and Q
+      !used below, and the quotient refers to the physical matrices.
+      call zhemv('L', matrix_n, complex_one, h, size(h, 1), x, 1, &
+                 complex_zero, &
+                 self%solve_work(matrix_n + 1:2 * matrix_n), 1)
+      shifted_numerator = 0.0_wp
+      do i = 1, matrix_n
+        shifted_numerator = shifted_numerator + real(conjg(x(i)) * &
+          (self%solve_work(matrix_n + i) - &
+           cmplx(self%shift, 0.0_wp, kind=wp) * self%solve_work(i)), wp)
+      end do
+      lambda = self%shift + shifted_numerator / overlap_norm_squared
+
+      !The relative physical residual reuses H*x and S*x. It is invariant
+      !under the scaling of x, so it is evaluated before normalization.
+      if (present(eigen_residual)) then
+        h_norm_squared = 0.0_wp
+        s_norm_squared = 0.0_wp
+        residual_norm_squared = 0.0_wp
+        do i = 1, matrix_n
+          residual_element = self%solve_work(matrix_n + i) - &
+            cmplx(lambda, 0.0_wp, kind=wp) * self%solve_work(i)
+          h_norm_squared = h_norm_squared + &
+            real(self%solve_work(matrix_n + i), wp)**2 + &
+            aimag(self%solve_work(matrix_n + i))**2
+          s_norm_squared = s_norm_squared + &
+            real(self%solve_work(i), wp)**2 + &
+            aimag(self%solve_work(i))**2
+          residual_norm_squared = residual_norm_squared + &
+            real(residual_element, wp)**2 + aimag(residual_element)**2
+        end do
+        eigen_residual = sqrt(residual_norm_squared) / &
+          (sqrt(h_norm_squared) + abs(lambda) * sqrt(s_norm_squared) + &
+           tiny(1.0_wp))
+      end if
+    else
+      !Evaluate M*x=Q*(R*x), form real(x^H*M*x), and add the stored shift. The
+      !imaginary roundoff part of the Hermitian quadratic form is discarded.
+      call zgemv('N', matrix_n, matrix_n, complex_one, self%r, &
+                 self%capacity, x, 1, complex_zero, &
+                 self%solve_work(matrix_n + 1:2 * matrix_n), 1)
+      call zgemv('N', matrix_n, matrix_n, complex_one, self%q, &
+                 self%capacity, &
+                 self%solve_work(matrix_n + 1:2 * matrix_n), 1, &
+                 complex_zero, self%solve_work(1:matrix_n), 1)
+      shifted_numerator = real( &
+                              dot_product(x, &
+                                self%solve_work(1:matrix_n)), wp)
+      lambda = self%shift + shifted_numerator / overlap_norm_squared
+    end if
 
     !Apply S or Euclidean normalization when requested. For every other mode,
     !retain the real/imaginary component scaling established in the iteration.
