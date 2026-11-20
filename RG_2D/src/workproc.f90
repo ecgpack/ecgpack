@@ -7,11 +7,10 @@ module workproc
 #ifdef USE_CUDA
   use gpu_backend, only: gpu_eig_active, gpu_dsygvx
 #endif
-  use iso_fortran_env, only: int64
   use qrlinalg, only: qr_real_state,QR_SUCCESS,QR_ERR_INVALID_ARGUMENT, &
-    QR_ERR_ALLOCATION,QR_ERR_INVALID_STATE, &
+    QR_ERR_ALLOCATION,QR_ERR_SINGULAR,QR_ERR_INVALID_STATE, &
     QR_ERR_DIMENSION_MISMATCH,QR_ERR_NO_CONVERGENCE, &
-    QR_ERR_NONPOSITIVE_OVERLAP
+    QR_ERR_NONPOSITIVE_OVERLAP,QR_ERR_BATCH_FULL
   implicit none
 
 !The Q method keeps the physical basis in its canonical order. Unlike the G
@@ -23,33 +22,46 @@ module workproc
 !This storage is deliberately kept in workproc because the Q BBOP drivers and
 !their trial/acceptance policy belong here. Physical H, S, nonlinear
 !parameters, raw diagonal overlaps, derivatives, and linear coefficients
-!remain in their existing Glob_ arrays. Factors is initialized and used only
-!on rank zero because qrlinalg is serial; the physical matrices and the small
-!relationship flags remain under workproc's MPI-aware control. Each numerical
-!Q entry point constructs or updates that state through the transaction
-!helpers below before requesting an eigenpair.
+!remain in their existing Glob_ arrays. Factors is the qrlinalg state: a base
+!QR factorization of H-shift*S whose rows are distributed over the MPI ranks,
+!plus a batch ("border") of functions whose changed or appended columns are
+!deferred instead of being applied to the factors. Every qrlinalg procedure is
+!collective: all ranks call it with identical replicated arguments and obtain
+!identical results and status values. The Q helpers below therefore never
+!guard such a call by the rank number and never broadcast its results. Each
+!numerical Q entry point constructs or updates that state through the
+!transaction helpers below before requesting an eigenpair.
   integer,parameter :: Q_METHOD_SUCCESS=QR_SUCCESS
   integer,parameter :: Q_METHOD_INVALID_ARGUMENT=QR_ERR_INVALID_ARGUMENT
   integer,parameter :: Q_METHOD_ALLOCATION_ERROR=QR_ERR_ALLOCATION
   integer,parameter :: Q_METHOD_INVALID_STATE=QR_ERR_INVALID_STATE
   integer,parameter :: Q_METHOD_DIMENSION_MISMATCH=QR_ERR_DIMENSION_MISMATCH
-!Number of structural QR updates after which SolveQ repeats the factorization
-!probe even though no other condition asks for it.
-  integer,parameter :: Q_FACTOR_PROBE_INTERVAL=64
+
+!Q_STALE_SHIFT_PASSES is the average number of inverse-iteration passes per
+!solve above which BASIS_ENL regards the shift as stale and retargets it at
+!the next function boundary (see RetargetQStaleShift). With a shift at its
+!normal distance from the eigenvalue a solve needs 1.1 to 1.9 passes on
+!average.
+  integer,parameter :: Q_STALE_SHIFT_PASSES=4
 
   type :: QMethodWorkspace
-    !The QR state is meaningful only on rank zero. Keeping it in the same
-    !workspace makes ownership and lifetime explicit without exposing private
-    !Q and R storage to the remainder of ECGPACK.
+    !The QR state exists on every rank: the rows of the base factors are
+    !distributed, the deferred columns and all small matrices are replicated.
+    !Keeping it in the same workspace makes ownership and lifetime explicit
+    !without exposing private storage to the remainder of ECGPACK.
     type(qr_real_state) :: Factors
 
     !MatrixOrder is the active order represented by the physical matrices.
     !Capacity is the leading dimension allocated for Glob_H and Glob_S.
     !MaxActive is the largest simultaneous optimization block in this BBOP.
+    !MaxPending is the batch size requested from qrlinalg: the number of
+    !functions whose updates can be deferred before a fresh factorization
+    !("flush") is required. It is chosen by QBatchSize.
     integer :: MatrixOrder=0
     integer :: Capacity=0
     integer :: MaxActive=0
     integer :: NumActive=0
+    integer :: MaxPending=0
 
     !These flags describe relationships owned by workproc. They are not
     !duplicates of qrlinalg's internal validity flag: qrlinalg cannot know
@@ -60,13 +72,19 @@ module workproc
     logical :: TrialIsReady=.false.
     logical :: TrialHasDerivatives=.false.
 
+    !ShiftIsProvisional is true while BASIS_ENL builds its first block from an
+    !empty basis whose CURRENT_ENERGY is only a placeholder. The shift is then
+    !an estimate taken from the candidate block itself, and BasisEnlQ replaces
+    !it by the first accepted energy (RetargetQStaleShift).
+    logical :: ShiftIsProvisional=.false.
+
     !Q_ActiveFunction(a) is the canonical basis index represented by optimizer
     !block a. Q_ActivePosition(i) is a, or zero when function i is inactive.
     integer,allocatable :: ActiveFunction(:)
     integer,allocatable :: ActivePosition(:)
 
-    !A trial is assembled completely before any physical matrix column or QR
-    !factor is changed. Columns here are full conceptual symmetric columns,
+    !A trial is assembled completely before any physical matrix column or the
+    !QR state is changed. Columns here are full conceptual symmetric columns,
     !even though only the lower triangles of Glob_H and Glob_S are canonical.
     !Previous columns permit a failed multi-column transaction to be restored.
     real(wp),allocatable :: PreviousH(:,:),PreviousS(:,:)
@@ -83,26 +101,35 @@ module workproc
     real(wp) :: AcceptedEnergy=ZERO
     logical :: AcceptedPointIsStored=.false.
 
-    !These diagnostics distinguish inverse-iteration accuracy from agreement
-    !between the updated factors and the physical matrices. Both are relative
-    !action residuals. LastEigenpairResidual belongs to the most recently
-    !returned eigenpair. LastFactorResidual is the result of the most recent
-    !factorization probe, which SolveQ does not repeat after every solve; it
-    !is huge while the current factors have not been probed yet.
-    !FactorProbeUpdateCount is the lifetime structural-update count of Factors
-    !at that probe and, like Factors, is meaningful only on rank zero.
+    !LastEigenpairResidual is the relative residual of the physical
+    !generalized eigenproblem for the most recently returned eigenpair.
+    !LastFactorResidual is the result of the probe that FactorizeQFresh runs
+    !on every fresh factorization; it is huge while no probe has succeeded.
     real(wp) :: LastEigenpairResidual=huge(ONE)
     real(wp) :: LastFactorResidual=huge(ONE)
-    integer(int64) :: FactorProbeUpdateCount=0_int64
+
+    !Statistics of one BBOP step, printed by PrintQStatistics.
+    !FreshFactorizations counts every successful fresh factorization. Of
+    !these, BatchFlushes were requested because the batch of deferred
+    !functions could not take the next active set, SingularFlushes because
+    !qrlinalg could not factorize the committed part of the batch,
+    !ResidualFlushes by SolveQ after an unacceptable eigenpair, and
+    !DirectTrials because an active set was larger than the batch, and
+    !ShiftRetargets because BASIS_ENL moved a provisional or stale shift
+    !(RetargetQStaleShift). PolishedSolves counts the solves that became
+    !acceptable only through the additional passes of SolveQ's second stage,
+    !without a fresh factorization.
     integer :: FreshFactorizations=0
+    integer :: BatchFlushes=0
+    integer :: SingularFlushes=0
+    integer :: ResidualFlushes=0
+    integer :: DirectTrials=0
+    integer :: ShiftRetargets=0
+    integer :: PolishedSolves=0
 
     !The qrlinalg solve requires distinct input and output vectors; the
-    !factorization probe reuses InitialVector for its probe vector. DeltaH and
-    !DeltaS hold one replacement column. They are replicated because the
-    !surrounding transaction is collective, but only rank zero passes them to
-    !qrlinalg.
+    !factorization probe reuses InitialVector for its probe vector.
     real(wp),allocatable :: InitialVector(:),SolvedVector(:)
-    real(wp),allocatable :: DeltaH(:),DeltaS(:)
   end type QMethodWorkspace
 
   type(QMethodWorkspace),save :: Q_Workspace
@@ -4185,16 +4212,75 @@ contains
 
   end subroutine ReallocateBasisFuncData
 
+  function QBatchSize(Capacity,MaxActive) result(BatchSize)
+!Function QBatchSize returns the batch size that the Q workspace requests from
+!qrlinalg (max_pending): the largest number of functions whose changed or
+!appended columns are deferred before a fresh factorization is required.
+!
+!Default batch, min(max(32,Capacity/64),256). Every pending function adds
+!O(n) work, replicated on all ranks, to each energy evaluation, and a full
+!batch costs one fresh factorization ("flush"), so the best batch balances
+!the two and grows in proportion to the order. Measured with OPT_CYCLE on a
+!2850-function, four-particle basis in extended precision with 14 ranks
+!(about 128 evaluations per function; a flush takes 2.5 s with the
+!distributed factorization): an evaluation costs 23.2 ms with an empty batch
+!plus 0.06 to 0.13 ms per pending function, and the average over about 75
+!functions, flushes included, was 24.97 ms with a batch of 16 (4 flushes),
+!24.58 ms with 32 (2 flushes), 25.63 ms with 64 (1 flush), and 29.5 ms with
+!178 (Capacity/16, the default while the factorization was serial; no flush
+!within 98 functions). The optimum is flat from 16 to 64 there, and
+!Capacity/64 gives 44. With one rank a flush of that order costs 40 s (serial
+!LAPACK) and a function 17 s, so a batch of 44 adds about 5 per cent, a
+!larger batch would gain little, and one formula serves both cases.
+!
+!All functions that are active at the same time must fit into the batch
+!together with some room for the functions optimized before them, so the
+!batch is enlarged to MaxActive+8 when that does not exceed
+!max(default,Capacity/(4*sqrt(P))), P being the number of MPI ranks. A larger
+!active block (a FULL_OPT1 range of more than that many functions) does not
+!get a batch of its own size: ApplyQTrial and AppendQTrial apply such a trial
+!directly, by storing the columns and factorizing fresh. A trial that changes
+!M functions through the batch costs M solves with the base factors, whose
+!cost falls with the number of ranks, plus work on the batch that grows as
+!M**2*n and is replicated on every rank, while the distributed factorization
+!of a direct trial becomes cheaper with every rank; hence the limit falls as
+!1/sqrt(P). Measured with FULL_OPT1 on the same basis, seconds per trial for
+!the transaction and the solve, through the batch and direct: with 14 ranks
+!1.95 and 2.50 for M=178, 6.2 and 2.52 for M=356, 24.1 and 2.57 for M=700
+!(the two are equal near M=210; the limit is 190); with one rank 10.1 and
+!48.0 for M=356, 25.0 and 46.5 for M=700 (limit 712). The limit also keeps
+!the replicated batch storage (four Capacity-by-batch arrays per rank) below
+!that of Glob_H and Glob_S.
+!
+!The result depends only on replicated values, so it is the same on all ranks.
+!
+!Arguments:
+    integer,intent(in) :: Capacity,MaxActive
+    integer BatchSize
+!Local variables:
+    integer DirectLimit
+
+    BatchSize=min(max(32,Capacity/64),256)
+    DirectLimit=max(BatchSize, &
+      int(Capacity/(4*sqrt(real(max(Glob_NumOfProcs,1),wp)))))
+    if (MaxActive+8<=DirectLimit) BatchSize=max(BatchSize,MaxActive+8)
+    BatchSize=max(1,min(BatchSize,Capacity))
+
+  end function QBatchSize
+
   subroutine PrepareQWorkspace(MatrixOrder,Capacity,MaxActive,ErrorCode)
 !Subroutine PrepareQWorkspace allocates the workproc-owned storage shared by
 !the Q energy routines and one Q BBOP driver. It does not allocate Glob_H or
-!Glob_S and does not initialize qrlinalg. The BBOP driver owns those lifetimes
-!and must call this routine only after Glob_npt has been initialized.
+!Glob_S and does not initialize qrlinalg: FactorizeQFresh (or TrimQFactors
+!for an empty basis) initializes the QR state when it is first needed. The
+!BBOP driver owns those lifetimes and must call this routine only after
+!Glob_npt has been initialized.
 !
 !The physical matrices can have capacity greater than MatrixOrder during basis
 !enlargement. Only indices 1 through MatrixOrder belong to the represented
 !problem. MaxActive is normally Kstep for BASIS_ENL, NumOfFuncToOpt for
-!OPT_CYCLE, and FinalFunc-InitFunc+1 for FULL_OPT1.
+!OPT_CYCLE, and FinalFunc-InitFunc+1 for FULL_OPT1. It also selects the batch
+!size of deferred updates (see QBatchSize).
 !
 !Arguments:
     integer,intent(in)  :: MatrixOrder,Capacity,MaxActive
@@ -4222,8 +4308,6 @@ contains
              Q_Workspace%AcceptedParam(Glob_npt,MaxActive), &
              Q_Workspace%InitialVector(Capacity), &
              Q_Workspace%SolvedVector(Capacity), &
-             Q_Workspace%DeltaH(Capacity), &
-             Q_Workspace%DeltaS(Capacity), &
              stat=AllocationStatus)
     if (AllocationStatus/=0) then
       call ClearQWorkspace()
@@ -4235,6 +4319,7 @@ contains
     Q_Workspace%Capacity=Capacity
     Q_Workspace%MaxActive=MaxActive
     Q_Workspace%NumActive=0
+    Q_Workspace%MaxPending=QBatchSize(Capacity,MaxActive)
     Q_Workspace%ActiveFunction=0
     Q_Workspace%ActivePosition=0
     Q_Workspace%PreviousH=ZERO
@@ -4248,30 +4333,39 @@ contains
     Q_Workspace%AcceptedParam=ZERO
     Q_Workspace%InitialVector=ONE
     Q_Workspace%SolvedVector=ZERO
-    Q_Workspace%DeltaH=ZERO
-    Q_Workspace%DeltaS=ZERO
     Q_Workspace%AcceptedEnergy=ZERO
     Q_Workspace%AcceptedPointIsStored=.false.
     Q_Workspace%LastEigenpairResidual=huge(ONE)
     Q_Workspace%LastFactorResidual=huge(ONE)
     Q_Workspace%FreshFactorizations=0
+    Q_Workspace%BatchFlushes=0
+    Q_Workspace%SingularFlushes=0
+    Q_Workspace%ResidualFlushes=0
+    Q_Workspace%DirectTrials=0
+    Q_Workspace%ShiftRetargets=0
+    Q_Workspace%PolishedSolves=0
     Q_Workspace%MatricesAreCanonical=.false.
     Q_Workspace%FactorsMatchMatrices=.false.
     Q_Workspace%MatrixParametersAreStored=.false.
     Q_Workspace%TrialIsReady=.false.
     Q_Workspace%TrialHasDerivatives=.false.
+    Q_Workspace%ShiftIsProvisional=.false.
     ErrorCode=Q_METHOD_SUCCESS
 
   end subroutine PrepareQWorkspace
 
   subroutine EnsureQActiveCapacity(RequiredActive,ErrorCode)
 !Subroutine EnsureQActiveCapacity enlarges only the transaction part of an
-!existing Q workspace. The QR factors and the full-order vector workspace are
+!existing Q workspace. The QR state and the full-order vector workspace are
 !deliberately preserved. Cleanup routines initially reserve one active column
 !because that is sufficient for elimination, but a separation test discovers
 !the number of columns to replace only after the first eigenvector or overlap
 !matrix has been inspected. Rebuilding the complete Q workspace at that point
 !would discard the factorization whose reuse is the purpose of the Q method.
+!The batch size of the QR state (Q_Workspace%MaxPending) is not changed
+!either: an active set that does not fit into the existing batch is applied
+!by ApplyQTrial through a fresh factorization, which is adequate for the
+!single transaction of a separation command.
 !
 !This operation is valid only between transactions. No previous, trial, or
 !accepted point is copied: cleanup routines call it before selecting their
@@ -4353,8 +4447,6 @@ contains
 !to the BBOP driver. The qrlinalg state is cleared here before the remaining
 !metadata are reset.
 
-    if (allocated(Q_Workspace%DeltaS)) deallocate(Q_Workspace%DeltaS)
-    if (allocated(Q_Workspace%DeltaH)) deallocate(Q_Workspace%DeltaH)
     if (allocated(Q_Workspace%SolvedVector)) deallocate(Q_Workspace%SolvedVector)
     if (allocated(Q_Workspace%InitialVector)) deallocate(Q_Workspace%InitialVector)
     if (allocated(Q_Workspace%AcceptedParam)) deallocate(Q_Workspace%AcceptedParam)
@@ -4367,9 +4459,8 @@ contains
     if (allocated(Q_Workspace%PreviousS)) deallocate(Q_Workspace%PreviousS)
     if (allocated(Q_Workspace%PreviousH)) deallocate(Q_Workspace%PreviousH)
     if (allocated(Q_Workspace%ActivePosition)) deallocate(Q_Workspace%ActivePosition)
-    !clear is valid for an initialized or empty state. Calling it on every MPI
-    !rank is therefore safe even though only rank zero will own allocated QR
-    !factors once FactorizeQFresh is implemented.
+    !clear is valid for an initialized or empty state and involves no
+    !communication. Every rank owns a part of the QR state and releases it.
     call Q_Workspace%Factors%clear()
 
     if (allocated(Q_Workspace%ActiveFunction)) deallocate(Q_Workspace%ActiveFunction)
@@ -4378,16 +4469,24 @@ contains
     Q_Workspace%Capacity=0
     Q_Workspace%MaxActive=0
     Q_Workspace%NumActive=0
+    Q_Workspace%MaxPending=0
     Q_Workspace%MatricesAreCanonical=.false.
     Q_Workspace%FactorsMatchMatrices=.false.
     Q_Workspace%MatrixParametersAreStored=.false.
     Q_Workspace%TrialIsReady=.false.
     Q_Workspace%TrialHasDerivatives=.false.
+    Q_Workspace%ShiftIsProvisional=.false.
     Q_Workspace%AcceptedEnergy=ZERO
     Q_Workspace%AcceptedPointIsStored=.false.
     Q_Workspace%LastEigenpairResidual=huge(ONE)
     Q_Workspace%LastFactorResidual=huge(ONE)
     Q_Workspace%FreshFactorizations=0
+    Q_Workspace%BatchFlushes=0
+    Q_Workspace%SingularFlushes=0
+    Q_Workspace%ResidualFlushes=0
+    Q_Workspace%DirectTrials=0
+    Q_Workspace%ShiftRetargets=0
+    Q_Workspace%PolishedSolves=0
 
   end subroutine ClearQWorkspace
 
@@ -4400,6 +4499,11 @@ contains
 !
 !The routine updates both maps only after the complete input has been checked,
 !so an invalid selection leaves the previous active set unchanged.
+!
+!Only the workproc maps are set here. The routine may be called before the
+!first factorization exists, so the set is announced to qrlinalg later, by
+!AnnounceQActiveFunctions at the start of the next ApplyQTrial or
+!AppendQTrial.
 !
 !Arguments:
     integer,intent(in)  :: ActiveFunction(:)
@@ -4479,10 +4583,20 @@ contains
   subroutine TrimQFactors(TargetOrder,ErrorCode)
 !Subroutine TrimQFactors removes a rejected canonical suffix from the QR state.
 !BASIS_ENL repeatedly tests new functions in positions TargetOrder+1 onward;
-!deleting those last rows and columns restores the accepted prefix without any
-!basis permutation or cubic refactorization. The physical suffix may retain
-!obsolete trial values because it lies outside MatrixOrder and is overwritten
-!before it can become active again.
+!qrlinalg truncate drops those trailing functions and restores the accepted
+!prefix without any basis permutation or cubic refactorization. The physical
+!suffix may retain obsolete trial values because it lies outside MatrixOrder
+!and is overwritten before it can become active again.
+!
+!The QR state may already have a smaller order than Q_Workspace%MatrixOrder:
+!EvaluateQAppendedTrial publishes the target order before the suffix is
+!assembled, so a candidate that could not be assembled leaves the factors at
+!the accepted order. Any factor order from TargetOrder to the physical order
+!is therefore accepted, and equal orders make the truncation a no-op.
+!
+!When the batch of deferred functions cannot take the removed base functions,
+!truncate reports QR_ERR_BATCH_FULL without changing anything, and the prefix
+!is factorized fresh; that is an ordinary flush, not an error.
 !
 !qrlinalg intentionally has no valid order-zero factorization. When the first
 !basis block is being selected, trimming to zero therefore reinitializes an
@@ -4493,34 +4607,28 @@ contains
     integer,intent(in)  :: TargetOrder
     integer,intent(out) :: ErrorCode
 !Local variables:
-    integer CurrentOrder,RootError,RecoveryError
+    integer CurrentOrder,FactorOrder,Status,RecoveryError
 
     ErrorCode=Q_METHOD_INVALID_ARGUMENT
     CurrentOrder=Q_Workspace%MatrixOrder
     if ((TargetOrder<0).or.(TargetOrder>CurrentOrder)) return
     if (Q_Workspace%Capacity<max(1,CurrentOrder)) return
 
-    RootError=Q_METHOD_SUCCESS
-    if (Glob_ProcID==0) then
-      if (TargetOrder==0) then
-        call Q_Workspace%Factors%clear()
-        call Q_Workspace%Factors%initialize(Q_Workspace%Capacity,RootError)
+    Status=Q_METHOD_SUCCESS
+    if (TargetOrder==0) then
+      call Q_Workspace%Factors%clear()
+      call Q_Workspace%Factors%initialize(Q_Workspace%Capacity, &
+        Q_Workspace%MaxPending,Status)
+    else
+      FactorOrder=Q_Workspace%Factors%order()
+      if (.not.Q_Workspace%Factors%is_valid()) then
+        Status=Q_METHOD_INVALID_STATE
+      else if ((FactorOrder<TargetOrder).or.(FactorOrder>CurrentOrder)) then
+        Status=Q_METHOD_INVALID_STATE
       else
-        if (.not.Q_Workspace%Factors%is_valid()) then
-          RootError=Q_METHOD_INVALID_STATE
-        else if (Q_Workspace%Factors%order()/=CurrentOrder) then
-          RootError=Q_METHOD_INVALID_STATE
-        endif
-        if (RootError==Q_METHOD_SUCCESS) then
-          do while (Q_Workspace%Factors%order()>TargetOrder)
-            call Q_Workspace%Factors%delete_symmetric( &
-              Q_Workspace%Factors%order(),RootError)
-            if (RootError/=Q_METHOD_SUCCESS) exit
-          enddo
-        endif
+        call Q_Workspace%Factors%truncate(TargetOrder,Status)
       endif
     endif
-    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     !Publish the smaller physical order before recovery. Its leading principal
     !block was never modified by appending or deleting a suffix, so it is a
@@ -4534,19 +4642,22 @@ contains
     Q_Workspace%TrialHasDerivatives=.false.
     Q_Workspace%AcceptedPointIsStored=.false.
     Q_Workspace%FactorsMatchMatrices= &
-      (RootError==Q_METHOD_SUCCESS).and.(TargetOrder>0)
+      (Status==Q_METHOD_SUCCESS).and.(TargetOrder>0)
 
-    if ((RootError/=Q_METHOD_SUCCESS).and.(TargetOrder>0)) then
+    if ((Status/=Q_METHOD_SUCCESS).and.(TargetOrder>0)) then
       call FactorizeQFresh(RecoveryError)
       if (RecoveryError/=Q_METHOD_SUCCESS) then
         ErrorCode=RecoveryError
+      else if (Status==QR_ERR_BATCH_FULL) then
+        Q_Workspace%BatchFlushes=Q_Workspace%BatchFlushes+1
+        ErrorCode=Q_METHOD_SUCCESS
       else
-        ErrorCode=RootError
+        ErrorCode=Status
       endif
       return
     endif
 
-    ErrorCode=RootError
+    ErrorCode=Status
 
   end subroutine TrimQFactors
 
@@ -4571,9 +4682,9 @@ contains
 
   subroutine GatherQCanonicalColumn(Matrix,MatrixOrder,ColumnIndex,Column,ErrorCode)
 !Subroutine GatherQCanonicalColumn constructs the complete conceptual column
-!required by qrlinalg replace_symmetric and append_symmetric. The source matrix
-!retains only its canonical lower triangle. This O(n) gather is negligible
-!beside the O(n*n) QR update and avoids maintaining two writable triangles.
+!that ApplyQTrial saves before a transaction. The source matrix retains only
+!its canonical lower triangle. This O(n) gather is negligible beside a solve
+!and avoids maintaining two writable triangles.
 !
 !Arguments:
     real(wp),intent(in)  :: Matrix(:,:)
@@ -4600,9 +4711,9 @@ contains
 !Subroutine StoreQCanonicalColumn commits one complete symmetric column to the
 !canonical lower triangle. The upper triangle is intentionally untouched.
 !For a replacement this routine is called only after qrlinalg has accepted the
-!matching delta; during a multi-column transaction it is called after every
-!successful sequential update so intersections use the progressively updated
-!matrix and are not counted twice.
+!new columns of all active functions; the staged columns of two active
+!functions hold the same value at their intersection, so storing them in any
+!order leaves one consistent symmetric matrix.
 !
 !Arguments:
     real(wp),intent(inout) :: Matrix(:,:)
@@ -4815,15 +4926,27 @@ contains
   end subroutine AssembleQTrial
 
   subroutine FactorizeQFresh(ErrorCode)
-!Subroutine FactorizeQFresh initializes or refreshes the root-owned qrlinalg
-!state from canonical, normalized, unshifted Glob_H and Glob_S. The represented
-!shift is fixed to Glob_ApproxEnergy for one BBOP step. Rank zero broadcasts the
-!status before any process continues to a collective gradient calculation.
+!Subroutine FactorizeQFresh initializes or refreshes the qrlinalg state from
+!canonical, normalized, unshifted Glob_H and Glob_S: a fresh base QR
+!factorization of the leading Q_Workspace%MatrixOrder block of
+!H-Glob_ApproxEnergy*S with nothing deferred ("flush"). This is the only
+!O(n**3) operation of the Q method. The represented shift stays fixed until
+!the next fresh factorization. The call is collective and every rank obtains
+!the same status.
+!
+!The new factors are verified once by ProbeQFactorization, which is meaningful
+!only at this point (see that routine). A probe result above the tolerance
+!max(1000*epsilon*n,10*EIGVAL_TOLERANCE) is reported as Q_METHOD_INVALID_STATE.
+!The factors then still represent the physical matrices, as well as a fresh
+!factorization can, so FactorsMatchMatrices remains true; the caller decides
+!what to do with the failed evaluation. A one-function problem is not probed:
+!SolveQ solves it in closed form and never uses its factors.
 !
 !Arguments:
     integer,intent(out) :: ErrorCode
 !Local variables:
-    integer RootError
+    integer Status
+    real(wp) RefreshTolerance
 
     ErrorCode=Q_METHOD_INVALID_ARGUMENT
     Q_Workspace%FactorsMatchMatrices=.false.
@@ -4831,6 +4954,7 @@ contains
     if (.not.Q_Workspace%MatricesAreCanonical) return
     if (Q_Workspace%MatrixOrder<1) return
     if (Q_Workspace%Capacity<Q_Workspace%MatrixOrder) return
+    if (Q_Workspace%MaxPending<1) return
     if (.not.allocated(Glob_H)) return
     if (.not.allocated(Glob_S)) return
     if ((size(Glob_H,1)<Q_Workspace%MatrixOrder).or. &
@@ -4839,41 +4963,139 @@ contains
         (size(Glob_S,2)<Q_Workspace%MatrixOrder)) return
 
     !The stored factorization residual describes the factors that are about to
-    !be replaced. Marking it unknown makes the next SolveQ probe the new ones.
+    !be replaced.
     Q_Workspace%LastFactorResidual=huge(ONE)
 
-    RootError=Q_METHOD_SUCCESS
-    if (Glob_ProcID==0) then
-      !Initialization is separated from fresh factorization in qrlinalg. Reuse
-      !the allocated state whenever its capacity is already correct; this
-      !preserves the lifetime update counter across ordinary refreshes.
-      if (Q_Workspace%Factors%get_capacity()/=Q_Workspace%Capacity) then
-        call Q_Workspace%Factors%initialize(Q_Workspace%Capacity,RootError)
-      endif
-      if (RootError==Q_METHOD_SUCCESS) then
-        call Q_Workspace%Factors%factorize_fresh(Glob_H,Glob_S, &
-          Glob_ApproxEnergy,RootError,active_order=Q_Workspace%MatrixOrder)
-      endif
+    !Initialization is separated from fresh factorization in qrlinalg. Reuse
+    !the allocated state whenever its capacity and batch size are already
+    !correct; this preserves the lifetime update counter across refreshes.
+    Status=Q_METHOD_SUCCESS
+    if ((Q_Workspace%Factors%get_capacity()/=Q_Workspace%Capacity).or. &
+        (Q_Workspace%Factors%max_pending()/=Q_Workspace%MaxPending)) then
+      call Q_Workspace%Factors%initialize(Q_Workspace%Capacity, &
+        Q_Workspace%MaxPending,Status)
     endif
-    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    ErrorCode=RootError
-    Q_Workspace%FactorsMatchMatrices=(ErrorCode==Q_METHOD_SUCCESS)
-    if (ErrorCode==Q_METHOD_SUCCESS) &
-      Q_Workspace%FreshFactorizations=Q_Workspace%FreshFactorizations+1
+    if (Status==Q_METHOD_SUCCESS) then
+      call Q_Workspace%Factors%factorize_fresh(Glob_H,Glob_S, &
+        Glob_ApproxEnergy,Status,active_order=Q_Workspace%MatrixOrder)
+    endif
+    ErrorCode=Status
+    if (Status/=Q_METHOD_SUCCESS) return
+    Q_Workspace%FactorsMatchMatrices=.true.
+    Q_Workspace%FreshFactorizations=Q_Workspace%FreshFactorizations+1
+
+    if (Q_Workspace%MatrixOrder==1) then
+      Q_Workspace%LastFactorResidual=ZERO
+      return
+    endif
+    call ProbeQFactorization(Status)
+    if (Status/=Q_METHOD_SUCCESS) then
+      ErrorCode=Status
+      return
+    endif
+    RefreshTolerance=max(1000*epsilon(ONE)*Q_Workspace%MatrixOrder, &
+                         10*abs(Glob_EigvalTol))
+    if (.not.(Q_Workspace%LastFactorResidual<=RefreshTolerance)) &
+      ErrorCode=Q_METHOD_INVALID_STATE
 
   end subroutine FactorizeQFresh
+
+  subroutine AnnounceQActiveFunctions(FactorOrder,DirectTrialIsNeeded,ErrorCode)
+!Subroutine AnnounceQActiveFunctions declares the current active map to
+!qrlinalg (begin_active) immediately before a trial supplies new columns for
+!it. qrlinalg never guesses which functions are being changed: the announced
+!functions form the active tail of its batch, and the functions of the
+!previous active set stay in the batch as committed entries. Announcing an
+!unchanged set costs nothing, so ApplyQTrial and AppendQTrial call this
+!routine for every trial. This also covers an active map that was selected
+!before the first factorization and the empty batch left by any fresh
+!factorization.
+!
+!FactorOrder is the order that the QR state has at this point: the physical
+!order for a replacement, and the accepted prefix order for an append, whose
+!active functions lie beyond it.
+!
+!When the batch cannot take the announced functions (need_flush), or when
+!qrlinalg cannot factorize the committed part of the batch for this partition
+!(QR_ERR_SINGULAR), the leading FactorOrder block of the physical matrices,
+!which the QR state represents, is factorized fresh and the set is announced
+!again. An active set larger than the whole batch can never be announced;
+!DirectTrialIsNeeded then tells the caller to store the trial columns and
+!factorize fresh instead (see QBatchSize).
+!
+!Nothing physical is changed here. After a flush with FactorOrder smaller
+!than the physical order the caller must not rely on FactorsMatchMatrices.
+!
+!Arguments:
+    integer,intent(in)  :: FactorOrder
+    logical,intent(out) :: DirectTrialIsNeeded
+    integer,intent(out) :: ErrorCode
+!Local variables:
+    integer NumActive,PhysicalOrder,Status
+    logical FlushIsNeeded,BatchIsSingular
+
+    DirectTrialIsNeeded=.false.
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    NumActive=Q_Workspace%NumActive
+    PhysicalOrder=Q_Workspace%MatrixOrder
+    if (NumActive<1) return
+    if (.not.allocated(Q_Workspace%ActiveFunction)) return
+    if ((FactorOrder<1).or.(FactorOrder>PhysicalOrder)) return
+    if (NumActive>Q_Workspace%Factors%max_pending()) then
+      DirectTrialIsNeeded=.true.
+      ErrorCode=Q_METHOD_SUCCESS
+      return
+    endif
+
+    call Q_Workspace%Factors%begin_active( &
+      Q_Workspace%ActiveFunction(1:NumActive),FlushIsNeeded,Status)
+    BatchIsSingular=(Status==QR_ERR_SINGULAR)
+    if (FlushIsNeeded.or.BatchIsSingular) then
+      Q_Workspace%MatrixOrder=FactorOrder
+      call FactorizeQFresh(Status)
+      Q_Workspace%MatrixOrder=PhysicalOrder
+      if (Status/=Q_METHOD_SUCCESS) then
+        ErrorCode=Status
+        return
+      endif
+      if (BatchIsSingular) then
+        Q_Workspace%SingularFlushes=Q_Workspace%SingularFlushes+1
+      else
+        Q_Workspace%BatchFlushes=Q_Workspace%BatchFlushes+1
+      endif
+      call Q_Workspace%Factors%begin_active( &
+        Q_Workspace%ActiveFunction(1:NumActive),FlushIsNeeded,Status)
+      if ((Status==Q_METHOD_SUCCESS).and.FlushIsNeeded) Status=QR_ERR_BATCH_FULL
+    endif
+    ErrorCode=Status
+
+  end subroutine AnnounceQActiveFunctions
 
   subroutine AppendQTrial(ErrorCode)
 !Subroutine AppendQTrial commits a staged suffix during BASIS_ENL. The active
 !map must be the consecutive canonical suffix BaseOrder+1:MatrixOrder. When an
-!accepted prefix exists, qrlinalg append_symmetric grows its factors one row
-!and column at a time. Each physical column is committed only after the
-!matching structural update succeeds.
+!accepted prefix exists, the suffix is announced to qrlinalg and
+!append_symmetric adds its functions one at a time as deferred columns; the
+!base factors are not changed. Each physical column is committed only after
+!the matching append succeeds. A suffix larger than the whole batch (see
+!QBatchSize) is stored and factorized fresh instead.
 !
 !For BaseOrder=0 there is no valid factorization that can be appended to. The
 !routine first commits the complete staged block and then constructs the first
 !fresh factorization. This special case is confined to the first enlargement
 !step and therefore does not affect the asymptotic candidate-selection cost.
+!
+!An empty input basis carries a large placeholder CURRENT_ENERGY, not a
+!meaningful inverse-iteration target. Such a remote shift is replaced by the
+!lowest normalized diagonal energy of the candidate block, times
+!INVITPARAMETER, and the shift is marked provisional. While it is
+!provisional, every candidate for the first block takes the shift from its
+!own diagonal, because each of them is factorized fresh anyway; for the usual
+!Kstep=1 start the diagonal is the exact energy and SolveQ does not use the
+!shift at all. BasisEnlQ ends the provisional phase by retargeting the shift
+!to the first accepted energy (RetargetQStaleShift), and retargets it again
+!after every function whose solves showed that the energy has moved too far
+!from it.
 !
 !On any append failure, the represented prefix is reconstructed from its
 !untouched leading physical block. The caller receives the original append
@@ -4883,7 +5105,9 @@ contains
     integer,intent(out) :: ErrorCode
 !Local variables:
     integer a,BaseOrder,FunctionIndex,MatrixOrder,NumActive
-    integer RootError,StoreError,RecoveryError
+    integer Status,StoreError,RecoveryError
+    logical DirectTrialIsNeeded
+    real(wp) LowestDiagonal,LargestDiagonal
 
     ErrorCode=Q_METHOD_INVALID_ARGUMENT
     MatrixOrder=Q_Workspace%MatrixOrder
@@ -4901,12 +5125,30 @@ contains
       if (Q_Workspace%ActiveFunction(a)/=BaseOrder+a) return
     enddo
 
-    RootError=Q_METHOD_SUCCESS
-    if (BaseOrder==0) then
-      !Every pair in the new leading block touches an active function, so the
-      !staged columns together contain a complete symmetric problem.
+    Status=Q_METHOD_SUCCESS
+    DirectTrialIsNeeded=(BaseOrder==0)
+    if (BaseOrder>0) then
+      if (.not.Q_Workspace%Factors%is_valid()) then
+        Status=Q_METHOD_INVALID_STATE
+      else if (Q_Workspace%Factors%order()/=BaseOrder) then
+        Status=Q_METHOD_INVALID_STATE
+      else if (Q_Workspace%Factors%get_capacity()/=Q_Workspace%Capacity) then
+        Status=Q_METHOD_INVALID_STATE
+      else if (Q_Workspace%Factors%get_shift()/=Glob_ApproxEnergy) then
+        Status=Q_METHOD_INVALID_STATE
+      endif
+      if (Status==Q_METHOD_SUCCESS) call AnnounceQActiveFunctions(BaseOrder, &
+        DirectTrialIsNeeded,Status)
+      !The QR state represents the accepted prefix until every staged suffix
+      !column has been installed.
+      Q_Workspace%FactorsMatchMatrices=.false.
+    endif
+
+    if ((Status==Q_METHOD_SUCCESS).and.DirectTrialIsNeeded) then
+      !Every pair that involves a suffix function touches an active function,
+      !so the staged columns complete the symmetric problem of the new order.
       do a=1,NumActive
-        FunctionIndex=a
+        FunctionIndex=BaseOrder+a
         call StoreQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
           Q_Workspace%TrialH(1:MatrixOrder,a),StoreError)
         if (StoreError/=Q_METHOD_SUCCESS) then
@@ -4921,46 +5163,38 @@ contains
         endif
         Glob_diagS(FunctionIndex)=Q_Workspace%TrialDiagS(a)
       enddo
-      !An empty input basis carries a large placeholder CURRENT_ENERGY, not a
-      !meaningful inverse-iteration target. Replace such a remote shift by the
-      !lowest normalized diagonal estimate before constructing the first QR
-      !factorization. For the usual Kstep=1 start this is the exact energy.
-      if (abs(Glob_ApproxEnergy)> &
-          1000000*max(ONE,maxval(abs([(Glob_H(a,a),a=1,MatrixOrder)])))) then
-        Glob_ApproxEnergy=minval([(Glob_H(a,a),a=1,MatrixOrder)])* &
-          Glob_InvItParameter
-      endif
-      call FactorizeQFresh(RootError)
-    else
-      if (Glob_ProcID==0) then
-        if (.not.Q_Workspace%Factors%is_valid()) then
-          RootError=Q_METHOD_INVALID_STATE
-        else if (Q_Workspace%Factors%order()/=BaseOrder) then
-          RootError=Q_METHOD_INVALID_STATE
-        endif
-      endif
-      call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-      if (RootError==Q_METHOD_SUCCESS) then
-        do a=1,NumActive
-          FunctionIndex=BaseOrder+a
-          if (Glob_ProcID==0) then
-            call Q_Workspace%Factors%append_symmetric( &
-              Q_Workspace%TrialH(1:FunctionIndex,a), &
-              Q_Workspace%TrialS(1:FunctionIndex,a),RootError)
-          endif
-          call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-          if (RootError/=Q_METHOD_SUCCESS) exit
-
-          call StoreQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
-            Q_Workspace%TrialH(1:MatrixOrder,a),StoreError)
-          call StoreQCanonicalColumn(Glob_S,MatrixOrder,FunctionIndex, &
-            Q_Workspace%TrialS(1:MatrixOrder,a),StoreError)
-          Glob_diagS(FunctionIndex)=Q_Workspace%TrialDiagS(a)
+      if (BaseOrder==0) then
+        LowestDiagonal=Glob_H(1,1)
+        LargestDiagonal=abs(Glob_H(1,1))
+        do a=2,MatrixOrder
+          LowestDiagonal=min(LowestDiagonal,Glob_H(a,a))
+          LargestDiagonal=max(LargestDiagonal,abs(Glob_H(a,a)))
         enddo
+        if (abs(Glob_ApproxEnergy)>1000000*max(ONE,LargestDiagonal)) &
+          Q_Workspace%ShiftIsProvisional=.true.
+        if (Q_Workspace%ShiftIsProvisional) &
+          Glob_ApproxEnergy=LowestDiagonal*Glob_InvItParameter
       endif
+      call FactorizeQFresh(Status)
+      if ((Status==Q_METHOD_SUCCESS).and.(BaseOrder>0)) &
+        Q_Workspace%DirectTrials=Q_Workspace%DirectTrials+1
+    else if (Status==Q_METHOD_SUCCESS) then
+      do a=1,NumActive
+        FunctionIndex=BaseOrder+a
+        call Q_Workspace%Factors%append_symmetric( &
+          Q_Workspace%TrialH(1:FunctionIndex,a), &
+          Q_Workspace%TrialS(1:FunctionIndex,a),Status)
+        if (Status/=Q_METHOD_SUCCESS) exit
+
+        call StoreQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
+          Q_Workspace%TrialH(1:MatrixOrder,a),StoreError)
+        call StoreQCanonicalColumn(Glob_S,MatrixOrder,FunctionIndex, &
+          Q_Workspace%TrialS(1:MatrixOrder,a),StoreError)
+        Glob_diagS(FunctionIndex)=Q_Workspace%TrialDiagS(a)
+      enddo
     endif
 
-    if (RootError/=Q_METHOD_SUCCESS) then
+    if (Status/=Q_METHOD_SUCCESS) then
       !Only suffix rows and columns may have been committed. Re-expose the
       !accepted leading block and rebuild its factors instead of retaining a
       !partially appended generation.
@@ -4969,17 +5203,14 @@ contains
       if (BaseOrder>0) then
         call FactorizeQFresh(RecoveryError)
       else
-        RecoveryError=Q_METHOD_SUCCESS
-        if (Glob_ProcID==0) then
-          call Q_Workspace%Factors%clear()
-          call Q_Workspace%Factors%initialize(Q_Workspace%Capacity,RecoveryError)
-        endif
-        call MPI_BCAST(RecoveryError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
+        call Q_Workspace%Factors%clear()
+        call Q_Workspace%Factors%initialize(Q_Workspace%Capacity, &
+          Q_Workspace%MaxPending,RecoveryError)
       endif
       if (RecoveryError/=Q_METHOD_SUCCESS) then
         ErrorCode=RecoveryError
       else
-        ErrorCode=RootError
+        ErrorCode=Status
       endif
       Q_Workspace%TrialIsReady=.false.
       Q_Workspace%TrialHasDerivatives=.false.
@@ -5000,10 +5231,12 @@ contains
 
   subroutine EvaluateQAppendedTrial(BaseOrder,TargetOrder,Evalue,ErrorCode)
 !Subroutine EvaluateQAppendedTrial performs one complete BASIS_ENL candidate
-!transaction. Any preceding candidate suffix is deleted, the new consecutive
-!suffix is assembled in canonical order, appended to the accepted QR prefix,
-!and solved. On success the active map remains installed so the selected
-!candidate can immediately enter ordinary replacement-based optimization.
+!transaction. Any preceding candidate suffix is removed from the QR state, the
+!new consecutive suffix is assembled in canonical order, appended to the
+!accepted prefix as deferred columns, and solved. Nothing of order n**3 or
+!n**2 times the batch size is done per candidate. On success the active map
+!remains installed so the selected candidate can immediately enter ordinary
+!replacement-based optimization.
 !
 !Arguments:
     integer,intent(in)  :: BaseOrder,TargetOrder
@@ -5022,9 +5255,9 @@ contains
     call TrimQFactors(BaseOrder,ErrorCode)
     if (ErrorCode/=Q_METHOD_SUCCESS) return
 
-    !The factors still represent BaseOrder while the assembly routines need to
-    !see the complete target problem. FactorsMatchMatrices remains false until
-    !AppendQTrial has installed every staged suffix column.
+    !The QR state still represents BaseOrder while the assembly routines need
+    !to see the complete target problem. FactorsMatchMatrices remains false
+    !until AppendQTrial has installed every staged suffix column.
     Q_Workspace%MatrixOrder=TargetOrder
     Q_Workspace%FactorsMatchMatrices=.false.
     do a=1,NumActive
@@ -5041,18 +5274,33 @@ contains
   end subroutine EvaluateQAppendedTrial
 
   subroutine ApplyQTrial(ErrorCode)
-!Subroutine ApplyQTrial updates active columns in the exact order stored in
-!Q_Workspace%ActiveFunction. For each column it gathers the currently
-!represented physical column, subtracts it from the staged target, calls
-!replace_symmetric on rank zero, broadcasts the status, and only then commits
-!the physical column on every rank. A preflight check must make all ordinary
-!argument failures impossible before the first factor is changed.
+!Subroutine ApplyQTrial makes the staged trial columns of the active functions
+!the represented problem. The active map is announced to qrlinalg, then
+!replace_symmetric receives the complete new conceptual column of every
+!active function (not a difference from the current column); qrlinalg defers
+!these columns in its batch and does not change the base factors. Only after
+!every column has been accepted are the physical columns stored in Glob_H and
+!Glob_S on every rank, so the solve that follows reads matrices that agree
+!with the QR state. The staged columns of two active functions carry the same
+!value at their intersection, hence the order of the replacements does not
+!matter. The preflight check makes all ordinary argument failures impossible
+!before anything is changed.
+!
+!Two cases bypass the batch: an active set that is larger than the whole
+!batch (see QBatchSize), and a one-function problem, which SolveQ solves in
+!closed form. Their columns are stored and the matrices are factorized fresh.
+!
+!If a qrlinalg call fails unexpectedly, the complete physical generation
+!(columns, raw norms, and nonlinear parameters) is restored from the snapshot
+!taken at entry and fresh factors are constructed, so that no later operation
+!continues from a state whose factor/matrix relationship is unproven.
 !
 !Arguments:
     integer,intent(out) :: ErrorCode
 !Local variables:
-    integer a,FunctionIndex,MatrixOrder,NumActive,RootError,StoreError
+    integer a,FunctionIndex,MatrixOrder,NumActive,Status,StoreError
     integer RecoveryError
+    logical DirectTrialIsNeeded
 
     ErrorCode=Q_METHOD_INVALID_ARGUMENT
     MatrixOrder=Q_Workspace%MatrixOrder
@@ -5068,27 +5316,18 @@ contains
     if (.not.allocated(Q_Workspace%PreviousS)) return
     if (.not.allocated(Q_Workspace%PreviousDiagS)) return
     if (.not.allocated(Q_Workspace%PreviousParam)) return
-    if (.not.allocated(Q_Workspace%DeltaH)) return
-    if (.not.allocated(Q_Workspace%DeltaS)) return
-    if (size(Q_Workspace%DeltaH)<MatrixOrder) return
-    if (size(Q_Workspace%DeltaS)<MatrixOrder) return
 
-    !Preflight the private factor metadata on rank zero. Every subsequent
-    !replace_symmetric call then has a valid index and vectors of exact order;
-    !the library documents that these validated updates have no numerical
-    !failure return.
-    RootError=Q_METHOD_SUCCESS
-    if (Glob_ProcID==0) then
-      if (.not.Q_Workspace%Factors%is_valid()) RootError=Q_METHOD_INVALID_STATE
-      if (Q_Workspace%Factors%order()/=MatrixOrder) RootError=Q_METHOD_INVALID_STATE
-      if (Q_Workspace%Factors%get_capacity()/=Q_Workspace%Capacity) &
-        RootError=Q_METHOD_INVALID_STATE
-      if (Q_Workspace%Factors%get_shift()/=Glob_ApproxEnergy) &
-        RootError=Q_METHOD_INVALID_STATE
-    endif
-    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    if (RootError/=Q_METHOD_SUCCESS) then
-      ErrorCode=RootError
+    !Preflight the QR state. Every subsequent replace_symmetric call then has
+    !a valid index and columns of exact order.
+    Status=Q_METHOD_SUCCESS
+    if (.not.Q_Workspace%Factors%is_valid()) Status=Q_METHOD_INVALID_STATE
+    if (Q_Workspace%Factors%order()/=MatrixOrder) Status=Q_METHOD_INVALID_STATE
+    if (Q_Workspace%Factors%get_capacity()/=Q_Workspace%Capacity) &
+      Status=Q_METHOD_INVALID_STATE
+    if (Q_Workspace%Factors%get_shift()/=Glob_ApproxEnergy) &
+      Status=Q_METHOD_INVALID_STATE
+    if (Status/=Q_METHOD_SUCCESS) then
+      ErrorCode=Status
       Q_Workspace%FactorsMatchMatrices=.false.
       return
     endif
@@ -5115,40 +5354,49 @@ contains
       Q_Workspace%PreviousDiagS(a)=Glob_diagS(FunctionIndex)
     enddo
 
-    do a=1,NumActive
-      FunctionIndex=Q_Workspace%ActiveFunction(a)
-      !Gather the progressively updated column, not the original snapshot.
-      !Earlier active columns have already installed their shared intersection,
-      !so the later replacement sees a zero delta at that location.
-      call GatherQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
-        Q_Workspace%DeltaH(1:MatrixOrder),StoreError)
-      call GatherQCanonicalColumn(Glob_S,MatrixOrder,FunctionIndex, &
-        Q_Workspace%DeltaS(1:MatrixOrder),StoreError)
-      Q_Workspace%DeltaH(1:MatrixOrder)= &
-        Q_Workspace%TrialH(1:MatrixOrder,a)-Q_Workspace%DeltaH(1:MatrixOrder)
-      Q_Workspace%DeltaS(1:MatrixOrder)= &
-        Q_Workspace%TrialS(1:MatrixOrder,a)-Q_Workspace%DeltaS(1:MatrixOrder)
+    if (MatrixOrder==1) then
+      DirectTrialIsNeeded=.true.
+    else
+      call AnnounceQActiveFunctions(MatrixOrder,DirectTrialIsNeeded,Status)
+    endif
 
-      RootError=Q_METHOD_SUCCESS
-      if (Glob_ProcID==0) then
+    if ((Status==Q_METHOD_SUCCESS).and.DirectTrialIsNeeded) then
+      do a=1,NumActive
+        FunctionIndex=Q_Workspace%ActiveFunction(a)
+        call StoreQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
+          Q_Workspace%TrialH(1:MatrixOrder,a),StoreError)
+        call StoreQCanonicalColumn(Glob_S,MatrixOrder,FunctionIndex, &
+          Q_Workspace%TrialS(1:MatrixOrder,a),StoreError)
+        Glob_diagS(FunctionIndex)=Q_Workspace%TrialDiagS(a)
+      enddo
+      call FactorizeQFresh(Status)
+      if ((Status==Q_METHOD_SUCCESS).and.(MatrixOrder>1)) &
+        Q_Workspace%DirectTrials=Q_Workspace%DirectTrials+1
+    else if (Status==Q_METHOD_SUCCESS) then
+      do a=1,NumActive
+        FunctionIndex=Q_Workspace%ActiveFunction(a)
         call Q_Workspace%Factors%replace_symmetric(FunctionIndex, &
-          Q_Workspace%DeltaH(1:MatrixOrder), &
-          Q_Workspace%DeltaS(1:MatrixOrder),RootError)
+          Q_Workspace%TrialH(1:MatrixOrder,a), &
+          Q_Workspace%TrialS(1:MatrixOrder,a),Status)
+        if (Status/=Q_METHOD_SUCCESS) exit
+      enddo
+      if (Status==Q_METHOD_SUCCESS) then
+        do a=1,NumActive
+          FunctionIndex=Q_Workspace%ActiveFunction(a)
+          call StoreQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
+            Q_Workspace%TrialH(1:MatrixOrder,a),StoreError)
+          call StoreQCanonicalColumn(Glob_S,MatrixOrder,FunctionIndex, &
+            Q_Workspace%TrialS(1:MatrixOrder,a),StoreError)
+          Glob_diagS(FunctionIndex)=Q_Workspace%TrialDiagS(a)
+        enddo
       endif
-      call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-      if (RootError/=Q_METHOD_SUCCESS) exit
+    endif
 
-      call StoreQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
-        Q_Workspace%TrialH(1:MatrixOrder,a),StoreError)
-      call StoreQCanonicalColumn(Glob_S,MatrixOrder,FunctionIndex, &
-        Q_Workspace%TrialS(1:MatrixOrder,a),StoreError)
-      Glob_diagS(FunctionIndex)=Q_Workspace%TrialDiagS(a)
-    enddo
-
-    if (RootError/=Q_METHOD_SUCCESS) then
-      !A library failure is not expected after the preflight, but fail safely:
-      !restore the complete physical generation and construct fresh factors
-      !instead of trying to reason about a possibly partial QR update.
+    if (Status/=Q_METHOD_SUCCESS) then
+      !A failure is not expected after the preflight, but fail safely: restore
+      !the complete physical generation (a no-op for the columns when nothing
+      !was stored yet) and construct fresh factors instead of trying to reason
+      !about a partially updated batch.
       do a=1,NumActive
         FunctionIndex=Q_Workspace%ActiveFunction(a)
         call StoreQCanonicalColumn(Glob_H,MatrixOrder,FunctionIndex, &
@@ -5164,7 +5412,7 @@ contains
       if (RecoveryError/=Q_METHOD_SUCCESS) then
         ErrorCode=RecoveryError
       else
-        ErrorCode=RootError
+        ErrorCode=Status
       endif
       Q_Workspace%TrialIsReady=.false.
       Q_Workspace%TrialHasDerivatives=.false.
@@ -5184,22 +5432,28 @@ contains
   end subroutine ApplyQTrial
 
   subroutine ProbeQFactorization(ErrorCode)
-!Subroutine ProbeQFactorization measures how well the QR factors, which may
-!have accumulated many structural updates, still reproduce the action of the
-!physical shifted matrix:
+!Subroutine ProbeQFactorization measures how well a fresh QR state reproduces
+!the action of the physical shifted matrix A=H-shift*S. A fixed dense probe
+!vector v is mapped to b=A*v with the physical matrices, the system A*x=b is
+!solved with the QR state, and the relative residual
 !
-!                  r = (H-shift*S)*v-Q*(R*v) .
+!                  ||A*x-b||/(||A*x||+||b||+tiny)
 !
-!The probe v is a fixed dense vector. The eigenvector must not be used because
-!it is nearly a null vector of the deliberately near-eigenvalue shifted
-!matrix, which amplifies harmless factorization roundoff in the relative
-!action ratio. The relative residual is stored in
-!Q_Workspace%LastFactorResidual together with the structural-update count of
-!the probed factors; a failed measurement leaves the residual unknown (huge).
+!is stored in Q_Workspace%LastFactorResidual. It is of the order of the
+!working precision for healthy factors, also when A is nearly singular. The
+!eigenvector must not be used as the probe because it is nearly a null vector
+!of the deliberately near-eigenvalue shifted matrix. A failed measurement
+!leaves the residual unknown (huge).
 !
-!This routine is serial and must be called on rank zero only. It costs four
-!O(n**2) matrix-vector products, overwrites Q_Workspace%InitialVector, and
-!does not modify H, S, or the factors. The caller broadcasts the result.
+!The probe is meaningful only while nothing is deferred, that is, right after
+!a fresh factorization, and FactorizeQFresh is its only caller. Once functions
+!are pending, the same quantity measures the error growth of the block
+!elimination over the batch, which is not a defect of the representation and
+!which the physical eigenpair residual of every solve monitors (see SolveQ).
+!
+!The routine is collective. It costs one solve with the factors and four
+!distributed matrix-vector products, overwrites Q_Workspace%InitialVector, and
+!does not modify H, S, or the represented matrix.
 !
 !Arguments:
     integer,intent(out) :: ErrorCode
@@ -5224,8 +5478,6 @@ contains
       FactorResidual,ErrorCode)
     if (ErrorCode==Q_METHOD_SUCCESS) then
       Q_Workspace%LastFactorResidual=FactorResidual
-      Q_Workspace%FactorProbeUpdateCount= &
-        Q_Workspace%Factors%get_update_count()
     else
       Q_Workspace%LastFactorResidual=huge(ONE)
     endif
@@ -5233,35 +5485,81 @@ contains
   end subroutine ProbeQFactorization
 
   subroutine SolveQ(Evalue,ErrorCode)
-!Subroutine SolveQ calls qrlinalg inverse iteration on rank zero with
-!distinct input and output vectors and normalization mode zero, then broadcast
-!the physical energy, S-normalized Glob_c, convergence diagnostics, and status.
-!A QR_ERR_NO_CONVERGENCE result contains a usable approximation. It is accepted
-!only when the independent physical generalized-eigenpair residual satisfies
-!the requested tolerance; otherwise one fresh-factorization retry is made.
+!Subroutine SolveQ obtains the eigenpair nearest the shift by collective
+!qrlinalg inverse iteration (distinct input and output vectors, normalization
+!mode zero). Every rank receives the same physical energy, S-normalized
+!Glob_c, convergence diagnostics, and status. The starting vector is the
+!current Glob_c.
 !
-!The solve receives the physical H and S. It forms H*c and S*c once and
-!returns both the Rayleigh quotient and the relative residual
+!Every solve reads the physical H and S, whose canonical lower triangles must
+!already contain every trial column. Besides the Rayleigh quotient it returns
+!the relative residual
 !
 !        ||H*c-E*S*c||/(||H*c||+|E|*||S*c||+tiny)
 !
-!of the physical generalized eigenproblem. Only the canonical lower triangles
-!are read. The factorization probe (see ProbeQFactorization) is a separate
-!diagnostic with four more O(n**2) matrix products, so it is not repeated
-!after every solve: it runs for factors that have not been probed since their
-!fresh factorization, after every Q_FACTOR_PROBE_INTERVAL structural updates,
-!and whenever the eigenpair residual or the last probe is out of tolerance.
+!of the physical generalized eigenproblem, which does not depend on the QR
+!state and therefore also detects a batch of deferred updates that has become
+!too inaccurate.
+!
+!SolveQ calls solve with an iteration limit of one ("pass") and iterates
+!itself. The reason is the form of the iteration. The first iteration of a
+!solve is a direct inverse iteration, x=(H-shift*S)**(-1)*S*v, exactly as in
+!method I; qrlinalg performs later iterations of the same call, and the
+!optional steps enabled by residual_goal, in residual-correction form. That
+!form makes the attainable residual independent of the batch, but in a nearly
+!linearly dependent basis each correction carries roundoff noise along the
+!near-null space of S. The noise does not affect the residual (2E-19 for the
+!2850-function test problem in extended precision), but it keeps the change
+!of direction between iterates near 5E-11 there, so the direction test of
+!method I could never be satisfied, and it makes the linear coefficients, and
+!through them the energy gradient, less smooth functions of the nonlinear
+!parameters. A direct iteration does not have this defect: S*v annihilates
+!such components of v, and the errors of the solve are small beside its
+!solution, which is dominated by the wanted eigenvector.
+!
+!  tolerance = EIGVAL_TOLERANCE, the bound of method I on the relative change
+!              of direction in one direct iteration (qrlinalg returns success
+!              from a pass exactly when it is met)
+!  goal      = max(abs(EIGVAL_TOLERANCE),100*epsilon), not above the threshold
+!  threshold = max(1000*epsilon*n,100*abs(EIGVAL_TOLERANCE))
+!
+!Policy:
+!  1. Direct passes, up to the normal iteration limit. They end when the
+!     direction test is met (the stopping rule of method I), when the
+!     residual is at roundoff level (10*epsilon), or when a pass no longer
+!     lowers the residual. The eigenpair is accepted if the direction test
+!     was met and the residual does not exceed the threshold, or if the
+!     residual meets the goal. In an optimization almost every solve ends
+!     here after one or two passes.
+!  2. Otherwise passes with residual_goal follow, each one direct iteration
+!     plus residual-correction steps of qrlinalg, until the goal is met or
+!     the residual no longer decreases. The corrections recover the accuracy
+!     that the block elimination over a large batch can cost a direct
+!     iteration, at a few O(n**2) solves, which is far cheaper than a fresh
+!     factorization. The eigenpair reached is accepted when its residual does
+!     not exceed the threshold.
+!  3. If the eigenpair is still not acceptable, or qrlinalg reported an error,
+!     the matrices are factorized fresh when anything is deferred (a
+!     residual-triggered flush), and passes as in 2 are repeated with a
+!     larger limit, because a newly appended function or an arbitrary
+!     starting vector can need many more iterations than the limit tuned for
+!     small optimizer displacements. The result is final and is judged by the
+!     threshold. The active map is not announced again here: these passes use
+!     the fresh factors alone, and the next trial announces it.
+!
+!A final eigenpair that is not acceptable is reported as
+!QR_ERR_NO_CONVERGENCE, or as the qrlinalg error when no vector is available;
+!Glob_c then keeps the last vector that qrlinalg returned.
 !
 !Arguments:
     real(wp),intent(out) :: Evalue
     integer,intent(out)  :: ErrorCode
 !Local variables:
-    integer i,MatrixOrder,NumOfIterations,RootError,RefreshError,SolveStatus
-    integer RetryMaxIterations
-    integer(int64) UpdatesSinceFresh,RefreshLimit,UpdatesSinceProbe
-    real(wp) RelativeResidual,EigenpairResidual
-    real(wp) RefreshTolerance,SolveTolerance
-    logical RefreshNeeded
+    integer i,MatrixOrder,NumOfIterations,NumOfPolishSteps,Pass,PassLimit
+    integer RefreshError,Stage,Status
+    real(wp) DirectionChange,EigenpairResidual,GoalResidual,PreviousResidual
+    real(wp) SolveTolerance
+    logical DirectionIsConverged,IsAccepted,StageIsFinished,VectorIsAvailable
 
     Evalue=huge(Evalue)
     ErrorCode=Q_METHOD_INVALID_ARGUMENT
@@ -5280,7 +5578,8 @@ contains
     !calculation starts from the conventional enormous CURRENT_ENERGY sentinel:
     !forming lambda as shift+(lambda-shift) would otherwise lose the physical
     !diagonal energy by catastrophic cancellation. BASIS_ENL retargets the QR
-    !shift to this first accepted energy before attempting order two.
+    !shift to this first accepted energy before attempting order two
+    !(RetargetQStaleShift).
     if (MatrixOrder==1) then
       if (.not.(Glob_S(1,1)>tiny(ONE))) then
         ErrorCode=QR_ERR_NONPOSITIVE_OVERLAP
@@ -5289,9 +5588,6 @@ contains
       Evalue=Glob_H(1,1)/Glob_S(1,1)
       Glob_c(1)=ONE/sqrt(Glob_S(1,1))
       Q_Workspace%LastEigenpairResidual=ZERO
-      Q_Workspace%LastFactorResidual=ZERO
-      if (Glob_ProcID==0) Q_Workspace%FactorProbeUpdateCount= &
-        Q_Workspace%Factors%get_update_count()
       Glob_LastEigvalTol=ZERO
       Glob_InvItTempCounter1=Glob_InvItTempCounter1+1
       Glob_InvItTempCounter2=Glob_InvItTempCounter2+1
@@ -5299,160 +5595,213 @@ contains
       return
     endif
 
-    !A full refresh after O(n) replacements keeps the amortized cost of fresh
-    !O(n**3) factorizations at O(n**2) per replacement. The residual check
-    !below can request an earlier refresh when accumulated rotations drift.
-    RefreshNeeded=.false.
-    if (Glob_ProcID==0) then
-      if (.not.Q_Workspace%Factors%is_valid()) then
-        RootError=Q_METHOD_INVALID_STATE
-      else
-        RootError=Q_METHOD_SUCCESS
-        UpdatesSinceFresh=Q_Workspace%Factors%get_updates_since_fresh()
-        RefreshLimit=int(max(64,8*MatrixOrder),int64)
-        RefreshNeeded=(UpdatesSinceFresh>=RefreshLimit)
-      endif
+    Status=Q_METHOD_SUCCESS
+    if (.not.Q_Workspace%Factors%is_valid()) then
+      Status=Q_METHOD_INVALID_STATE
+    else if (Q_Workspace%Factors%order()/=MatrixOrder) then
+      Status=Q_METHOD_INVALID_STATE
     endif
-    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(RefreshNeeded,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    if (RootError/=Q_METHOD_SUCCESS) then
-      ErrorCode=RootError
+    if (Status/=Q_METHOD_SUCCESS) then
+      ErrorCode=Status
       Q_Workspace%FactorsMatchMatrices=.false.
       return
     endif
-    if (RefreshNeeded) then
-      call FactorizeQFresh(RefreshError)
-      if (RefreshError/=Q_METHOD_SUCCESS) then
-        ErrorCode=RefreshError
-        return
-      endif
-    endif
 
-    RootError=Q_METHOD_SUCCESS
-    RelativeResidual=ZERO
-    EigenpairResidual=huge(ONE)
-    NumOfIterations=0
-    if (Glob_ProcID==0) then
-      Q_Workspace%InitialVector(1:MatrixOrder)=Glob_c(1:MatrixOrder)
-      if (.not.(maxval(abs(Q_Workspace%InitialVector(1:MatrixOrder)))>tiny(ONE))) then
-        do i=1,MatrixOrder
-          Q_Workspace%InitialVector(i)=ONE
-        enddo
-      endif
-      call Q_Workspace%Factors%solve(Glob_S, &
-        Q_Workspace%InitialVector(1:MatrixOrder), &
-        Q_Workspace%SolvedVector(1:MatrixOrder),Evalue,Glob_EigvalTol, &
-        Glob_MaxIterForGSEPIIS,0,RelativeResidual,NumOfIterations,RootError, &
-        h=Glob_H,eigen_residual=EigenpairResidual)
-      Glob_c(1:MatrixOrder)=Q_Workspace%SolvedVector(1:MatrixOrder)
+    SolveTolerance=max(1000*epsilon(ONE)*MatrixOrder, &
+                       100*abs(Glob_EigvalTol))
+    GoalResidual=min(SolveTolerance, &
+                     max(abs(Glob_EigvalTol),100*epsilon(ONE)))
+    Q_Workspace%InitialVector(1:MatrixOrder)=Glob_c(1:MatrixOrder)
+    if (.not.(maxval(abs(Q_Workspace%InitialVector(1:MatrixOrder)))>tiny(ONE))) then
+      do i=1,MatrixOrder
+        Q_Workspace%InitialVector(i)=ONE
+      enddo
     endif
-    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(RelativeResidual,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(NumOfIterations,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(Glob_c,MatrixOrder,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    SolveStatus=RootError
-    Glob_LastEigvalTol=RelativeResidual
     Glob_InvItTempCounter1=Glob_InvItTempCounter1+1
-    Glob_InvItTempCounter2=Glob_InvItTempCounter2+NumOfIterations
-    if ((SolveStatus/=Q_METHOD_SUCCESS).and. &
-        (SolveStatus/=QR_ERR_NO_CONVERGENCE)) then
-      ErrorCode=RootError
-      return
-    endif
 
-    !Two independent numerical relationships are monitored. The physical
-    !residual checks H*c=E*S*c; the solve has just returned it from the
-    !products it needed for the Rayleigh quotient. The factor residual checks
-    !Q*R=(H-shift*S) with a fixed dense probe. Factors that passed the probe
-    !degrade only slowly through further updates, and a loss of accuracy that
-    !matters shows up in the physical residual, so the probe is repeated only
-    !when it can tell something new: the stored value is unknown (fresh
-    !factors) or out of tolerance, Q_FACTOR_PROBE_INTERVAL structural updates
-    !have been applied since the last probe, or the physical residual is out
-    !of tolerance. QR_ERR_NO_CONVERGENCE still contains an approximation; it
-    !is accepted only when the physical residual satisfies the caller
-    !tolerance. Either diagnostic may request one fresh-factorization retry.
-    if (Glob_ProcID==0) then
-      RootError=Q_METHOD_SUCCESS
-      Q_Workspace%LastEigenpairResidual=EigenpairResidual
-      RefreshTolerance=max(1000*epsilon(ONE)*MatrixOrder, &
-                           10*abs(Glob_EigvalTol))
-      SolveTolerance=max(1000*epsilon(ONE)*MatrixOrder, &
-                         100*abs(Glob_EigvalTol))
-      UpdatesSinceProbe=Q_Workspace%Factors%get_update_count()- &
-        Q_Workspace%FactorProbeUpdateCount
-      if ((.not.(Q_Workspace%LastFactorResidual<=RefreshTolerance)).or. &
-          (.not.(Q_Workspace%LastEigenpairResidual<=SolveTolerance)).or. &
-          (UpdatesSinceProbe>=Q_FACTOR_PROBE_INTERVAL).or. &
-          (UpdatesSinceProbe<0)) call ProbeQFactorization(RootError)
-      RefreshNeeded=(RootError==Q_METHOD_SUCCESS).and. &
-        ((.not.(Q_Workspace%LastFactorResidual<=RefreshTolerance)).or. &
-         (.not.(Q_Workspace%LastEigenpairResidual<=SolveTolerance)))
-    endif
-    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(RefreshNeeded,1,MPI_LOGICAL,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(Q_Workspace%LastEigenpairResidual,1,MPI_WP,0, &
-      MPI_COMM_WORLD,Glob_MPIErrCode)
-    call MPI_BCAST(Q_Workspace%LastFactorResidual,1,MPI_WP,0, &
-      MPI_COMM_WORLD,Glob_MPIErrCode)
-    if (RootError/=Q_METHOD_SUCCESS) then
-      ErrorCode=RootError
-      return
-    endif
-
-    if (RefreshNeeded) then
-      call FactorizeQFresh(RefreshError)
-      if (RefreshError/=Q_METHOD_SUCCESS) then
-        ErrorCode=RefreshError
-        return
-      endif
-      !The normal iteration cap is tuned for small optimizer displacements.
-      !A newly appended basis function can rotate the eigenvector much farther.
-      !Only after the independent residual has rejected the first approximation
-      !do we allow this larger cap; every additional iteration remains O(n**2).
-      RetryMaxIterations=max(120,max(Glob_MaxIterForGSEPIIS,4*MatrixOrder))
-      if (Glob_ProcID==0) then
-        Q_Workspace%InitialVector(1:MatrixOrder)=Glob_c(1:MatrixOrder)
-        call Q_Workspace%Factors%solve(Glob_S, &
-          Q_Workspace%InitialVector(1:MatrixOrder), &
-          Q_Workspace%SolvedVector(1:MatrixOrder),Evalue,Glob_EigvalTol, &
-          RetryMaxIterations,0,RelativeResidual,NumOfIterations,RootError, &
-          h=Glob_H,eigen_residual=EigenpairResidual)
-        Glob_c(1:MatrixOrder)=Q_Workspace%SolvedVector(1:MatrixOrder)
-      endif
-      call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-      call MPI_BCAST(Evalue,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-      call MPI_BCAST(RelativeResidual,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-      call MPI_BCAST(NumOfIterations,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-      call MPI_BCAST(Glob_c,MatrixOrder,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-      Glob_LastEigvalTol=RelativeResidual
-      Glob_InvItTempCounter1=Glob_InvItTempCounter1+1
-      Glob_InvItTempCounter2=Glob_InvItTempCounter2+NumOfIterations
-
-      if ((RootError==Q_METHOD_SUCCESS).or. &
-          (RootError==QR_ERR_NO_CONVERGENCE)) then
-        if (Glob_ProcID==0) then
-          !The factors are fresh, so their probe is always due here.
-          Q_Workspace%LastEigenpairResidual=EigenpairResidual
-          call ProbeQFactorization(RootError)
-          if ((RootError==Q_METHOD_SUCCESS).and. &
-              (.not.(Q_Workspace%LastEigenpairResidual<=SolveTolerance))) &
-            RootError=QR_ERR_NO_CONVERGENCE
-          if ((RootError==Q_METHOD_SUCCESS).and. &
-              (.not.(Q_Workspace%LastFactorResidual<=RefreshTolerance))) &
-            RootError=Q_METHOD_INVALID_STATE
+    IsAccepted=.false.
+    VectorIsAvailable=.false.
+    PreviousResidual=huge(ONE)
+    do Stage=1,3
+      select case (Stage)
+      case (1)
+        PassLimit=Glob_MaxIterForGSEPIIS
+      case (2)
+        !A stage that could not obtain a vector cannot be continued.
+        if (.not.VectorIsAvailable) cycle
+        PassLimit=Glob_MaxIterForGSEPIIS
+      case (3)
+        if (Q_Workspace%Factors%pending_count()>0) then
+          call FactorizeQFresh(RefreshError)
+          if (RefreshError/=Q_METHOD_SUCCESS) then
+            Evalue=huge(Evalue)
+            ErrorCode=RefreshError
+            return
+          endif
+          Q_Workspace%ResidualFlushes=Q_Workspace%ResidualFlushes+1
+          PreviousResidual=huge(ONE)
         endif
-        call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-        call MPI_BCAST(Q_Workspace%LastEigenpairResidual,1,MPI_WP,0, &
-          MPI_COMM_WORLD,Glob_MPIErrCode)
-        call MPI_BCAST(Q_Workspace%LastFactorResidual,1,MPI_WP,0, &
-          MPI_COMM_WORLD,Glob_MPIErrCode)
+        PassLimit=max(120,max(Glob_MaxIterForGSEPIIS,4*MatrixOrder))
+      endselect
+
+      DirectionIsConverged=.false.
+      do Pass=1,PassLimit
+        NumOfPolishSteps=0
+        if (Stage==1) then
+          call Q_Workspace%Factors%solve(Glob_H,Glob_S, &
+            Q_Workspace%InitialVector(1:MatrixOrder), &
+            Q_Workspace%SolvedVector(1:MatrixOrder),Evalue,Glob_EigvalTol, &
+            1,0,DirectionChange,NumOfIterations,EigenpairResidual,Status)
+        else
+          call Q_Workspace%Factors%solve(Glob_H,Glob_S, &
+            Q_Workspace%InitialVector(1:MatrixOrder), &
+            Q_Workspace%SolvedVector(1:MatrixOrder),Evalue,Glob_EigvalTol, &
+            1,0,DirectionChange,NumOfIterations,EigenpairResidual,Status, &
+            residual_goal=GoalResidual,num_polish=NumOfPolishSteps)
+        endif
+        Glob_InvItTempCounter2=Glob_InvItTempCounter2+NumOfIterations+ &
+          NumOfPolishSteps
+
+        !qrlinalg returns its best vector with QR_ERR_NO_CONVERGENCE and a
+        !zero vector with every other error. Only a returned vector replaces
+        !Glob_c and becomes the starting vector of the next pass.
+        VectorIsAvailable=(Status==Q_METHOD_SUCCESS).or. &
+                          (Status==QR_ERR_NO_CONVERGENCE)
+        if (.not.VectorIsAvailable) exit
+        Glob_c(1:MatrixOrder)=Q_Workspace%SolvedVector(1:MatrixOrder)
+        Q_Workspace%InitialVector(1:MatrixOrder)= &
+          Q_Workspace%SolvedVector(1:MatrixOrder)
+        Q_Workspace%LastEigenpairResidual=EigenpairResidual
+        Glob_LastEigvalTol=DirectionChange
+
+        if (Stage==1) then
+          DirectionIsConverged=(Status==Q_METHOD_SUCCESS)
+          StageIsFinished=DirectionIsConverged.or. &
+                          (EigenpairResidual<=10*epsilon(ONE))
+        else
+          StageIsFinished=(EigenpairResidual<=GoalResidual)
+        endif
+        if (StageIsFinished) exit
+        !Passes continue only while they lower the residual. The negated
+        !comparison also ends them for a residual that is not a number.
+        if (.not.(EigenpairResidual<PreviousResidual)) exit
+        PreviousResidual=EigenpairResidual
+      enddo
+
+      if (VectorIsAvailable) then
+        if (Stage==1) then
+          IsAccepted=(DirectionIsConverged.and. &
+                      (Q_Workspace%LastEigenpairResidual<=SolveTolerance)).or. &
+                     (Q_Workspace%LastEigenpairResidual<=GoalResidual)
+        else
+          IsAccepted=(Q_Workspace%LastEigenpairResidual<=SolveTolerance)
+        endif
       endif
+      if (IsAccepted) exit
+    enddo
+
+    if (IsAccepted) then
+      if (Stage==2) Q_Workspace%PolishedSolves=Q_Workspace%PolishedSolves+1
+      !The energy is the shifted Rayleigh quotient of the accepted vector,
+      !evaluated like the energy of method I. Its rounding error is below one
+      !unit of the last place where the plain quotient returned by solve is
+      !wrong by many units in a large, nearly linearly dependent basis; DRMNG
+      !resolves energy differences of that size.
+      call Q_Workspace%Factors%shifted_quotient(Glob_H,Glob_S, &
+        Glob_c(1:MatrixOrder),Evalue,ErrorCode)
+      if (ErrorCode/=Q_METHOD_SUCCESS) Evalue=huge(Evalue)
+    else if (VectorIsAvailable) then
+      ErrorCode=QR_ERR_NO_CONVERGENCE
+    else
+      Evalue=huge(Evalue)
+      ErrorCode=Status
     endif
-    ErrorCode=RootError
 
   end subroutine SolveQ
+
+  subroutine RetargetQStaleShift(Energy,ErrorCode)
+!Subroutine RetargetQStaleShift moves the inverse-iteration shift of a
+!BASIS_ENL Q command to Energy*INVITPARAMETER and factorizes the represented
+!problem fresh, because a QR state is tied to its shift, when the present
+!shift is provisional or stale. Otherwise it does nothing. BasisEnlQ calls it
+!at every function boundary, after a block has been accepted and optimized,
+!with the energy of the represented problem.
+!
+!  - Provisional: the command started from an empty basis and the shift is
+!    still the diagonal estimate of the first candidate block (see
+!    AppendQTrial). The first accepted block ends that phase.
+!  - Stale: the solves made since BasisEnlQ last reset the counters
+!    Glob_InvItTempCounter1 (solves) and Glob_InvItTempCounter2 (passes), that
+!    is, the candidate and optimizer solves of the block just accepted, needed
+!    more than Q_STALE_SHIFT_PASSES passes on average. Inverse iteration
+!    converges by the ratio of the distances from the shift to the wanted and
+!    to the nearest other eigenvalue per pass, so a solve near a well placed
+!    shift needs 1.1 to 1.9 passes and many passes mean that the energy has
+!    moved far from the shift. This happens while a basis grows from a few
+!    functions: the energy then drops by much more than the distance
+!    abs(Energy)*abs(INVITPARAMETER-1) that the shift keeps from it. Without
+!    retargeting, He from an empty basis needed 6.3 passes per solve at two
+!    functions and 15.5 at five, and eventually the iteration limit or the
+!    wrong root; with it, 6.2 and 3.9.
+!
+!The decision uses only replicated integer counters, so every rank takes the
+!same branch, and the call is collective. A shift that already has the
+!target value is left alone. In a large basis the energy changes by much less
+!than that distance per function and the rule does not trigger (BASIS_ENL of
+!2851 to 2856 functions needed 1.89 to 1.92 passes per solve for every
+!function); if it did, the cost would be one fresh factorization per
+!function. The remainder of the code needs no notice of the change: in a Q
+!command Glob_ApproxEnergy is read only by the Q helpers, which compare it
+!with the shift of the QR state, and main sets it anew from CURRENT_ENERGY
+!before every BBOP step; the output file holds CURRENT_ENERGY and
+!INVITPARAMETER, not the shift; and the swap file holds unshifted matrices.
+!
+!Method I has no counterpart: it keeps the shift derived from CURRENT_ENERGY
+!for the whole command and cannot start from an empty basis.
+!
+!Arguments:
+    real(wp),intent(in) :: Energy
+    integer,intent(out) :: ErrorCode
+!Local variables:
+    logical ShiftIsStale
+
+    ErrorCode=Q_METHOD_SUCCESS
+    !Integer form of passes/solves > Q_STALE_SHIFT_PASSES.
+    ShiftIsStale=(Glob_InvItTempCounter2> &
+                  Q_STALE_SHIFT_PASSES*Glob_InvItTempCounter1)
+    if (.not.(Q_Workspace%ShiftIsProvisional.or.ShiftIsStale)) return
+    ErrorCode=Q_METHOD_INVALID_ARGUMENT
+    if (.not.(abs(Energy)<huge(Energy))) return
+    ErrorCode=Q_METHOD_SUCCESS
+    if ((.not.Q_Workspace%ShiftIsProvisional).and. &
+        (Energy*Glob_InvItParameter==Glob_ApproxEnergy)) return
+    Glob_ApproxEnergy=Energy*Glob_InvItParameter
+    Q_Workspace%ShiftIsProvisional=.false.
+    call FactorizeQFresh(ErrorCode)
+    if (ErrorCode==Q_METHOD_SUCCESS) &
+      Q_Workspace%ShiftRetargets=Q_Workspace%ShiftRetargets+1
+
+  end subroutine RetargetQStaleShift
+
+  subroutine PrintQStatistics()
+!Subroutine PrintQStatistics prints, on rank zero, one line with the number of
+!fresh QR factorizations made since PrepareQWorkspace and what requested them
+!(see the counters in QMethodWorkspace), followed by the number of solves that
+!needed the second stage of SolveQ. The Q BBOP drivers call it at the end of
+!a step. Frequent residual-triggered factorizations indicate that the batch
+!of deferred updates loses accuracy for this basis and shift.
+
+    if (Glob_ProcID/=0) return
+    write(*,'(1x,a,1x,i0,1x,a,1x,i0,a,1x,i0,a,1x,i0,a,1x,i0,a,1x,i0,a,1x,i0)') &
+      'QR factorizations:',Q_Workspace%FreshFactorizations, &
+      '(batch full',Q_Workspace%BatchFlushes, &
+      ', singular batch',Q_Workspace%SingularFlushes, &
+      ', residual',Q_Workspace%ResidualFlushes, &
+      ', direct trials',Q_Workspace%DirectTrials, &
+      ', shift retargets',Q_Workspace%ShiftRetargets, &
+      '); polished solves:',Q_Workspace%PolishedSolves
+
+  end subroutine PrintQStatistics
 
   subroutine ComputeQOverlapPenalty(TotalPenalty,ErrorCode)
 !Subroutine ComputeQOverlapPenalty evaluates the FULL_OPT1 smooth pair-overlap
@@ -5745,9 +6094,22 @@ contains
 !Subroutine BasisEnlQ enlarges the canonical basis using the same random
 !candidate generation, optional DRMNG optimization, acceptance thresholds,
 !history, and output policy as BasisEnlG. Accepted functions are appended at
-!the end. Each rejected trial suffix is removed from the QR factors before the
+!the end. Each rejected trial suffix is removed from the QR state before the
 !next candidate is appended, so repeated trials do not repeatedly increase the
 !active matrix order.
+!
+!A block rejected by the overlap or by the linear-coefficient threshold is
+!generated again, up to Glob_BadOverlapOrLinCoeffLim attempts; after that the
+!last block is kept although it violates a threshold, exactly as BasisEnlG
+!and BasisEnlI do, and the recorded energy is likewise the energy before the
+!block. Only a last attempt whose final energy evaluation failed stops the
+!command (EC0130): after a failed Q transaction the physical matrices may
+!represent other nonlinear parameters than Glob_NonlinParam holds and Glob_c
+!is not an eigenvector, so the block cannot be recorded.
+!
+!After every accepted block the shift is retargeted to the energy of the
+!represented problem if it is provisional (a command that starts from an
+!empty basis, see AppendQTrial) or stale (see RetargetQStaleShift).
 !
 !Arguments:
     integer,intent(in)  :: Kstart,Kstop,Kstep,NTrials,OptimizationType,MaxEnergyEval
@@ -6194,9 +6556,29 @@ contains
         AttemptToGetGoodFunc=AttemptToGetGoodFunc+1
       enddo
 
-      if (IsOverlapBad.or.IsAnyLinCoeffBad.or.IsEnergyBad) then
+!Every attempt was rejected. BasisEnlG and BasisEnlI keep the last block in
+!that case and so does this routine, provided that its energy was evaluated:
+!the QR state, the physical matrices, and Glob_c then describe the block
+!consistently, and only the thresholds are violated. Glob_CurrEnergy is the
+!energy before the block, as in those routines. A failed evaluation leaves no
+!such state.
+      if (IsEnergyBad) then
         if (Glob_ProcID==0) write(*,*) &
           'Error EC0130 in BasisEnlQ: unable to construct an acceptable candidate block'
+        call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
+      endif
+      if ((IsOverlapBad.or.IsAnyLinCoeffBad).and.(Glob_ProcID==0)) &
+        write(*,'(1x,a,1x,i0,1x,a)') 'No acceptable candidate block after', &
+          Glob_BadOverlapOrLinCoeffLim,'attempts; the last block is kept'
+
+!Retarget a provisional or stale shift before the basis grows further. Evalue
+!is the energy of the represented problem; it differs from Glob_CurrEnergy
+!only for a block that was kept although a threshold rejected it. The
+!counters of SolveQ still cover the solves of this block.
+      call RetargetQStaleShift(Evalue,ErrCode)
+      if (ErrCode/=Q_METHOD_SUCCESS) then
+        if (Glob_ProcID==0) write(*,'(1x,a,1x,i0)') &
+          'Error EC0131 in BasisEnlQ: shift cannot be retargeted to the accepted energy, status',ErrCode
         call MPI_Abort(MPI_COMM_WORLD,1,Glob_MPIErrCode)
       endif
 
@@ -6248,6 +6630,7 @@ contains
     enddo
 
     call StoreMatricesInSwapFile()
+    call PrintQStatistics()
     call ClearQWorkspace()
 
     deallocate(V_init)
@@ -6694,6 +7077,7 @@ contains
     enddo
 
     call StoreMatricesInSwapFile()
+    call PrintQStatistics()
     call ClearQWorkspace()
 
     deallocate(ActiveFunction)
@@ -7034,6 +7418,7 @@ contains
     if (Glob_ProcID==0) call SaveResults(Sort='no')
     call StoreMatricesInSwapFile()
     Glob_OverlapPenaltyAllowed=.false.
+    call PrintQStatistics()
     call ClearQWorkspace()
 
     deallocate(ActiveFunction)
@@ -10602,9 +10987,11 @@ contains
   subroutine SolveEliminationGSEP(GSEPSolMethod,MatrixOrder,Evalue,ErrorCode)
 !Subroutine SolveEliminationGSEP provides the common eigensolver boundary used
 !by the elimination and separation BBOP routines. It constructs the initial
-!factorization. After the basis change, Q cleanup drivers preserve this state
-!through delete_symmetric or replace_symmetric; only G rebuilds and calls this
-!routine a second time.
+!factorization. After the basis change, the Q cleanup drivers keep the
+!physical matrices: an elimination compacts them and factorizes the survivors
+!fresh (DeleteQMaskedFunctions), a separation replaces the selected columns
+!(ApplyQTrial). Only G recalculates the matrices and calls this routine a
+!second time.
 !
 !The G path preserves the historical DSYGVX layout: it materializes the upper
 !triangle and restores Hamiltonian and overlap diagonals before calling LAPACK.
@@ -10668,31 +11055,33 @@ contains
 
   subroutine DeleteQMaskedFunctions(RemoveMask,ErrorCode)
 !Subroutine DeleteQMaskedFunctions removes every marked canonical basis
-!function from both the qrlinalg state and the physical matrix representation.
-!Deletions are submitted in descending canonical order, so an original index
-!continues to identify the same row and column after every preceding deletion.
-!For r removed functions this costs O(r*n**2), while the historical cleanup
-!path recalculated O(n**2) matrix elements and constructed another O(n**3)
-!factorization even though every survivor-survivor element was unchanged.
+!function from the physical matrix representation and constructs fresh QR
+!factors of the smaller problem. Every survivor-survivor matrix element is
+!unchanged, so no matrix element is recalculated; the historical cleanup path
+!recalculated all O(n**2) of them before its O(n**3) factorization. The
+!batched QR state has no interior deletion (qrlinalg can only truncate
+!trailing functions), and a cleanup command deletes once, so one fresh
+!factorization of the compacted matrices is the appropriate operation.
 !
-!The physical lower triangles are compacted only after all root-owned QR
-!operations succeed. Their in-place ascending survivor copy is safe: each
-!source row and column has an original index not smaller than its destination,
-!and no write can destroy a matrix element needed by a later survivor. The
-!upper triangles remain deliberately unspecified under the Q canonical-layout
-!contract. Raw overlap norms and the current eigenvector are compacted by the
-!same survivor map.
+!The in-place ascending survivor copy of the physical lower triangles is safe:
+!each source row and column has an original index not smaller than its
+!destination, and no write can destroy a matrix element needed by a later
+!survivor. The upper triangles remain deliberately unspecified under the Q
+!canonical-layout contract. Raw overlap norms and the current eigenvector are
+!compacted by the same survivor map.
 !
-!A public qrlinalg deletion cannot fail after the complete metadata preflight,
-!but the recovery path is still explicit. If a future library implementation
-!introduces a failure, the untouched physical matrices reconstruct the old
-!factorization before this routine reports the original error.
+!The QR state is checked against the workspace before anything is changed. A
+!mismatch there means that the caller's state is not what it claims to be;
+!the untouched physical matrices then reconstruct the old factorization
+!before this routine reports the error. After the compaction the survivor
+!matrices are the proven physical state: if their fresh factorization fails,
+!FactorsMatchMatrices is false and the error is returned.
 !
 !Arguments:
     integer,intent(in)  :: RemoveMask(:)
     integer,intent(out) :: ErrorCode
 !Local variables:
-    integer i,j,OldI,OldJ,OldOrder,NewOrder,RootError,RecoveryError
+    integer i,j,OldI,OldJ,OldOrder,NewOrder,Status,RecoveryError
     integer,allocatable :: Survivor(:)
 
     ErrorCode=Q_METHOD_INVALID_ARGUMENT
@@ -10713,8 +11102,8 @@ contains
     if (size(Glob_diagS)<OldOrder) return
     if (size(Glob_c)<OldOrder) return
 
-    allocate(Survivor(NewOrder),stat=RootError)
-    if (RootError/=0) then
+    allocate(Survivor(NewOrder),stat=Status)
+    if (Status/=0) then
       ErrorCode=Q_METHOD_ALLOCATION_ERROR
       return
     endif
@@ -10726,31 +11115,20 @@ contains
       endif
     enddo
 
-    RootError=Q_METHOD_SUCCESS
-    if (Glob_ProcID==0) then
-      if (.not.Q_Workspace%Factors%is_valid()) RootError=Q_METHOD_INVALID_STATE
-      if (Q_Workspace%Factors%order()/=OldOrder) RootError=Q_METHOD_INVALID_STATE
-      if (Q_Workspace%Factors%get_capacity()/=Q_Workspace%Capacity) &
-        RootError=Q_METHOD_INVALID_STATE
-      if (Q_Workspace%Factors%get_shift()/=Glob_ApproxEnergy) &
-        RootError=Q_METHOD_INVALID_STATE
-      if (RootError==Q_METHOD_SUCCESS) then
-        do i=OldOrder,1,-1
-          if (RemoveMask(i)/=0) then
-            call Q_Workspace%Factors%delete_symmetric(i,RootError)
-            if (RootError/=Q_METHOD_SUCCESS) exit
-          endif
-        enddo
-      endif
-    endif
-    call MPI_BCAST(RootError,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
-    if (RootError/=Q_METHOD_SUCCESS) then
+    Status=Q_METHOD_SUCCESS
+    if (.not.Q_Workspace%Factors%is_valid()) Status=Q_METHOD_INVALID_STATE
+    if (Q_Workspace%Factors%order()/=OldOrder) Status=Q_METHOD_INVALID_STATE
+    if (Q_Workspace%Factors%get_capacity()/=Q_Workspace%Capacity) &
+      Status=Q_METHOD_INVALID_STATE
+    if (Q_Workspace%Factors%get_shift()/=Glob_ApproxEnergy) &
+      Status=Q_METHOD_INVALID_STATE
+    if (Status/=Q_METHOD_SUCCESS) then
       Q_Workspace%FactorsMatchMatrices=.false.
       call FactorizeQFresh(RecoveryError)
       if (RecoveryError/=Q_METHOD_SUCCESS) then
         ErrorCode=RecoveryError
       else
-        ErrorCode=RootError
+        ErrorCode=Status
       endif
       deallocate(Survivor)
       return
@@ -10766,6 +11144,7 @@ contains
         Glob_S(i,j)=Glob_S(OldI,OldJ)
       enddo
     enddo
+    deallocate(Survivor)
 
     Q_Workspace%MatrixOrder=NewOrder
     Q_Workspace%NumActive=0
@@ -10775,11 +11154,8 @@ contains
     Q_Workspace%TrialIsReady=.false.
     Q_Workspace%TrialHasDerivatives=.false.
     Q_Workspace%AcceptedPointIsStored=.false.
-    Q_Workspace%FactorsMatchMatrices=.true.
     Q_Workspace%LastEigenpairResidual=huge(ONE)
-    Q_Workspace%LastFactorResidual=huge(ONE)
-    ErrorCode=Q_METHOD_SUCCESS
-    deallocate(Survivor)
+    call FactorizeQFresh(ErrorCode)
 
   end subroutine DeleteQMaskedFunctions
 
@@ -10957,7 +11333,7 @@ contains
 
     if (Glob_ProcID==0) then
       if (Method=='Q') then
-        write(*,*) 'Deleting selected rows and columns from the QR factorization...'
+        write(*,*) 'Deleting selected rows and columns and constructing fresh QR factors...'
       else
         write(*,*) 'Computing matrix elements and solving eigenvalue problem with the'
         write(*,*) 'basis where little contributing functions are eliminated...'
@@ -10965,8 +11341,8 @@ contains
     endif
     if (Method=='Q') then
       !Every survivor-survivor matrix element is unchanged. Preserve its
-      !canonical value and delete the matching factor rows and columns instead
-      !of evaluating the complete smaller matrix for a second time.
+      !canonical value and factorize the compacted matrices instead of
+      !evaluating the complete smaller matrix for a second time.
       call DeleteQMaskedFunctions(MaskArray,ErrorCode)
       if (ErrorCode==Q_METHOD_SUCCESS) then
         Glob_CurrBasisSize=cbs-j
@@ -11236,7 +11612,7 @@ contains
     !the compaction loop and therefore defines the new basis order.
     if (Method=='Q') then
       if (Glob_ProcID==0) write(*,'(1x,a)',advance='no') &
-        'Deleting selected rows and columns from QR factors...'
+        'Deleting selected rows and columns and constructing fresh QR factors...'
       call DeleteQMaskedFunctions(MaskArray,ErrorCode)
       if (ErrorCode==Q_METHOD_SUCCESS) then
         Glob_CurrBasisSize=cbs-j

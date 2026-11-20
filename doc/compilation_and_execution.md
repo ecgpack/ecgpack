@@ -90,7 +90,7 @@ Note that an optimized BLAS/LAPACK library can be used only when `PREC=8`. For `
 
 ### OpenMP
 
-OpenMP support is currently provided by the Makefiles of `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`. The compiler flag is selected automatically (`-fopenmp` for gfortran, `-qopenmp` for ifort and ifx, and `-mp` for nvfortran). In `LINALG=netlib` builds, OpenMP parallelizes sufficiently large operations in the bundled BLAS used by qrlinalg. When an external BLAS/LAPACK provider is selected, its own threading configuration also applies and should be checked separately. The Makefiles of `PG_0S` and `PG_1P` accept the `OPENMP` argument as well, but OpenMP builds of these two codes are not supported.
+OpenMP support is currently provided by the Makefiles of `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`. The compiler flag is selected automatically (`-fopenmp` for gfortran, `-qopenmp` for ifort and ifx, and `-mp` for nvfortran). In `LINALG=netlib` builds, OpenMP parallelizes sufficiently large matrix-matrix products (`DGEMM`) of the bundled BLAS, which the LAPACK-based fresh QR factorizations of eigensolver `Q` use. Nothing else is threaded: the solves, matrix-vector products, and updates of the `Q` solver do not use OpenMP, so OpenMP shortens only the factorization at the start of a `Q` command and the occasional refactorizations. In `RG_0S` even that applies only when the LAPACK-based (serial) factorization is the one in use, that is, with one MPI process or when it is selected (see `ECG_QR_FACTOR` under Execution): with several MPI processes `RG_0S` normally factorizes with its distributed algorithm, which is parallelized over the MPI processes like the rest of its `Q` solver and contains no OpenMP. When an external BLAS/LAPACK provider is selected, its own threading configuration also applies and should be checked separately. The Makefiles of `PG_0S` and `PG_1P` accept the `OPENMP` argument as well, but OpenMP builds of these two codes are not supported.
 
 The number of threads is selected at runtime with `OMP_NUM_THREADS`. Every MPI process may create its own OpenMP team, so the approximate CPU demand is the number of MPI ranks multiplied by the number of threads per rank. For example, two MPI ranks with four threads each may use eight CPU cores:
 
@@ -241,6 +241,17 @@ mpirun -np 32 ../../bin/systemdefault/release/RG_0S_N4_P8_netlib
 ```
 
 Note that the input file `inout.txt` (as well as other relevant files, if any) should be located in the same directory where the execution of the binary file takes place.
+
+### Runtime switch of the eigensolver `Q`
+
+The `Q` solver of the seven energy codes has two algorithms for its fresh QR factorizations: a serial one (LAPACK on one MPI process, after which the factors are sent to the other processes) and a distributed blocked Householder factorization that runs on all MPI processes. By default the program chooses: the serial algorithm with one MPI process, otherwise the one that a short timing test at the first factorization of the run predicts to be faster for the given matrix size (for all but small matrices this is the distributed one; for 2850 basis functions in extended precision on 14 cores it takes 2.4 s instead of 40 s). The environment variable `ECG_QR_FACTOR` overrides the choice:
+
+```bash
+export ECG_QR_FACTOR=distributed   # or: serial, auto (the default behavior)
+mpirun -np 14 ../../bin/systemdefault/release/RG_0S_N4_P10_netlib
+```
+
+The value is read by the first MPI process (rank zero) only, so it must be set in the environment of that process, and it is case-insensitive; any other value is ignored. The two algorithms give results that differ by round-off only. Because the automatic choice depends on a timing, set the variable when the results of two runs must agree to the last digit. The variable has no effect on the solvers `G` and `I` or on the off-diagonal matrix-element codes.
 
 ## Note on parallel scaling
 

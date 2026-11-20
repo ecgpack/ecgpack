@@ -368,7 +368,7 @@ $(BUILD_DIR)/qrupdate_complex.o: $(SRC_DIR)/qrupdate/qrupdate_complex.f90 $(BUIL
 $(BUILD_DIR)/qrupdate.o: $(SRC_DIR)/qrupdate/qrupdate.f90 $(BUILD_DIR)/qrupdate_real.o $(BUILD_DIR)/qrupdate_complex.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate.f90 -o $(BUILD_DIR)/qrupdate.o
 
-$(BUILD_DIR)/qrlinalg.o: $(SRC_DIR)/qrlinalg.f90 $(BUILD_DIR)/qrupdate.o
+$(BUILD_DIR)/qrlinalg.o: $(SRC_DIR)/qrlinalg.f90 $(BUILD_DIR)/wp_def_$(PREC).o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_PREPROCESS_FLAGS) -c $(SRC_DIR)/qrlinalg.f90 -o $(BUILD_DIR)/qrlinalg.o
 
 $(BUILD_DIR)/workproc.o: $(SRC_DIR)/workproc.f90 $(BUILD_DIR)/misc.o $(BUILD_DIR)/linalg.o $(BUILD_DIR)/matform.o $(BUILD_DIR)/matelem.o $(BUILD_DIR)/dmng.o $(BUILD_DIR)/qrlinalg.o $(GPU_DEP) $(OBJS_LPKBLS)

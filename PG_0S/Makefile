@@ -261,8 +261,9 @@ endif
 # Module compile order (see the rules at the bottom):
 #   wp_def -> X1MACH, globvars -> spin, misc, linalg -> matelem -> matform -> workproc -> main
 #   (USE_CUDA=yes: matelem -> gpu_backend -> matform, workproc, main)
+#   wp_def -> qrlinalg -> workproc   (the QR solution method)
 #   wp_def -> qrupdate/qrupdate_linalg -> qrupdate_error -> qrupdate_real, qrupdate_complex
-#          -> qrupdate -> qrlinalg -> workproc   (the QR solution method)
+#          -> qrupdate   (bundled QR-update kernels: still compiled and linked, no longer used by qrlinalg)
 # dmng.f and the bundled BLAS.f and LAPACK.f also USE wp_def.
 
 ifeq ($(LINALG), netlib)
@@ -394,7 +395,7 @@ $(BUILD_DIR)/qrupdate_complex.o: $(SRC_DIR)/qrupdate/qrupdate_complex.f90 $(BUIL
 $(BUILD_DIR)/qrupdate.o: $(SRC_DIR)/qrupdate/qrupdate.f90 $(BUILD_DIR)/qrupdate_real.o $(BUILD_DIR)/qrupdate_complex.o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) -c $(SRC_DIR)/qrupdate/qrupdate.f90 -o $(BUILD_DIR)/qrupdate.o
 
-$(BUILD_DIR)/qrlinalg.o: $(SRC_DIR)/qrlinalg.f90 $(BUILD_DIR)/qrupdate.o
+$(BUILD_DIR)/qrlinalg.o: $(SRC_DIR)/qrlinalg.f90 $(BUILD_DIR)/wp_def_$(PREC).o
 	$(FC) $(FCFLAGS) $(MPICOMPFLAGS) $(QR_PREPROCESS_FLAGS) -c $(SRC_DIR)/qrlinalg.f90 -o $(BUILD_DIR)/qrlinalg.o
 
 $(BUILD_DIR)/workproc.o: $(SRC_DIR)/workproc.f90 $(BUILD_DIR)/misc.o $(BUILD_DIR)/linalg.o $(BUILD_DIR)/matform.o $(BUILD_DIR)/matelem.o $(BUILD_DIR)/dmng.o $(OBJS_LPKBLS) $(BUILD_DIR)/qrlinalg.o $(GPU_DEP)

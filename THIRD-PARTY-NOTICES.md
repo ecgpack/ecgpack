@@ -117,8 +117,11 @@ Institute Magdeburg,
 `3fa4f77d6259c00cf0c36632287063f1277a3fe0`.
 
 The library supplies rank-one QR updates, row and column insertion/deletion,
-column shifting, and related Givens-rotation operations used by ECGPACK's Q
-generalized-eigenvalue method. The bundled generic-precision snapshot uses
+column shifting, and related Givens-rotation operations. The first
+implementation of ECGPACK's Q generalized-eigenvalue method was built on
+them. The present implementation (`src/qrlinalg.f90`) does not call the
+library; its sources are still part of the seven codes and are still compiled
+and linked into the executables. The bundled generic-precision snapshot uses
 the build-selected `wp_def` kind. Source headers retain the upstream author
 and licensing notices.
 
