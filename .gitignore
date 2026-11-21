@@ -15,3 +15,6 @@
 
 # Temporary precision-definition backup created by build.bash
 /*/src/wp_def_temporary.f90
+
+# AI agent prompt drafts
+/prompts/
