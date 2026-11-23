@@ -193,7 +193,8 @@ contains
       else
         if (ReadLineErr==0) backspace 1
       endif
-      read(1,*) ReadChar(1:9),ReadInt
+      read(1,*,iostat=ReadErr) ReadChar,ReadInt
+      call CheckHeaderLine(ReadErr,ReadChar,'PARTICLES',Line+1)
       write(*,'(1x,a9,1x,i6)') ReadChar(1:9),ReadInt
       Line=Line+1
 !The number of pseudoparticles, Glob_n, is fixed at compile time. Here we only
@@ -217,7 +218,8 @@ contains
 
     allocate(Glob_Mass(Glob_n+1))
     if (Glob_ProcID==0) then
-      read(1,*) ReadChar(1:6),Glob_Mass(1:Glob_n+1)
+      read(1,*,iostat=ReadErr) ReadChar,Glob_Mass(1:Glob_n+1)
+      call CheckHeaderLine(ReadErr,ReadChar,'MASSES',Line+1)
       write(*,'(1x,a6)',advance='no') ReadChar(1:6)
       call writerealarradv(6,Glob_Mass,Glob_n+1)
       Line=Line+1
@@ -226,7 +228,8 @@ contains
 
     allocate(Glob_PseudoCharge(Glob_n))
     if (Glob_ProcID==0) then
-      read(1,*) ReadChar(1:7),Glob_PseudoCharge0,Glob_PseudoCharge(1:Glob_n)
+      read(1,*,iostat=ReadErr) ReadChar,Glob_PseudoCharge0,Glob_PseudoCharge(1:Glob_n)
+      call CheckHeaderLine(ReadErr,ReadChar,'CHARGES',Line+1)
       write(*,'(1x,a7)',advance='no') ReadChar(1:7)
       call writereal(6,Glob_PseudoCharge0)
       call writerealarradv(6,Glob_PseudoCharge,Glob_n)
@@ -301,7 +304,8 @@ contains
     call MPI_BCAST(Glob_AttractionScalingParam,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
-      read(1,*) ReadChar(1:8),Glob_YOperatorString
+      read(1,*,iostat=ReadErr) ReadChar,Glob_YOperatorString
+      call CheckHeaderLine(ReadErr,ReadChar,'SYMMETRY',Line+1)
       j=len_trim(Glob_YOperatorString)
       write(*,'(1x,a8)',advance='no') ReadChar(1:8)
       call writestringadv(6,Glob_YOperatorString,j)
@@ -317,14 +321,16 @@ contains
     enddo
 
     if (Glob_ProcID==0) then
-      read(1,*) ReadChar(1:10),Glob_CurrBasisSize
+      read(1,*,iostat=ReadErr) ReadChar,Glob_CurrBasisSize
+      call CheckHeaderLine(ReadErr,ReadChar,'BASIS_SIZE',Line+1)
       write(*,'(1x,a10,1x,i6)')  ReadChar(1:10),Glob_CurrBasisSize
       Line=Line+1
     endif
     call MPI_BCAST(Glob_CurrBasisSize,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
-      read(1,*) ReadChar(1:14),Glob_CurrEnergy
+      read(1,*,iostat=ReadErr) ReadChar,Glob_CurrEnergy
+      call CheckHeaderLine(ReadErr,ReadChar,'CURRENT_ENERGY',Line+1)
       write(*,'(1x,a14)',advance='no')  ReadChar(1:14)
       call writerealadv(6,Glob_CurrEnergy)
       Line=Line+1
@@ -332,14 +338,16 @@ contains
     call MPI_BCAST(Glob_CurrEnergy,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
-      read(1,*) ReadChar(1:16),Glob_WhichEigenvalue
+      read(1,*,iostat=ReadErr) ReadChar,Glob_WhichEigenvalue
+      call CheckHeaderLine(ReadErr,ReadChar,'WHICH_EIGENVALUE',Line+1)
       write(*,'(1x,a16,1x,i6)')  ReadChar(1:16),Glob_WhichEigenvalue
       Line=Line+1
     endif
     call MPI_BCAST(Glob_WhichEigenvalue,1,MPI_INTEGER,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
-      read(1,*) ReadChar(1:16),Glob_EigvalTol
+      read(1,*,iostat=ReadErr) ReadChar,Glob_EigvalTol
+      call CheckHeaderLine(ReadErr,ReadChar,'EIGVAL_TOLERANCE',Line+1)
       write(*,'(1x,a16)',advance='no')  ReadChar(1:16)
       call writerealadv(6,Glob_EigvalTol)
       Line=Line+1
@@ -347,7 +355,8 @@ contains
     call MPI_BCAST(Glob_EigvalTol,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
-      read(1,*) ReadChar(1:14),Glob_InvItParameter
+      read(1,*,iostat=ReadErr) ReadChar,Glob_InvItParameter
+      call CheckHeaderLine(ReadErr,ReadChar,'INVITPARAMETER',Line+1)
       write(*,'(1x,a14)',advance='no')  ReadChar(1:14)
       call writerealadv(6,Glob_InvItParameter)
       Line=Line+1
@@ -355,7 +364,8 @@ contains
     call MPI_BCAST(Glob_InvItParameter,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
-      read(1,*) ReadChar(1:15),Glob_LastEigvalTol
+      read(1,*,iostat=ReadErr) ReadChar,Glob_LastEigvalTol
+      call CheckHeaderLine(ReadErr,ReadChar,'LAST_EIGVAL_TOL',Line+1)
       write(*,'(1x,a15)',advance='no')  ReadChar(1:15)
       call writerealadv(6,Glob_LastEigvalTol)
       Line=Line+1
@@ -363,7 +373,8 @@ contains
     call MPI_BCAST(Glob_LastEigvalTol,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
-      read(1,*) ReadChar(1:15),Glob_BestEigvalTol
+      read(1,*,iostat=ReadErr) ReadChar,Glob_BestEigvalTol
+      call CheckHeaderLine(ReadErr,ReadChar,'BEST_EIGVAL_TOL',Line+1)
       write(*,'(1x,a15)',advance='no')  ReadChar(1:15)
       call writerealadv(6,Glob_BestEigvalTol)
       Line=Line+1
@@ -371,7 +382,8 @@ contains
     call MPI_BCAST(Glob_BestEigvalTol,1,MPI_WP,0,MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
-      read(1,*) ReadChar(1:16),Glob_WorstEigvalTol
+      read(1,*,iostat=ReadErr) ReadChar,Glob_WorstEigvalTol
+      call CheckHeaderLine(ReadErr,ReadChar,'WORST_EIGVAL_TOL',Line+1)
       write(*,'(1x,a16)',advance='no')  ReadChar(1:16)
       call writerealadv(6,Glob_WorstEigvalTol)
       Line=Line+1
@@ -411,7 +423,8 @@ contains
                    MPI_COMM_WORLD,Glob_MPIErrCode)
 
     if (Glob_ProcID==0) then
-      read(1,*) ReadChar(1:15),Glob_RG_p1,Glob_RG_s1,Glob_RG_s2
+      read(1,*,iostat=ReadErr) ReadChar,Glob_RG_p1,Glob_RG_s1,Glob_RG_s2
+      call CheckHeaderLine(ReadErr,ReadChar,'GENERATOR_PARAM',Line+1)
       write(*,'(1x,a15)',advance='no') ReadChar(1:15)
       call writereal(6,Glob_RG_p1)
       call writereal(6,Glob_RG_s1)
@@ -719,6 +732,34 @@ contains
     close(1)
 
   end subroutine ReadIOFile
+
+  subroutine CheckHeaderLine(ReadErr,Label,Expected,Line)
+!Subroutine CheckHeaderLine checks a line of the header of the data
+!file that process 0 has just read with a list-directed read. ReadErr
+!is the status of that read, Label is the first item found on the line,
+!Expected is the label that must be there, and Line is the number of
+!the line. If the line could not be read, or if it carries another
+!label, the program stops with a message. The header is read by
+!position, so an extra, missing, or misspelled line would otherwise
+!shift all the lines after it, and the values would be taken from wrong
+!lines until a read fails with a run-time error of the Fortran library.
+!Only process 0 may call this subroutine.
+
+!Arguments:
+    integer        ReadErr,Line
+    character(*)   Label,Expected
+
+    if ((ReadErr==0).and.(Label==Expected)) return
+    write(*,*) 'Error EC0109 in data file, line ',Line
+    if (ReadErr/=0) then
+      write(*,*) 'Cannot read the line. Expected the label ',Expected,' followed by its value(s)'
+    else
+      write(*,*) 'Expected the label ',Expected,' but found - ',trim(Label)
+    endif
+    flush(6)
+    call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
+
+  end subroutine CheckHeaderLine
 
   subroutine SaveResults(FileName,Sort)
 !Subroutine SaveResults saves current results of the

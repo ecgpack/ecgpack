@@ -112,7 +112,7 @@ A typical header looks as follows (it is an example for the ground state calcula
 At its end, the header includes an excerpt of the last line in the history, surrounded by two ruler lines.
 This excerpt shows the current state of the optimization process.
 
-Note that each line of the header (except for the history excerpt) begins with a keyword. Some lines in the header are optional and can be skipped. However, most are required. Lines with the keywords must appear in a specific order and no blank lines are allowed.
+Note that each line of the header (except for the history excerpt) begins with a keyword. Some lines in the header are optional and can be skipped. However, most are required. Lines with the keywords must appear in a specific order and no blank lines are allowed. The header is read by position: if a required line is missing, misplaced, or misspelled, or if its value cannot be read, the program stops with error `EC0109` and reports the number of the line and the keyword it expected there.
 The description of all header keywords, in the order they appear in input file, is provided in the table below. Examples of complete input file lines for each keyword are also provided.
 
 | Keyword | Requirement | Description |

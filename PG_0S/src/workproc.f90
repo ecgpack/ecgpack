@@ -162,9 +162,11 @@ CONTAINS
     !
     ! Optional records are read into a character buffer and parsed with an
     ! internal READ, so BACKSPACE reliably pushes back a non-matching line.
-    ! Every record is validated: EC0100..EC0104 are fatal at once,
-    ! EC0210..EC0238 are collected per block and then abort every rank
-    ! (MPI_Abort), WC0001..WC0003 are warnings.
+    ! Every record is validated: EC0100..EC0104 are fatal at once, and so
+    ! is EC0109 (CheckHeaderLine: a mandatory header record that cannot be
+    ! read or does not begin with its label); EC0210..EC0238 are collected
+    ! per block and then abort every rank (MPI_Abort), WC0001..WC0003 are
+    ! warnings.
     !==================================================================
 
     !------------------------------------------------------------------
@@ -281,7 +283,8 @@ CONTAINS
       ENDIF
 
       ! -- mandatory PARTICLES ---------------------------------------
-      READ(1, *) ReadChar(1:9), ReadInt
+      READ(1, *, IOSTAT=ReadErr) ReadChar, ReadInt
+      CALL CheckHeaderLine(ReadErr, ReadChar, 'PARTICLES', Line+1)
       IF (Verbose >= 2) WRITE(*, '(1x,a9,1x,i6)') ReadChar(1:9), ReadInt
       Line = Line + 1
 
@@ -519,17 +522,12 @@ CONTAINS
     ! CHAR converts it back on every rank.
     !------------------------------------------------------------------
     IF (Glob_ProcID == 0) THEN
-      READ(1, *) ReadChar(1:8), Glob_YOperatorString
+      READ(1, *, IOSTAT=ReadErr) ReadChar, Glob_YOperatorString
+      CALL CheckHeaderLine(ReadErr, ReadChar, 'SYMMETRY', Line+1)
       j = LEN_TRIM(Glob_YOperatorString)
       IF (Verbose >= 2) WRITE(*, '(1x,a8)', ADVANCE='no') ReadChar(1:8)
       IF (Verbose >= 2) CALL writestringadv(6, Glob_YOperatorString, j)
       Line = Line + 1
-
-      IF (ReadChar(1:8) /= 'SYMMETRY') THEN
-        WRITE(*, *) 'Error EC0215 in data file, line ', Line
-        IF (Verbose >= 2) WRITE(*, *) 'Expected the label SYMMETRY but found - ', ReadChar(1:8)
-        ErrorInDataFile = .TRUE.
-      ENDIF
 
       ! An empty Young operator leaves the symmetry undefined.
       IF (j == 0) THEN
@@ -556,15 +554,10 @@ CONTAINS
     ! BASIS_SIZE - current number of basis functions
     !==================================================================
     IF (Glob_ProcID == 0) THEN
-      READ(1, *) ReadChar(1:10), Glob_CurrBasisSize
+      READ(1, *, IOSTAT=ReadErr) ReadChar, Glob_CurrBasisSize
+      CALL CheckHeaderLine(ReadErr, ReadChar, 'BASIS_SIZE', Line+1)
       IF (Verbose >= 2) WRITE(*, '(1x,a10,1x,i6)') ReadChar(1:10), Glob_CurrBasisSize
       Line = Line + 1
-
-      IF (ReadChar(1:10) /= 'BASIS_SIZE') THEN
-        WRITE(*, *) 'Error EC0217 in data file, line ', Line
-        IF (Verbose >= 2) WRITE(*, *) 'Expected the label BASIS_SIZE but found - ', ReadChar(1:10)
-        ErrorInDataFile = .TRUE.
-      ENDIF
 
       IF (Glob_CurrBasisSize < 0) THEN
         WRITE(*, *) 'Error EC0218 in data file, line ', Line
@@ -581,16 +574,11 @@ CONTAINS
     ! CURRENT_ENERGY - energy of the basis as it stands in the file
     !==================================================================
     IF (Glob_ProcID == 0) THEN
-      READ(1, *) ReadChar(1:14), Glob_CurrEnergy
+      READ(1, *, IOSTAT=ReadErr) ReadChar, Glob_CurrEnergy
+      CALL CheckHeaderLine(ReadErr, ReadChar, 'CURRENT_ENERGY', Line+1)
       IF (Verbose >= 2) WRITE(*, '(1x,a14)', ADVANCE='no') ReadChar(1:14)
       IF (Verbose >= 2) CALL writerealadv(6, Glob_CurrEnergy)
       Line = Line + 1
-
-      IF (ReadChar(1:14) /= 'CURRENT_ENERGY') THEN
-        WRITE(*, *) 'Error EC0219 in data file, line ', Line
-        IF (Verbose >= 2) WRITE(*, *) 'Expected the label CURRENT_ENERGY but found - ', ReadChar(1:14)
-        ErrorInDataFile = .TRUE.
-      ENDIF
 
       ! A bound state has negative energy. A positive value usually means
       ! the file was truncated or the columns are misaligned.
@@ -612,15 +600,10 @@ CONTAINS
     ! is 'G'.
     !------------------------------------------------------------------
     IF (Glob_ProcID == 0) THEN
-      READ(1, *) ReadChar(1:16), Glob_WhichEigenvalue
+      READ(1, *, IOSTAT=ReadErr) ReadChar, Glob_WhichEigenvalue
+      CALL CheckHeaderLine(ReadErr, ReadChar, 'WHICH_EIGENVALUE', Line+1)
       IF (Verbose >= 2) WRITE(*, '(1x,a16,1x,i6)') ReadChar(1:16), Glob_WhichEigenvalue
       Line = Line + 1
-
-      IF (ReadChar(1:16) /= 'WHICH_EIGENVALUE') THEN
-        WRITE(*, *) 'Error EC0220 in data file, line ', Line
-        IF (Verbose >= 2) WRITE(*, *) 'Expected the label WHICH_EIGENVALUE but found - ', ReadChar(1:16)
-        ErrorInDataFile = .TRUE.
-      ENDIF
 
       IF (Glob_WhichEigenvalue < 1) THEN
         WRITE(*, *) 'Error EC0221 in data file, line ', Line
@@ -645,16 +628,11 @@ CONTAINS
     ! EIGVAL_TOLERANCE - requested eigenvalue accuracy
     !==================================================================
     IF (Glob_ProcID == 0) THEN
-      READ(1, *) ReadChar(1:16), Glob_EigvalTol
+      READ(1, *, IOSTAT=ReadErr) ReadChar, Glob_EigvalTol
+      CALL CheckHeaderLine(ReadErr, ReadChar, 'EIGVAL_TOLERANCE', Line+1)
       IF (Verbose >= 2) WRITE(*, '(1x,a16)', ADVANCE='no') ReadChar(1:16)
       IF (Verbose >= 2) CALL writerealadv(6, Glob_EigvalTol)
       Line = Line + 1
-
-      IF (ReadChar(1:16) /= 'EIGVAL_TOLERANCE') THEN
-        WRITE(*, *) 'Error EC0222 in data file, line ', Line
-        IF (Verbose >= 2) WRITE(*, *) 'Expected the label EIGVAL_TOLERANCE but found - ', ReadChar(1:16)
-        ErrorInDataFile = .TRUE.
-      ENDIF
 
       IF (Glob_EigvalTol <= ZERO) THEN
         WRITE(*, *) 'Error EC0223 in data file, line ', Line
@@ -674,16 +652,11 @@ CONTAINS
     !   Glob_ApproxEnergy = Glob_CurrEnergy * Glob_InvItParameter
     !------------------------------------------------------------------
     IF (Glob_ProcID == 0) THEN
-      READ(1, *) ReadChar(1:14), Glob_InvItParameter
+      READ(1, *, IOSTAT=ReadErr) ReadChar, Glob_InvItParameter
+      CALL CheckHeaderLine(ReadErr, ReadChar, 'INVITPARAMETER', Line+1)
       IF (Verbose >= 2) WRITE(*, '(1x,a14)', ADVANCE='no') ReadChar(1:14)
       IF (Verbose >= 2) CALL writerealadv(6, Glob_InvItParameter)
       Line = Line + 1
-
-      IF (ReadChar(1:14) /= 'INVITPARAMETER') THEN
-        WRITE(*, *) 'Error EC0224 in data file, line ', Line
-        IF (Verbose >= 2) WRITE(*, *) 'Expected the label INVITPARAMETER but found - ', ReadChar(1:14)
-        ErrorInDataFile = .TRUE.
-      ENDIF
 
     ENDIF
 
@@ -698,48 +671,33 @@ CONTAINS
     !   WORST_EIGVAL_TOL  worst accuracy seen so far
     !------------------------------------------------------------------
     IF (Glob_ProcID == 0) THEN
-      READ(1, *) ReadChar(1:15), Glob_LastEigvalTol
+      READ(1, *, IOSTAT=ReadErr) ReadChar, Glob_LastEigvalTol
+      CALL CheckHeaderLine(ReadErr, ReadChar, 'LAST_EIGVAL_TOL', Line+1)
       IF (Verbose >= 2) WRITE(*, '(1x,a15)', ADVANCE='no') ReadChar(1:15)
       IF (Verbose >= 2) CALL writerealadv(6, Glob_LastEigvalTol)
       Line = Line + 1
-
-      IF (ReadChar(1:15) /= 'LAST_EIGVAL_TOL') THEN
-        WRITE(*, *) 'Error EC0225 in data file, line ', Line
-        IF (Verbose >= 2) WRITE(*, *) 'Expected the label LAST_EIGVAL_TOL but found - ', ReadChar(1:15)
-        ErrorInDataFile = .TRUE.
-      ENDIF
 
     ENDIF
 
     CALL MPI_BCAST(Glob_LastEigvalTol, 1, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
 
     IF (Glob_ProcID == 0) THEN
-      READ(1, *) ReadChar(1:15), Glob_BestEigvalTol
+      READ(1, *, IOSTAT=ReadErr) ReadChar, Glob_BestEigvalTol
+      CALL CheckHeaderLine(ReadErr, ReadChar, 'BEST_EIGVAL_TOL', Line+1)
       IF (Verbose >= 2) WRITE(*, '(1x,a15)', ADVANCE='no') ReadChar(1:15)
       IF (Verbose >= 2) CALL writerealadv(6, Glob_BestEigvalTol)
       Line = Line + 1
-
-      IF (ReadChar(1:15) /= 'BEST_EIGVAL_TOL') THEN
-        WRITE(*, *) 'Error EC0226 in data file, line ', Line
-        IF (Verbose >= 2) WRITE(*, *) 'Expected the label BEST_EIGVAL_TOL but found - ', ReadChar(1:15)
-        ErrorInDataFile = .TRUE.
-      ENDIF
 
     ENDIF
 
     CALL MPI_BCAST(Glob_BestEigvalTol, 1, MPI_WP, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
 
     IF (Glob_ProcID == 0) THEN
-      READ(1, *) ReadChar(1:16), Glob_WorstEigvalTol
+      READ(1, *, IOSTAT=ReadErr) ReadChar, Glob_WorstEigvalTol
+      CALL CheckHeaderLine(ReadErr, ReadChar, 'WORST_EIGVAL_TOL', Line+1)
       IF (Verbose >= 2) WRITE(*, '(1x,a16)', ADVANCE='no') ReadChar(1:16)
       IF (Verbose >= 2) CALL writerealadv(6, Glob_WorstEigvalTol)
       Line = Line + 1
-
-      IF (ReadChar(1:16) /= 'WORST_EIGVAL_TOL') THEN
-        WRITE(*, *) 'Error EC0227 in data file, line ', Line
-        IF (Verbose >= 2) WRITE(*, *) 'Expected the label WORST_EIGVAL_TOL but found - ', ReadChar(1:16)
-        ErrorInDataFile = .TRUE.
-      ENDIF
 
     ENDIF
 
@@ -797,18 +755,13 @@ CONTAINS
     !   Glob_RG_s2  scale parameter 2
     !------------------------------------------------------------------
     IF (Glob_ProcID == 0) THEN
-      READ(1, *) ReadChar(1:15), Glob_RG_p1, Glob_RG_s1, Glob_RG_s2
+      READ(1, *, IOSTAT=ReadErr) ReadChar, Glob_RG_p1, Glob_RG_s1, Glob_RG_s2
+      CALL CheckHeaderLine(ReadErr, ReadChar, 'GENERATOR_PARAM', Line+1)
       IF (Verbose >= 2) WRITE(*, '(1x,a15)', ADVANCE='no') ReadChar(1:15)
       IF (Verbose >= 2) CALL writereal(6, Glob_RG_p1)
       IF (Verbose >= 2) CALL writereal(6, Glob_RG_s1)
       IF (Verbose >= 2) CALL writerealadv(6, Glob_RG_s2)
       Line = Line + 1
-
-      IF (ReadChar(1:15) /= 'GENERATOR_PARAM') THEN
-        WRITE(*, *) 'Error EC0228 in data file, line ', Line
-        IF (Verbose >= 2) WRITE(*, *) 'Expected the label GENERATOR_PARAM but found - ', ReadChar(1:15)
-        ErrorInDataFile = .TRUE.
-      ENDIF
 
       ! s1 and s2 are the scale parameters of the trial-function
       ! distribution; a non-positive scale makes GenerateTrialParam
@@ -1466,6 +1419,44 @@ CONTAINS
     CLOSE(1)
 
   END SUBROUTINE ReadIOFile
+
+
+  SUBROUTINE CheckHeaderLine(ReadErr, Label, Expected, Line)
+    !==================================================================
+    ! Subroutine CheckHeaderLine
+    !==================================================================
+    ! Checks a line of the header of the data file that process 0 has
+    ! just read with a list-directed READ. If the line could not be
+    ! read, or if it carries another label, the program stops with a
+    ! message. The header is read by position, so an extra, missing, or
+    ! misspelled line would otherwise shift all the lines after it, and
+    ! the values would be taken from wrong lines until a READ fails with
+    ! a run-time error of the Fortran library.
+    ! Only process 0 may call this subroutine.
+    !==================================================================
+
+    IMPLICIT NONE
+
+    !------------------------------------------------------------------
+    ! Arguments
+    !------------------------------------------------------------------
+    INTEGER      :: ReadErr   ! in: IOSTAT of the READ of the line
+    CHARACTER(*) :: Label     ! in: first item found on the line
+    CHARACTER(*) :: Expected  ! in: label that must be there
+    INTEGER      :: Line      ! in: number of the line in the data file
+
+    IF ((ReadErr == 0) .AND. (Label == Expected)) RETURN
+
+    WRITE(*, *) 'Error EC0109 in data file, line ', Line
+    IF (ReadErr /= 0) THEN
+      WRITE(*, *) 'Cannot read the line. Expected the label ', Expected, ' followed by its value(s)'
+    ELSE
+      WRITE(*, *) 'Expected the label ', Expected, ' but found - ', TRIM(Label)
+    ENDIF
+    FLUSH(6)
+    CALL MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode)  ! stop
+
+  END SUBROUTINE CheckHeaderLine
 
 
   SUBROUTINE SaveResults(FileName, Sort)
