@@ -5065,14 +5065,25 @@ CONTAINS
             IF (OpenFileErr == 0) THEN
               IsSwapFileOK = .TRUE.
               IF (Verbose >= 2) WRITE(*, *) 'completed'
-              CLOSE(1)
             ELSE
               WRITE(*, *) 'failed'
             ENDIF
 
+            CLOSE(1)
+
             ! erase information in swap file to free disc space
             OPEN(1, FILE=Glob_SwapFileName, FORM='unformatted', STATUS='replace', IOSTAT=OpenFileErr)
             WRITE(1) 'Swap file is empty'
+            CLOSE(1)
+
+          ELSE
+
+            ! The file is empty, cannot be read, or holds matrices for
+            ! another basis size. It must be closed: if unit 1 stayed
+            ! connected, the next call would reopen the same file without
+            ! rewinding it and would never see its first record again.
+            ! SAVE_HSWF and EXPC_VALS read the swap file but do not store
+            ! it again, so every command that follows one of them gets here.
             CLOSE(1)
 
           ENDIF

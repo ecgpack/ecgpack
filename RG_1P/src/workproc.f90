@@ -2823,8 +2823,8 @@ contains
       if (Glob_ProcID==0) then
         open(1,file=Glob_SwapFileName,form='unformatted',status='old',iostat=OpenFileErr)
         if (OpenFileErr==0) then
-          read(1) i
-          if (i==Glob_CurrBasisSize) then
+          read(1,iostat=OpenFileErr) i
+          if ((OpenFileErr==0).and.(i==Glob_CurrBasisSize)) then
             !Reading H and S from a matrix stored in file
             !Remember that the lower part (including the diagonal)
             !contains elements of H, while the upper part contains S
@@ -2839,13 +2839,21 @@ contains
             if (OpenFileErr==0) then
               IsSwapFileOK=.true.
               write(*,*) 'completed'
-              close(1)
             else
               write(*,*) 'failed'
             endif
+            close(1)
             !erase information in swap file to free disc space
             open(1,file=Glob_SwapFileName,form='unformatted',status='replace',iostat=OpenFileErr)
             write(1) 'Swap file is empty'
+            close(1)
+          else
+            !The file is empty, cannot be read, or holds matrices for another
+            !basis size. It must be closed: if unit 1 stayed connected, the
+            !next call would reopen the same file without rewinding it, and
+            !its first read would run into the end of the file. SAVE_HSWF and
+            !EXPC_VALS read the swap file but do not store it again, so every
+            !command that follows one of them gets here.
             close(1)
           endif
         endif
