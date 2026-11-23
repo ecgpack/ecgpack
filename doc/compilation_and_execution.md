@@ -74,6 +74,12 @@ All ECGPACK codes are written in standard Fortran, use standard MPI calls and th
 
 Note that at present the codes compiled with gfortran that use quadruple precision can only be executed in serial mode. This is a limitation of OpenMPI. A workaround is possible but has not been implemented yet.
 
+With ifx and Intel MPI 2021.16, a quadruple precision run that uses three or more MPI processes on one node has been observed to end with a segmentation fault inside `MPI_ALLREDUCE`. The fault is in the shared-memory algorithm that this MPI library selects for collective operations on `MPI_REAL16` data, not in ECGPACK; runs with one or two processes are not affected. If it happens, select the point-to-point algorithm before starting the run:
+
+```bash
+export I_MPI_COLL_INTRANODE=pt2pt
+```
+
 To use Fortran compilers and MPI wrappers other than those listed above, the user needs to modify the Makefile accordingly.
 
 ### Linear algebra libraries
