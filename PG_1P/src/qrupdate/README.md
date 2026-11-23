@@ -13,6 +13,17 @@ The public `qrupdate` module provides generic real/complex interfaces for
 `real(wp)` and `complex(wp)` procedures use the same build-selected `wp_def`
 module as the enclosing ECGPACK harness.
 
+## Local modification
+
+This copy differs from the imported revision by one addition made for ECGPACK
+in November 2026: the generic interface `qr1up_unit` in `qrupdate.f90` and its
+specific procedures `real_qr1up_unit` (`qrupdate_real.f90`) and
+`complex_qr1up_unit` (`qrupdate_complex.f90`). They apply the rank-one update
+`A + e_j*v^H` to a full QR factorization, where `e_j` is a unit vector. This
+is `qr1up` with `u = e_j`, except that `Q^H*u` is read from row `j` of Q
+instead of being accumulated by dot products. The upstream routines are
+unchanged, and each affected file states the modification in its header.
+
 The precision-independent bundled Netlib aggregates live one directory above
 as `../BLAS.f` and `../LAPACK.f`. They provide the routines required by both
 the QR updates and ECGPACK's existing linear-algebra paths. Keeping the single
