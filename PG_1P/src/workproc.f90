@@ -16887,6 +16887,30 @@ CONTAINS
 
 
 
+  SUBROUTINE StopAfterFinalCommand()
+    !==================================================================
+    ! Subroutine StopAfterFinalCommand
+    !==================================================================
+    ! Ends the run after a command that stops the program by design
+    ! (ELIM_LCFN, ELIM_LND1, SEPR_LND1 and SEPR_FLCF). It must be called
+    ! by all processes. The barrier makes them wait until process 0 has
+    ! written the new basis file and its last messages. Without it a
+    ! process that has nothing to write reaches MPI_Abort first and may
+    ! terminate the job while process 0 is still writing, in which case
+    ! the new basis file is lost.
+    !==================================================================
+
+    IMPLICIT NONE
+
+    IF (Glob_ProcID == 0) FLUSH(6)
+    CALL MPI_BARRIER(MPI_COMM_WORLD, Glob_MPIErrCode)
+    ! A normal end of the job: the abort code is 0 - it becomes the exit
+    ! status, and 1 would read as a crash to whatever launched the run.
+    CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)  ! stop
+
+  END SUBROUTINE StopAfterFinalCommand
+
+
   SUBROUTINE EliminateLittleContribFunc(LinCoeffThreshold, FileName, PrintInfoSpec, GSEPSolMethod)
     ! Subroutine EliminateLittleContribFunc eliminates basis
     ! functions whose contribution to the energy is small. More
@@ -17145,9 +17169,7 @@ CONTAINS
       WRITE(*, *) 'Program will now stop'
     ENDIF
 
-    ! A normal end of the job: the abort code is 0 - it becomes the exit
-    ! status, and 1 would read as a crash to whatever launched the run.
-    CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)  ! stop
+    CALL StopAfterFinalCommand()
 
   END SUBROUTINE EliminateLittleContribFunc
 
@@ -17468,9 +17490,7 @@ CONTAINS
       WRITE(*, *) 'Program will now stop'
     ENDIF
 
-    ! A normal end of the job: the abort code is 0 - it becomes the exit
-    ! status, and 1 would read as a crash to whatever launched the run.
-    CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)  ! stop
+    CALL StopAfterFinalCommand()
 
   END SUBROUTINE EliminateLinDepFunc
 
@@ -17798,9 +17818,7 @@ CONTAINS
       WRITE(*, *) 'Program will now stop'
     ENDIF
 
-    ! A normal end of the job: the abort code is 0 - it becomes the exit
-    ! status, and 1 would read as a crash to whatever launched the run.
-    CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)  ! stop
+    CALL StopAfterFinalCommand()
 
   END SUBROUTINE SeparateLinDepFunc
 
@@ -18127,9 +18145,7 @@ CONTAINS
       WRITE(*, *) 'Program will now stop'
     ENDIF
 
-    ! A normal end of the job: the abort code is 0 - it becomes the exit
-    ! status, and 1 would read as a crash to whatever launched the run.
-    CALL MPI_Abort(MPI_COMM_WORLD, 0, Glob_MPIErrCode)  ! stop
+    CALL StopAfterFinalCommand()
 
   END SUBROUTINE SeparateFuncLargeCoeff
 

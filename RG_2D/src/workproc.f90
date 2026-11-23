@@ -11167,6 +11167,22 @@ contains
 
   end subroutine DeleteQMaskedFunctions
 
+  subroutine StopAfterFinalCommand()
+!Subroutine StopAfterFinalCommand ends the run after a command that
+!stops the program by design (ELIM_LCFN, ELIM_LND1, SEPR_LND1 and
+!SEPR_FLCF). It must be called by all processes. The barrier makes
+!them wait until process 0 has written the new basis file and its last
+!messages. Without it a process that has nothing to write reaches
+!MPI_Abort first and may terminate the job while process 0 is still
+!writing, in which case the new basis file is lost. The exit status of
+!the program is the same as before (nonzero).
+
+    if (Glob_ProcID==0) flush(6)
+    call MPI_BARRIER(MPI_COMM_WORLD,Glob_MPIErrCode)
+    call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
+
+  end subroutine StopAfterFinalCommand
+
   subroutine EliminateLittleContribFunc(LinCoeffThreshold,FileName,PrintInfoSpec,GSEPSolMethod)
 !Subroutine EliminateLittleContribFunc eliminates basis
 !functions whose contribution to the energy is small. More
@@ -11421,7 +11437,7 @@ contains
       write(*,*) 'Program will now stop'
     endif
 
-    call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
+    call StopAfterFinalCommand()
 
   end subroutine EliminateLittleContribFunc
 
@@ -11738,7 +11754,7 @@ contains
       write(*,*) 'Program will now stop'
     endif
 
-    call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
+    call StopAfterFinalCommand()
 
   end subroutine EliminateLinDepFunc
 
@@ -12062,7 +12078,7 @@ contains
       write(*,*) 'Program will now stop'
     endif
 
-    call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
+    call StopAfterFinalCommand()
 
   end subroutine SeparateLinDepFunc
 
@@ -12385,7 +12401,7 @@ contains
       write(*,*) 'Program will now stop'
     endif
 
-    call MPI_Abort(MPI_COMM_WORLD, 1, Glob_MPIErrCode) !stop
+    call StopAfterFinalCommand()
 
   end subroutine SeparateFuncLargeCoeff
 
