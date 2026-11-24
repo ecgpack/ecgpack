@@ -6,6 +6,10 @@
 ! under the terms of the GNU General Public License as published by the Free
 ! Software Foundation, either version 3 of the License, or (at your option)
 ! any later version. See COPYING for the full license text.
+!
+! Modified for ECGPACK, November 2026: added real_qr1up_unit, a variant of
+! real_qr1up for a unit-vector left factor. The upstream routines are
+! unchanged.
 
 module qrupdate_real
     use wp_def, only: wp
@@ -16,6 +20,7 @@ module qrupdate_real
     private
 
     public :: real_qr1up
+    public :: real_qr1up_unit
     public :: real_qrinc
     public :: real_qrdec
     public :: real_qrinr
@@ -272,6 +277,52 @@ contains
             call drot(m, Q(1, i), 1, u, 1, w(k + i), v(i))
         end do
     end subroutine real_qr1up
+
+    ! ECGPACK addition (November 2026), not part of upstream qrupdate-ng.
+    !
+    ! real_qr1up_unit updates a full QR factorization (Q is m by m, R is m
+    ! by n) of A to that of A + e_j*v^T, where e_j is the j-th unit vector.
+    ! It performs the same operations as real_qr1up(m, n, m, ..., u, v, w)
+    ! with u = e_j, except that Q^T*u is read directly from row j of Q
+    ! instead of being accumulated by m dot products with a vector that has
+    ! a single nonzero element. v is not modified; w is a workspace of
+    ! length 2*m.
+    subroutine real_qr1up_unit(m, n, Q, ldq, R, ldr, j, v, w)
+        integer, intent(in) :: m, n, ldq, ldr, j
+        real(wp), intent(inout) :: Q(ldq, *), R(ldr, *)
+        real(wp), intent(in) :: v(*)
+        real(wp), intent(out) :: w(*)
+        integer :: info, i
+
+        if (m == 0 .or. n == 0) return
+
+        info = 0
+        if (m < 0) then
+            info = 1
+        else if (n < 0) then
+            info = 2
+        else if (ldq < m) then
+            info = 4
+        else if (ldr < m) then
+            info = 6
+        else if (j < 1 .or. j > m) then
+            info = 7
+        end if
+        if (info /= 0) then
+            call qrupdate_xerror('DQR1UPU', info)
+            return
+        end if
+
+        do i = 1, m
+            w(i) = Q(j, i)
+        end do
+        call real_qrtv1(m, w, w(m + 1))
+        call real_qrqh(m, n, R, ldr, w(m + 1), w(2))
+        call real_qrot('B', m, m, Q, ldq, w(m + 1), w(2))
+        call daxpy(n, w(1), v, 1, R(1, 1), ldr)
+        call real_qhqr(m, n, R, ldr, w(m + 1), w)
+        call real_qrot('F', m, min(m, n + 1), Q, ldq, w(m + 1), w)
+    end subroutine real_qr1up_unit
 
     subroutine real_qrinc(m, n, k, Q, ldq, R, ldr, j, x, w)
         integer, intent(in) :: m, n, k, ldq, ldr, j

@@ -12,6 +12,10 @@
 ! WITHOUT ANY WARRANTY; without even the implied warranty of
 ! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General
 ! Public License for more details.
+!
+! Modified for ECGPACK, November 2026: added complex_qr1up_unit, a variant
+! of complex_qr1up for a unit-vector left factor. The upstream routines are
+! unchanged.
 
 module qrupdate_complex
     use wp_def, only: wp
@@ -22,6 +26,7 @@ module qrupdate_complex
     private
 
     public :: complex_qr1up
+    public :: complex_qr1up_unit
     public :: complex_qrinc
     public :: complex_qrdec
     public :: complex_qrinr
@@ -308,6 +313,54 @@ contains
             call zrot(m, q(1, i), 1, u, 1, rw(i), conjg(v(i)))
         end do
     end subroutine complex_qr1up
+
+    ! ECGPACK addition (November 2026), not part of upstream qrupdate-ng.
+    !
+    ! complex_qr1up_unit updates a full QR factorization (Q is m by m, R is
+    ! m by n) of A to that of A + e_j*v^H, where e_j is the j-th unit
+    ! vector. It performs the same operations as
+    ! complex_qr1up(m, n, m, ..., u, v, w, rw) with u = e_j, except that
+    ! Q^H*u, the complex conjugate of row j of Q, is read directly instead
+    ! of being accumulated by m dot products with a vector that has a single
+    ! nonzero element. v is not modified; w and rw are workspaces of length
+    ! m.
+    subroutine complex_qr1up_unit(m, n, q, ldq, r, ldr, j, v, w, rw)
+        integer, intent(in) :: m, n, ldq, ldr, j
+        complex(wp), intent(inout) :: q(ldq, *), r(ldr, *)
+        complex(wp), intent(in) :: v(*)
+        complex(wp), intent(out) :: w(*)
+        real(wp), intent(out) :: rw(*)
+        integer :: info, i
+
+        if (m == 0 .or. n == 0) return
+
+        info = 0
+        if (m < 0) then
+            info = 1
+        else if (n < 0) then
+            info = 2
+        else if (ldq < m) then
+            info = 4
+        else if (ldr < m) then
+            info = 6
+        else if (j < 1 .or. j > m) then
+            info = 7
+        end if
+        if (info /= 0) then
+            call qrupdate_xerror('ZQR1UPU', info)
+            return
+        end if
+
+        do i = 1, m
+            w(i) = conjg(q(j, i))
+        end do
+        call complex_qrtv1(m, w, rw)
+        call complex_qrqh(m, n, r, ldr, rw, w(2))
+        call complex_qrot('B', m, m, q, ldq, rw, w(2))
+        call complex_axcpy(n, w(1), v, 1, r(1, 1), ldr)
+        call complex_qhqr(m, n, r, ldr, rw, w)
+        call complex_qrot('F', m, min(m, n + 1), q, ldq, rw, w)
+    end subroutine complex_qr1up_unit
 
     subroutine complex_qrinc(m, n, k, q, ldq, r, ldr, j, x, rw)
         integer, intent(in) :: m, n, k, ldq, ldr, j
