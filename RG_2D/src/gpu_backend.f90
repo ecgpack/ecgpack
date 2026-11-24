@@ -20,9 +20,15 @@ module gpu_backend
   public :: gpu_active            !.true. => use the CUDA ME backend      (matform)
   public :: gpu_build_HS          !energy matrix-element build            (matform)
   public :: gpu_build_HS_deriv    !energy+gradient matrix-element build   (matform)
+  public :: gpu_la_active         !.true. => method-I solve on the GPU    (workproc)
+  public :: gpu_la_check          !.true. => shadow-check it on the host  (workproc)
+  public :: gpu_la_invalidate     !force a full re-upload of the mirror   (main, workproc)
+  public :: gpu_gsepiis           !GPU drop-in for linalg's GSEPIIS       (workproc)
 
   logical, save :: use_me    = .false.   !ECG_GPU=1
   logical, save :: use_eig   = .false.   !ECG_GPU_EIG=1
+  logical, save :: use_la    = .false.   !ECG_GPU_LA=1: method-I eigensolve (GSEPIIS) on the GPU
+  logical, save :: la_check  = .false.   !ECG_GPU_LA_CHECK=1: verify the mirror and shadow the host solve
   integer, save :: batch_cap = 16384     !ECG_GPU_BATCH: max pairs per GPU call
   logical, save :: ctx_ready = .false.   !device context successfully initialised
   logical, save :: use_determ = .false.  !ECG_DETERM=1: deterministic term reduction
@@ -58,6 +64,34 @@ module gpu_backend
   integer, save :: cap_grad  = 0    !length of the gradient slabs
   integer, save :: cap_terms = 0    !NumYHYTerms the constants were staged for
   logical, save :: consts_ready = .false.
+
+  !METHOD-I EIGENSOLVE ON THE GPU (gpu_gsepiis).
+  !The device keeps a MIRROR of the host's Glob_H (lower triangle: H-lambda*S,
+  !upper triangle: the unit factor U=L' of the LDL' factorization), Glob_S and
+  !Glob_invD, with the host leading dimension. The mirror is kept equal to the
+  !host arrays by one invariant, borrowed from the host algorithm itself:
+  !GSEPIIS(k,n) trusts the factorization of the leading k-1 block, so nothing
+  !with both indices < k can have changed since that block was factorized.
+  !Each call therefore uploads only the entries with max(row,col) >= d, where
+  !d = min(k, la_valid+1) and la_valid is how many leading indices the device
+  !is known to hold. Anything that may break the invariant (a host solve, a new
+  !BBOP step - the shift changes - or a reallocation) resets la_valid to 0.
+  !ECG_GPU_LA_CHECK=1 verifies the untouched leading block bitwise on every call.
+  !la_L holds the same factor transposed, L=U' in its strict lower triangle (its
+  !upper triangle and diagonal are unused), so that both triangular solves of an
+  !inverse iteration run as cuBLAS OP_N: U'y=b as Ly=b, then Ux=y. cuBLAS dtrsv
+  !OP_T streams at about half the OP_N rate on a V100 (221 vs 442 GB/s, K=10000).
+  !It is valid wherever la_M's upper triangle is (same la_valid).
+  type(cublasHandle), save :: la_hdl
+  logical, save :: la_created = .false.
+  integer, save :: la_ld    = 0          !leading dimension the mirror was allocated for
+  integer, save :: la_valid = 0          !leading indices known equal on host and device
+  integer, save :: la_bufcap = 0
+  real(wp), device, allocatable, save :: la_M(:,:), la_B(:,:), la_L(:,:)
+  real(wp), device, allocatable, save :: la_invD(:), la_v(:), la_w(:), la_x(:), la_t(:), la_buf(:)
+  integer,  device, allocatable, save :: la_err(:)
+  real(wp), allocatable, save         :: la_hbuf(:)
+  integer, parameter :: LA_RED = 256     !threads of the single-block reduction kernel (power of 2)
 
   integer, parameter :: NN  = Glob_AllowedNumOfPseudoParticles
   integer, parameter :: NNP = NN*(NN+1)/2   !max packed vech length; Dk/Dl are 2*np long (np=n(n+1)/2)
@@ -157,18 +191,32 @@ contains
       endif
       call get_environment_variable('ECG_DETERM', val, status=ios)
       use_determ = (ios==0).and.(val(1:1)=='1')
+      call get_environment_variable('ECG_GPU_LA', val, status=ios)
+      use_la = (ios==0).and.(val(1:1)=='1')
+      call get_environment_variable('ECG_GPU_LA_CHECK', val, status=ios)
+      la_check = (ios==0).and.(val(1:1)=='1')
+      if (use_la.and.(Glob_NumOfProcs>1)) then
+        !The host method-I routines take MPI-parallel branches at np>1; the GPU
+        !solve is written for the single-rank case only.
+        write(*,'(1x,a)') '  ECG_GPU_LA ignored: it needs exactly 1 MPI process'
+        use_la = .false.
+      endif
+      if (.not.use_la) la_check = .false.
       write(*,'(1x,a)')             '---------------- GPU backend ----------------'
       write(*,'(1x,a,l1,a,i0,a,l1)')'  ME on GPU=',use_me, &
                                     '   batch=',batch_cap,'   determ=',use_determ
       if (.not.use_me) write(*,'(1x,a)') '  (GPU disabled: matrix elements run on CPU)'
       write(*,'(1x,a,l1)')          '  eig on GPU=',use_eig
+      write(*,'(1x,a,l1,a,l1)')     '  method-I solve on GPU=',use_la,'   check=',la_check
       write(*,'(1x,a)')             '---------------------------------------------'
     endif
     call MPI_BCAST(use_eig,    1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
     call MPI_BCAST(use_me,     1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
     call MPI_BCAST(batch_cap,  1, MPI_INTEGER, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
     call MPI_BCAST(use_determ, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
-    if (.not.use_me) return
+    call MPI_BCAST(use_la,     1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+    call MPI_BCAST(la_check,   1, MPI_LOGICAL, 0, MPI_COMM_WORLD, Glob_MPIErrCode)
+    if (.not.(use_me.or.use_la)) return
 
     !Bring up the device context on every rank, then agree COLLECTIVELY: if ANY
     !rank failed to acquire a GPU, abort everywhere. Never let some ranks run the
@@ -204,6 +252,20 @@ contains
   logical function gpu_eig_active()
     gpu_eig_active = use_eig .and. ctx_ready
   end function gpu_eig_active
+
+  logical function gpu_la_active()
+    gpu_la_active = use_la .and. ctx_ready
+  end function gpu_la_active
+
+  logical function gpu_la_check()
+    gpu_la_check = la_check
+  end function gpu_la_check
+
+  subroutine gpu_la_invalidate()
+  !The next gpu_gsepiis call re-uploads the whole mirror (see the comment at
+  !la_valid). Cheap: it only resets a counter.
+    la_valid = 0
+  end subroutine gpu_la_invalidate
 
   subroutine stage_constants()
   !Upload the per-run invariants: the Y+Y permutation matrices and their
@@ -591,6 +653,15 @@ contains
     if (allocated(d_Dk))  deallocate(d_Dk, d_Dl)
     if (allocated(Lh))    deallocate(Lh, Ah, im, imm)
     cap_basis=0; cap_pairs=0; cap_grad=0; cap_terms=0; consts_ready=.false.
+    !method-I mirror
+    if (la_created) then
+      istat = cublasDestroy(la_hdl)
+      la_created = .false.
+    endif
+    if (allocated(la_M))    deallocate(la_M, la_B, la_L, la_invD, la_v, la_w, la_x, la_t, la_err)
+    if (allocated(la_buf))  deallocate(la_buf)
+    if (allocated(la_hbuf)) deallocate(la_hbuf)
+    la_ld=0; la_valid=0; la_bufcap=0
   end subroutine gpu_finalize
 
   subroutine gpu_dsygvx(jobz_vec, n, H, ldH, S, ldS, iwhich, eval, Z, info_out)
@@ -651,5 +722,302 @@ contains
       Z(1:n) = hZ(1:n)          !first column of A (the eigenvector)
     endif
   end subroutine gpu_dsygvx
+
+
+  ! ==========================================================================
+  !  (3) METHOD-I EIGENSOLVE ON THE GPU  (see the comment at la_valid)
+  ! ==========================================================================
+
+  subroutine blas_check(istat, ctx)
+  !Abort the whole job if a cuBLAS call failed.
+    integer,      intent(in) :: istat
+    character(*), intent(in) :: ctx
+    integer :: ierr
+    if (istat == CUBLAS_STATUS_SUCCESS) return
+    write(*,'(1x,a)')        '================ cuBLAS FATAL ==============='
+    write(*,'(1x,a,i0,a,a)') 'rank ',Glob_ProcID,'  context: ',trim(ctx)
+    write(*,'(1x,a,i0)')     'cublas status ',istat
+    write(*,'(1x,a)')        '============================================='
+    flush(6)
+    call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
+  end subroutine blas_check
+
+  subroutine la_prepare(ld)
+  !Create the cuBLAS handle once; (re)allocate the mirror when the host leading
+  !dimension changes (a reallocated basis), which also invalidates it.
+    integer, intent(in) :: ld
+    if (.not.la_created) then
+      call blas_check(cublasCreate(la_hdl), 'la_prepare: cublasCreate')
+      la_created = .true.
+    endif
+    if (ld /= la_ld) then
+      if (allocated(la_M)) deallocate(la_M, la_B, la_L, la_invD, la_v, la_w, la_x, la_t, la_err)
+      allocate(la_M(ld,ld), la_B(ld,ld), la_L(ld,ld))
+      allocate(la_invD(ld), la_v(ld), la_w(ld), la_x(ld), la_t(ld), la_err(1))
+      la_ld = ld
+      la_valid = 0
+    endif
+  end subroutine la_prepare
+
+  subroutine la_upload_rows(A, dA, ld, d, n)
+  !Copy A(d:n, 1:d-1) (the strided part of the trailing region: rows d..n of
+  !the leading columns) to the device: pack on the host, one copy, scatter.
+    integer,  intent(in) :: ld, d, n
+    real(wp), intent(in) :: A(ld,*)
+    real(wp), device     :: dA(ld,*)
+    integer :: r, c, j, cnt
+    r = n-d+1; c = d-1; cnt = r*c
+    if (cnt <= 0) return
+    if (cnt > la_bufcap) then
+      if (allocated(la_buf))  deallocate(la_buf)
+      if (allocated(la_hbuf)) deallocate(la_hbuf)
+      allocate(la_buf(cnt), la_hbuf(cnt))
+      la_bufcap = cnt
+    endif
+    do j = 1, c
+      la_hbuf((j-1)*r+1:j*r) = A(d:n, j)
+    enddo
+    call cuda_check(cudaMemcpy(la_buf, la_hbuf, cnt), 'la_upload_rows: H2D')
+    call la_scatter_kernel<<<(cnt+255)/256, 256>>>(dA, ld, la_buf, r, c, d)
+    call cuda_check(cudaGetLastError(), 'la_upload_rows: scatter launch')
+  end subroutine la_upload_rows
+
+  attributes(global) subroutine la_scatter_kernel(A, ld, buf, r, c, d)
+  !A(d+i-1, j) = buf(i,j), i=1..r, j=1..c
+    integer, value :: ld, r, c, d
+    real(wp) :: A(ld,*), buf(*)
+    integer  :: idx, i, j
+    idx = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (idx > r*c) return
+    j = (idx-1)/r + 1
+    i = idx - (j-1)*r
+    A(d+i-1, j) = buf(idx)
+  end subroutine la_scatter_kernel
+
+  attributes(global) subroutine ldl_finish_kernel(A, L, ld, invD, i, err)
+  !Last step of one row of LDLTF (linalg.f90, unblocked path). On entry
+  !A(1:i-1,i) holds y with U'y = A(i,1:i-1). On exit A(1:i-1,i) = y*invD,
+  !the same values in row i of L (L=U'), invD(i) = 1/(A(i,i) - sum y*y*invD);
+  !err(1)=i marks a zero pivot, as the host's ErrorCode=1. One block; the sum
+  !is a fixed-order tree, so the result is reproducible run to run.
+    integer, value :: ld, i
+    real(wp) :: A(ld,*), L(ld,*), invD(*)
+    integer  :: err(*)
+    real(wp), shared :: red(LA_RED)
+    integer  :: q, t, h
+    real(wp) :: s, y, wq
+    if (err(1) /= 0) return
+    t = threadIdx%x
+    s = 0.0_wp
+    do q = t, i-1, LA_RED
+      y  = A(q,i)
+      wq = y*invD(q)
+      s  = s + y*wq
+      A(q,i) = wq
+      L(i,q) = wq
+    enddo
+    red(t) = s
+    call syncthreads()
+    h = LA_RED/2
+    do while (h >= 1)
+      if (t <= h) red(t) = red(t) + red(t+h)
+      call syncthreads()
+      h = h/2
+    enddo
+    if (t == 1) then
+      s = A(i,i) - red(1)
+      if (s == 0.0_wp) then
+        err(1) = i
+      else
+        invD(i) = 1.0_wp/s
+      endif
+    endif
+  end subroutine ldl_finish_kernel
+
+  attributes(global) subroutine vmul_kernel(n, x, d)
+  !x = x*d elementwise (the D^-1 step of LDLTS)
+    integer, value :: n
+    real(wp) :: x(*), d(*)
+    integer  :: i
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    if (i <= n) x(i) = x(i)*d(i)
+  end subroutine vmul_kernel
+
+  subroutine la_verify_leading(c, M, ld, invD, B)
+  !ECG_GPU_LA_CHECK: the leading c x c blocks of the mirror must equal the host
+  !arrays bit for bit (that is the invariant the partial upload relies on).
+    integer,  intent(in) :: c, ld
+    real(wp), intent(in) :: M(ld,*), invD(*), B(ld,*)
+    real(wp), allocatable :: h(:,:), hv(:)
+    integer :: nbad, ierr, j
+    allocate(h(ld,c), hv(c))
+    call cuda_check(cudaMemcpy(h, la_M, ld*c), 'la_verify: D2H M')
+    nbad = count(h(1:c,1:c) /= M(1:c,1:c))
+    call cuda_check(cudaMemcpy(h, la_L, ld*c), 'la_verify: D2H L')
+    do j = 1, c-1                                  !L(i,j) = U(j,i), i > j
+      nbad = nbad + count(h(j+1:c,j) /= M(j,j+1:c))
+    enddo
+    call cuda_check(cudaMemcpy(h, la_B, ld*c), 'la_verify: D2H B')
+    nbad = nbad + count(h(1:c,1:c) /= B(1:c,1:c))
+    call cuda_check(cudaMemcpy(hv, la_invD, c), 'la_verify: D2H invD')
+    nbad = nbad + count(hv(1:c) /= invD(1:c))
+    deallocate(h, hv)
+    if (nbad /= 0) then
+      write(*,'(1x,a,i0,a,i0)') 'FATAL ECG_GPU_LA_CHECK: device mirror differs from host in ', &
+        nbad,' entries of the leading block of order ',c
+      flush(6); call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
+    endif
+  end subroutine la_verify_leading
+
+  subroutine gpu_gsepiis(k,n,M,nM,invD,B,nB,apprlambda,v,w,Tol, &
+                         lambda,x,RelAcc,MaxIter,SpecifNorm,NumIter,ErrorCode)
+  !Drop-in for GSEPIIS (linalg.f90): same arguments, same algorithm, same
+  !outputs, including what GSEPIIS leaves in M (factor columns k..n), invD,
+  !v, w and x. The O(n^2) work runs on the GPU mirror; only the trailing part
+  !of M and B goes up and only columns k..n of M come back.
+  !  LDLTF   rows k..n: dcopy (row -> column), dtrsv(L=U'), ldl_finish_kernel
+  !  MTMVL   dsymv on the lower triangle of B
+  !  LDLTS   dtrsv(U'), x*invD, dtrsv(U)
+  !  VMMTMV  dsymv + ddot (lower triangles of B and M)
+    integer  :: k,n,nM,nB,MaxIter,SpecifNorm,NumIter,ErrorCode
+    real(wp) :: M(nM,*),invD(*),B(nB,*),v(*),w(*),x(*)
+    real(wp) :: apprlambda,Tol,lambda,RelAcc
+    integer  :: d, i, im, imax, herr(1), ierr, ncols, k1   !not "nb": that IS the dummy nB
+    real(wp) :: NormOfDiff,NormOfDiffPrev,t1,t2,tc,a,b2,xx,hv(1),tlast
+    logical  :: notconverged
+
+    if (nB /= nM) then
+      write(*,'(1x,a)') 'FATAL gpu_gsepiis: H and S must share the leading dimension'
+      flush(6); call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
+    endif
+    k1 = max(k,1)
+    if (la_check) then
+      !surface any earlier asynchronous error here rather than in a later copy
+      call cuda_check(cudaDeviceSynchronize(), 'gpu_gsepiis: entry sync')
+      call cuda_check(cudaGetLastError(), 'gpu_gsepiis: entry last error')
+    endif
+    call la_prepare(nM)
+    d = min(k1, la_valid+1)
+    if (la_check .and. (d > 1)) call la_verify_leading(d-1, M, nM, invD, B)
+
+    !Upload everything with max(row,col) >= d: columns d..n (contiguous) and
+    !rows d..n of the leading columns (strided). invD(d..k-1): factor rows the
+    !host holds but the device may not.
+    if (d <= n) then
+      call cuda_check(cudaMemcpy(la_M(1,d), M(1,d), nM*(n-d+1)), 'gpu_gsepiis: H2D M columns')
+      call cuda_check(cudaMemcpy(la_B(1,d), B(1,d), nM*(n-d+1)), 'gpu_gsepiis: H2D B columns')
+      call la_upload_rows(M, la_M, nM, d, n)
+      call la_upload_rows(B, la_B, nM, d, n)
+    endif
+    if (k1 > d) then
+      call cuda_check(cudaMemcpy(la_invD(d), invD(d), min(k1,n+1)-d), 'gpu_gsepiis: H2D invD')
+      !factor columns d..k1-1 came from the host: L(d:k1-1, 1:k1-1) = U(1:k1-1, d:k1-1)'
+      !(this also fills L's unused upper part of those rows, harmlessly)
+      call blas_check(cublasDgeam(la_hdl, CUBLAS_OP_T, CUBLAS_OP_N, k1-d, k1-1, 1.0_wp, la_M(1,d), nM, &
+                                  0.0_wp, la_L(d,1), nM, la_L(d,1), nM), 'gpu_gsepiis: geam L')
+    endif
+    call cuda_check(cudaMemcpy(la_v, v, n), 'gpu_gsepiis: H2D v')
+
+    ErrorCode=0
+    RelAcc=huge(RelAcc)
+    NormOfDiffPrev=huge(NormOfDiffPrev)
+    NormOfDiff=huge(NormOfDiff)
+    NumIter=0
+
+    !LDLTF(k,n): rows k..n of the factor, one row at a time, as the host's
+    !unblocked path (the one the m=n single-row update always takes)
+    herr(1)=0
+    call cuda_check(cudaMemcpy(la_err, herr, 1), 'gpu_gsepiis: H2D err')
+    do i = k1, n
+      im = i-1
+      if (im > 0) then
+        call blas_check(cublasDcopy_v2(la_hdl, im, la_M(i,1), nM, la_M(1,i), 1), 'LDLTF dcopy')
+        call blas_check(cublasDtrsv_v2(la_hdl, CUBLAS_FILL_MODE_LOWER, CUBLAS_OP_N, CUBLAS_DIAG_UNIT, &
+                                       im, la_L, nM, la_M(1,i), 1), 'LDLTF dtrsv')
+      endif
+      call ldl_finish_kernel<<<1, LA_RED>>>(la_M, la_L, nM, la_invD, i, la_err)
+    enddo
+    call cuda_check(cudaGetLastError(), 'gpu_gsepiis: ldl_finish launch')
+    call cuda_check(cudaMemcpy(herr, la_err, 1), 'gpu_gsepiis: D2H err')
+    if (herr(1) /= 0) then
+      !Zero pivot at row herr(1): the host returns at once with columns k..i
+      !written and invD(k..i-1) set. Reproduce exactly that, resync next time.
+      i = herr(1)
+      call cuda_check(cudaMemcpy(M(1,k1), la_M(1,k1), nM*(i-k1+1)), 'gpu_gsepiis: D2H M (error)')
+      if (i > k1) call cuda_check(cudaMemcpy(invD(k1), la_invD(k1), i-k1), 'gpu_gsepiis: D2H invD (error)')
+      ErrorCode=1
+      la_valid=0
+      return
+    endif
+
+    !inverse iteration
+    notconverged=.true.
+    do while ((notconverged).and.(NumIter<MaxIter))
+      if (NumIter/=0) call blas_check(cublasDcopy_v2(la_hdl, n, la_x, 1, la_v, 1), 'II copy x->v')
+      call blas_check(cublasDsymv_v2(la_hdl, CUBLAS_FILL_MODE_LOWER, n, 1.0_wp, la_B, nM, &
+                                     la_v, 1, 0.0_wp, la_w, 1), 'II dsymv B')
+      call blas_check(cublasDcopy_v2(la_hdl, n, la_w, 1, la_x, 1), 'II copy w->x')
+      call blas_check(cublasDtrsv_v2(la_hdl, CUBLAS_FILL_MODE_LOWER, CUBLAS_OP_N, CUBLAS_DIAG_UNIT, &
+                                     n, la_L, nM, la_x, 1), 'II dtrsv L')
+      call vmul_kernel<<<(n+255)/256, 256>>>(n, la_x, la_invD)
+      call blas_check(cublasDtrsv_v2(la_hdl, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_UNIT, &
+                                     n, la_M, nM, la_x, 1), 'II dtrsv U')
+      call blas_check(cublasIdamax_v2(la_hdl, n, la_x, 1, imax), 'II idamax')
+      call cuda_check(cudaMemcpy(hv, la_x(imax), 1), 'gpu_gsepiis: D2H max element')
+      t1 = abs(hv(1))
+      tlast = t1
+      call blas_check(cublasDscal_v2(la_hdl, n, 1.0_wp/t1, la_x, 1), 'II dscal')
+      call blas_check(cublasDdot_v2(la_hdl, n, la_x, 1, la_v, 1, a),  'II dot x.v')
+      call blas_check(cublasDdot_v2(la_hdl, n, la_v, 1, la_v, 1, b2), 'II dot v.v')
+      tc = a/b2
+      call blas_check(cublasDcopy_v2(la_hdl, n, la_x, 1, la_t, 1), 'II copy x->t')
+      call blas_check(cublasDaxpy_v2(la_hdl, n, -tc, la_v, 1, la_t, 1), 'II axpy')
+      call blas_check(cublasDnrm2_v2(la_hdl, n, la_t, 1, t2), 'II nrm2')
+      call blas_check(cublasDdot_v2(la_hdl, n, la_x, 1, la_x, 1, xx), 'II dot x.x')
+      NormOfDiff = t2/sqrt(xx)
+      if (Tol>0.0_wp) then
+        if (NormOfDiff<=Tol) notconverged=.false.
+      else
+        if ((NormOfDiff>NormOfDiffPrev).and.(NormOfDiff<=abs(Tol))) notconverged=.false.
+        NormOfDiffPrev=NormOfDiff
+      endif
+      NumIter=NumIter+1
+    enddo
+    RelAcc=NormOfDiff
+    if (notconverged) ErrorCode=2
+    !Rayleigh quotient: t1=x'Bx, t2=x'(H-lambda S)x. The last iteration solved
+    !M*x = w/tlast (w = B*v), so x'Mx = x'w/tlast without another sweep over
+    !M. Both forms carry rounding of order eps*|M|*|x|^2 in t2.
+    call blas_check(cublasDsymv_v2(la_hdl, CUBLAS_FILL_MODE_LOWER, n, 1.0_wp, la_B, nM, &
+                                   la_x, 1, 0.0_wp, la_t, 1), 'RQ dsymv B')
+    call blas_check(cublasDdot_v2(la_hdl, n, la_x, 1, la_t, 1, t1), 'RQ dot B')
+    if (NumIter > 0) then
+      call blas_check(cublasDdot_v2(la_hdl, n, la_x, 1, la_w, 1, t2), 'RQ dot x.w')
+      t2 = t2/tlast
+    else
+      call blas_check(cublasDsymv_v2(la_hdl, CUBLAS_FILL_MODE_LOWER, n, 1.0_wp, la_M, nM, &
+                                     la_x, 1, 0.0_wp, la_t, 1), 'RQ dsymv M')
+      call blas_check(cublasDdot_v2(la_hdl, n, la_x, 1, la_t, 1, t2), 'RQ dot M')
+    endif
+    lambda=(t2/t1)+apprlambda
+    select case (SpecifNorm)
+    case (0) !x'Bx=1
+      call blas_check(cublasDscal_v2(la_hdl, n, 1.0_wp/sqrt(t1), la_x, 1), 'norm B')
+    case (1) !x'x=1
+      call blas_check(cublasDdot_v2(la_hdl, n, la_x, 1, la_x, 1, xx), 'norm dot')
+      call blas_check(cublasDscal_v2(la_hdl, n, 1.0_wp/sqrt(xx), la_x, 1), 'norm 2')
+    end select
+
+    !Back to the host: exactly what GSEPIIS itself would have changed.
+    ncols = n-k1+1
+    if (ncols > 0) then
+      call cuda_check(cudaMemcpy(M(1,k1), la_M(1,k1), nM*ncols), 'gpu_gsepiis: D2H M columns')
+      call cuda_check(cudaMemcpy(invD(k1), la_invD(k1), ncols),   'gpu_gsepiis: D2H invD')
+    endif
+    call cuda_check(cudaMemcpy(x, la_x, n), 'gpu_gsepiis: D2H x')
+    call cuda_check(cudaMemcpy(v, la_v, n), 'gpu_gsepiis: D2H v')
+    call cuda_check(cudaMemcpy(w, la_w, n), 'gpu_gsepiis: D2H w')
+    la_valid = n
+  end subroutine gpu_gsepiis
 
 end module gpu_backend

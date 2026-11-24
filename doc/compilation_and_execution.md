@@ -151,6 +151,22 @@ mass and scaled-charge arrays use CUDA managed memory shared by the CPU and GPU
 matrix-element routines. Use a `gpu=no` build on machines without a CUDA device;
 gfortran builds retain ordinary host allocations.
 
+`ECG_GPU_LA=1` moves the method-`I` eigensolve (`GSEPIIS`: the LDLᵀ update of
+the factor and the inverse iterations) to the GPU as well, in `RG_0S`,
+`RG_1P`, `RG_2D`, and `RG_2P` with one MPI process (it is ignored, with a
+message, when more processes run). The device keeps copies of `H − λS`, `S`,
+and the factor (about `24·K²` bytes for basis size `K`: 3.5 GB at
+`K = 12000`), and only the rows that changed since the previous solve travel
+each evaluation. In method-`I` runs at large `K` this solve, not the matrix
+elements, dominates a GPU run that leaves it on one CPU core: on a V100 with
+`ECG_GPU=1 ECG_GPU_LA=1`, one optimized function of `OPT_CYCLE I` took 0.8 s
+for Li `K = 12000` and 2.5 s for Be `K = 10000`, against 11 s and 44 s with
+`ECG_GPU=1` alone and 4.4 s and 12 s with 32 MPI processes on one EPYC 7452.
+The results agree with the CPU solve to roundoff (relative energy difference
+below `1e-15` per solve). `ECG_GPU_LA_CHECK=1` is for testing: it repeats
+every solve on the host, verifies the device copies, and prints the
+differences (`GPU-LA CHECK` lines), which makes the run much slower.
+
 `PG_0S` accepts `gpu=yes` too, with the same switches. Its GPU matrix elements
 agree with the CPU (the HD sample inputs reproduce the CPU energies; with
 `ECG_GPU=1` alone the basis-generation output is byte-identical), but for small
@@ -189,6 +205,7 @@ job submitted from the directory containing `inout.txt` can use:
 module load NVHPC/25.9-CUDA-12.9.1
 export ECG_GPU=1
 # Optional for method G: export ECG_GPU_EIG=1
+# Optional for method I (one MPI process): export ECG_GPU_LA=1
 mpirun -np 1 /absolute/path/to/RG_0S_N5_P8_netlib_gpu
 ```
 
@@ -207,6 +224,7 @@ For Irgetas/H100, the corresponding request is:
 module load NVHPC/26.5-CUDA-13.2.0
 export ECG_GPU=1
 # Optional for method G: export ECG_GPU_EIG=1
+# Optional for method I (one MPI process): export ECG_GPU_LA=1
 mpirun -np 1 /absolute/path/to/RG_0S_N5_P8_netlib_gpu
 ```
 

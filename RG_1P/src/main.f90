@@ -2,7 +2,7 @@ program main
 
   use workproc
 #ifdef USE_CUDA
-  use gpu_backend, only: gpu_backend_init, gpu_finalize
+  use gpu_backend, only: gpu_backend_init, gpu_finalize, gpu_la_invalidate
 #endif
   implicit none
 
@@ -102,6 +102,10 @@ program main
 
     Glob_CurrBBOPStep=i
     Glob_ApproxEnergy=Glob_CurrEnergy*Glob_InvItParameter
+#ifdef USE_CUDA
+    !the shift just changed: H-lambda*S on the GPU mirror is stale
+    call gpu_la_invalidate()
+#endif
 
     select case (Glob_BBOP(i)%Action)
 
