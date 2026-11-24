@@ -5,7 +5,8 @@ module workproc
   use matelem
   use linalg
 #ifdef USE_CUDA
-  use gpu_backend, only: gpu_eig_active, gpu_dsygvx
+  use gpu_backend, only: gpu_eig_active, gpu_dsygvx, gpu_la_active, gpu_la_check, &
+                         gpu_la_invalidate, gpu_gsepiis
 #endif
   use qrlinalg, only: qr_real_state,QR_SUCCESS,QR_ERR_INVALID_ARGUMENT, &
     QR_ERR_ALLOCATION,QR_ERR_SINGULAR,QR_ERR_INVALID_STATE, &
@@ -2602,6 +2603,95 @@ contains
 
   end subroutine EnergyGB
 
+  subroutine LAInvalidate()
+!Forget what the GPU mirror of Glob_H/Glob_S/Glob_invD holds (CUDA builds,
+!ECG_GPU_LA=1); the next SolveGSEPIIS re-uploads it in full. No-op otherwise.
+#ifdef USE_CUDA
+    call gpu_la_invalidate()
+#endif
+  end subroutine LAInvalidate
+
+  subroutine SolveGSEPIIS(k,n,M,nM,invD,B,nB,apprlambda,v,w,Tol, &
+                          lambda,x,RelAcc,MaxIter,SpecifNorm,NumIter,ErrorCode)
+!Dispatcher for the method-I eigensolver. Same arguments and results as
+!GSEPIIS (linalg.f90), which it calls on the host. In CUDA builds run with
+!ECG_GPU_LA=1 (one MPI process) gpu_gsepiis (gpu_backend.f90) does the same
+!work on a GPU mirror of M, B and invD instead. ECG_GPU_LA_CHECK=1 also runs
+!the host GSEPIIS on copies and reports the difference: testing only, it
+!costs a host solve and an O(n^2) copy per call.
+    integer     k,n,nM,nB,MaxIter,SpecifNorm,NumIter,ErrorCode
+    real(wp)    M(nM,n),invD(n),B(nB,n),v(n),w(n),x(n)
+    real(wp)    apprlambda,Tol,lambda,RelAcc
+#ifdef USE_CUDA
+    if (gpu_la_active()) then
+      if (gpu_la_check()) then
+        call SolveGSEPIISChecked(k,n,M,nM,invD,B,nB,apprlambda,v,w,Tol, &
+                                 lambda,x,RelAcc,MaxIter,SpecifNorm,NumIter,ErrorCode)
+      else
+        call gpu_gsepiis(k,n,M,nM,invD,B,nB,apprlambda,v,w,Tol, &
+                         lambda,x,RelAcc,MaxIter,SpecifNorm,NumIter,ErrorCode)
+      endif
+      return
+    endif
+#endif
+    call GSEPIIS(k,n,M,nM,invD,B,nB,apprlambda,v,w,Tol, &
+                 lambda,x,RelAcc,MaxIter,SpecifNorm,NumIter,ErrorCode)
+  end subroutine SolveGSEPIIS
+
+#ifdef USE_CUDA
+  subroutine SolveGSEPIISChecked(k,n,M,nM,invD,B,nB,apprlambda,v,w,Tol, &
+                                 lambda,x,RelAcc,MaxIter,SpecifNorm,NumIter,ErrorCode)
+!ECG_GPU_LA_CHECK=1: the GPU result is the one returned; the host GSEPIIS runs
+!on copies of the same inputs and the largest relative differences are
+!tracked. A line is printed for every call that exceeds the thresholds, plus a
+!running summary every 10 calls and at the first call.
+    integer     k,n,nM,nB,MaxIter,SpecifNorm,NumIter,ErrorCode
+    real(wp)    M(nM,n),invD(n),B(nB,n),v(n),w(n),x(n)
+    real(wp)    apprlambda,Tol,lambda,RelAcc
+    real(wp),allocatable :: Mc(:,:),invDc(:),vc(:),wc(:),xc(:)
+    real(wp)    lambdac,RelAccc,dl,dx,du,dd,s
+    integer     NumIterc,ErrorCodec,k1
+    integer,save :: ncalls=0, nbad=0, nitdiff=0
+    real(wp),save :: maxdl=0, maxdx=0, maxdu=0, maxdd=0
+    k1=max(k,1)
+    allocate(Mc(nM,n),invDc(n),vc(n),wc(n),xc(n))
+    Mc(1:nM,1:n)=M(1:nM,1:n); invDc=invD(1:n); vc=v(1:n); wc=w(1:n); xc=x(1:n)
+    call gpu_gsepiis(k,n,M,nM,invD,B,nB,apprlambda,v,w,Tol, &
+                     lambda,x,RelAcc,MaxIter,SpecifNorm,NumIter,ErrorCode)
+    call GSEPIIS(k,n,Mc,nM,invDc,B,nB,apprlambda,vc,wc,Tol, &
+                 lambdac,xc,RelAccc,MaxIter,SpecifNorm,NumIterc,ErrorCodec)
+    ncalls=ncalls+1
+    dl=ZERO; dx=ZERO; du=ZERO; dd=ZERO
+    if ((ErrorCode==0).and.(ErrorCodec==0)) then
+      dl=abs(lambda-lambdac)/abs(lambdac)
+      !inverse iteration may flip the sign of x every step, so an iteration
+      !count that differs by one (rounding at the tolerance) gives -x: compare
+      !up to sign
+      s=maxval(abs(xc(1:n)))
+      if (s>ZERO) dx=min(maxval(abs(x(1:n)-xc(1:n))),maxval(abs(x(1:n)+xc(1:n))))/s
+      if (k1<=n) then
+        s=maxval(abs(Mc(1:nM,k1:n))); if (s>ZERO) du=maxval(abs(M(1:nM,k1:n)-Mc(1:nM,k1:n)))/s
+        dd=maxval(abs(invD(k1:n)-invDc(k1:n))/abs(invDc(k1:n)))
+      endif
+    endif
+    if (NumIter/=NumIterc) nitdiff=nitdiff+1
+    maxdl=max(maxdl,dl); maxdx=max(maxdx,dx); maxdu=max(maxdu,du); maxdd=max(maxdd,dd)
+    if ((ErrorCode/=ErrorCodec).or.(dl>1.0e-12_wp).or.(dx>1.0e-8_wp)) then
+      nbad=nbad+1
+      write(*,'(1x,a,i0,a,i0,a,i0,a,2(1x,i0),a,2(1x,i0),a,es9.2,a,es9.2,a,es9.2,a,es9.2)') &
+        'GPU-LA CHECK call ',ncalls,' k=',k,' n=',n,' err',ErrorCode,ErrorCodec, &
+        ' iter',NumIter,NumIterc,' dE/E=',dl,' dx=',dx,' dU=',du,' dinvD=',dd
+      write(*,'(1x,a,es24.16,a,es24.16,a,es10.3,a,es10.3)') 'GPU-LA CHECK   lambda gpu=',lambda, &
+        ' host=',lambdac,' RelAcc gpu=',RelAcc,' host=',RelAccc
+    endif
+    if ((ncalls==1).or.(mod(ncalls,10)==0)) &
+      write(*,'(1x,a,i0,a,i0,a,i0,a,es9.2,a,es9.2,a,es9.2,a,es9.2)') &
+        'GPU-LA CHECK summary: calls=',ncalls,' flagged=',nbad,' iter-mismatch=',nitdiff, &
+        ' max dE/E=',maxdl,' dx=',maxdx,' dU=',maxdu,' dinvD=',maxdd
+    deallocate(Mc,invDc,vc,wc,xc)
+  end subroutine SolveGSEPIISChecked
+#endif
+
   function EnergyIA(Nmin,Nmax,AreMatElemNeeded,ErrorCode)
 !Function EnergyIA computes the energy of the system under
 !consideration. Routine GSEPIIS from module linalg is used to
@@ -2643,6 +2733,7 @@ contains
       !stored in the same way as subroutine GSEPIIS does it. It is needed when
       !the basis is enlarged and the factorization is updated rather than
       !computed anew (see subroutine LDLTF in module linalg).
+      call LAInvalidate()   !host-only 1x1 factor: the GPU mirror does not have it
       if (Glob_H(1,1)/=ZERO) then
         Glob_invD(1)=ONE/Glob_H(1,1)
       else
@@ -2651,7 +2742,7 @@ contains
       endif
     else
       Glob_c(1:Nmax)=Glob_LastEigvector(1:Nmax)
-      call GSEPIIS(Nmin,Nmax,Glob_H,Glob_HSLeadDim,Glob_invD,Glob_S,Glob_HSLeadDim, &
+      call SolveGSEPIIS(Nmin,Nmax,Glob_H,Glob_HSLeadDim,Glob_invD,Glob_S,Glob_HSLeadDim, &
                    Glob_ApproxEnergy,Glob_c,Glob_WorkForGSEPIIS,Glob_EigvalTol, &
                    Evalue,Glob_LastEigvector,Glob_LastEigvalTol,Glob_MaxIterForGSEPIIS, &
                    -1,NumOfIterations,ErrorCode)
@@ -2703,6 +2794,7 @@ contains
       !stored in the same way as subroutine GSEPIIS does it. It is needed when
       !the basis is enlarged and the factorization is updated rather than
       !computed anew (see subroutine LDLTF in module linalg).
+      call LAInvalidate()   !host-only 1x1 factor: the GPU mirror does not have it
       if (Glob_H(1,1)/=ZERO) then
         Glob_invD(1)=ONE/Glob_H(1,1)
       else
@@ -2711,7 +2803,7 @@ contains
       endif
     else
       Glob_c(1:Nmax)=Glob_LastEigvector(1:Nmax)
-      call GSEPIIS(Nmin,Nmax,Glob_H,Glob_HSLeadDim,Glob_invD,Glob_S,Glob_HSLeadDim, &
+      call SolveGSEPIIS(Nmin,Nmax,Glob_H,Glob_HSLeadDim,Glob_invD,Glob_S,Glob_HSLeadDim, &
                    Glob_ApproxEnergy,Glob_c,Glob_WorkForGSEPIIS,Glob_EigvalTol, &
                    Evalue,Glob_LastEigvector,Glob_LastEigvalTol,Glob_MaxIterForGSEPIIS, &
                    0,NumOfIterations,ErrorCode)
@@ -2792,6 +2884,7 @@ contains
       !stored in the same way as subroutine GSEPIIS does it. It is needed when
       !the basis is enlarged and the factorization is updated rather than
       !computed anew (see subroutine LDLTF in module linalg).
+      call LAInvalidate()   !host-only 1x1 factor: the GPU mirror does not have it
       if (Glob_H(1,1)/=ZERO) then
         Glob_invD(1)=ONE/Glob_H(1,1)
       else
@@ -2800,7 +2893,7 @@ contains
       endif
     else
       Glob_c(1:nfa)=Glob_LastEigvector(1:nfa)
-      call GSEPIIS(nfru+1,nfa,Glob_H,Glob_HSLeadDim,Glob_invD,Glob_S,Glob_HSLeadDim, &
+      call SolveGSEPIIS(nfru+1,nfa,Glob_H,Glob_HSLeadDim,Glob_invD,Glob_S,Glob_HSLeadDim, &
                    Glob_ApproxEnergy,Glob_c,Glob_WorkForGSEPIIS,Glob_EigvalTol, &
                    Evalue,Glob_LastEigvector,Glob_LastEigvalTol,Glob_MaxIterForGSEPIIS, &
                    0,NumOfIterations,ErrorCode)
@@ -4102,6 +4195,7 @@ contains
       Glob_NonlinParam(1:Glob_npt,i)=ZERO
     enddo
 
+    call LAInvalidate()   !the arrays may have moved or changed size
   end subroutine ReallocateBasisFuncData
 
   function QBatchSize(Capacity,MaxActive) result(BatchSize)
@@ -12320,7 +12414,7 @@ contains
           NumOfIterations=1
           ErrorCode=0
         else
-          call GSEPIIS(1,cbs,Glob_H,Glob_HSLeadDim,Glob_invD,Glob_S,Glob_HSLeadDim, &
+          call SolveGSEPIIS(1,cbs,Glob_H,Glob_HSLeadDim,Glob_invD,Glob_S,Glob_HSLeadDim, &
                        Glob_ApproxEnergy,Glob_LastEigvector,Glob_WorkForGSEPIIS,Glob_EigvalTol, &
                        Evalue,Glob_c,Glob_LastEigvalTol,Glob_MaxIterForGSEPIIS, &
                        0,NumOfIterations,ErrorCode)
@@ -12967,7 +13061,7 @@ AreMomDensNeeded   = .false.
         NumOfIterations=1
         ErrorCode=0
       else
-        call GSEPIIS(1,cbs,Glob_H,Glob_HSLeadDim,Glob_invD,Glob_S,Glob_HSLeadDim, &
+        call SolveGSEPIIS(1,cbs,Glob_H,Glob_HSLeadDim,Glob_invD,Glob_S,Glob_HSLeadDim, &
                      Glob_ApproxEnergy,Glob_LastEigvector,Glob_WorkForGSEPIIS,Glob_EigvalTol, &
                      Evalue,Glob_c,Glob_LastEigvalTol,Glob_MaxIterForGSEPIIS, &
                      0,NumOfIterations,ErrorCode)
