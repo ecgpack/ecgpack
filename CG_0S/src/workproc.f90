@@ -4,6 +4,9 @@ module workproc
   use matform
   use matelem
   use linalg
+#ifdef USE_CUDA
+  use gpu_backend, only: gpu_eig_active, gpu_zhegvx
+#endif
   use qrlinalg, only: qr_complex_state,QR_SUCCESS,QR_ERR_INVALID_ARGUMENT, &
     QR_ERR_ALLOCATION,QR_ERR_SINGULAR,QR_ERR_INVALID_STATE, &
     QR_ERR_DIMENSION_MISMATCH,QR_ERR_NO_CONVERGENCE, &
@@ -2334,10 +2337,19 @@ contains
         Glob_S(i,i)=ONE
       enddo
       if (Glob_ProcID==0) then
+#ifdef USE_CUDA
+        if (gpu_eig_active()) then
+          call gpu_zhegvx(0,Nmax,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim, &
+                          Glob_WhichEigenvalue,EVs(1),Z,ErrorCode)
+        else
+#endif
         call ZHEGVX(1,'N','I','U',Nmax,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
                     ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForZHEGVX, &
                     NumOfEigvalsFound,EVs,Z,Nmax,Glob_WorkForZHEGVX,  &
                     Glob_LWorkForZHEGVX,Glob_RWorkForZHEGVX,Glob_IWorkForZHEGVX,IFAIL,ErrorCode)
+#ifdef USE_CUDA
+        endif
+#endif
         ! SUBROUTINE ZHEGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
 !       VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
 !       LWORK, RWORK, IWORK, IFAIL, INFO )
@@ -2397,10 +2409,19 @@ contains
         Glob_S(i,i)=ONE
       enddo
       if (Glob_ProcID==0) then
+#ifdef USE_CUDA
+        if (gpu_eig_active()) then
+          call gpu_zhegvx(1,Nmax,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim, &
+                          Glob_WhichEigenvalue,EVs(1),Glob_c,ErrorCode)
+        else
+#endif
         call   ZHEGVX(1,'V','I','U',Nmax,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
                       ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForZHEGVX, &
                       NumOfEigvalsFound,EVs,Glob_c,Nmax,Glob_WorkForZHEGVX,  &
                       Glob_LWorkForZHEGVX,Glob_RWorkForZHEGVX,Glob_IWorkForZHEGVX,IFAIL,ErrorCode)
+#ifdef USE_CUDA
+        endif
+#endif
         ! SUBROUTINE ZHEGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
 !       VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
 !       LWORK, RWORK, IWORK, IFAIL, INFO )
@@ -2491,10 +2512,19 @@ contains
       enddo
 
       if (Glob_ProcID==0) then
+#ifdef USE_CUDA
+        if (gpu_eig_active()) then
+          call gpu_zhegvx(1,nfa,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim, &
+                          Glob_WhichEigenvalue,EVs(1),Glob_c,ErrorCode)
+        else
+#endif
         call   ZHEGVX(1,'V','I','U',nfa,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,   &
                       ZERO,ZERO,Glob_WhichEigenvalue,Glob_WhichEigenvalue,Glob_AbsTolForZHEGVX, &
                       NumOfEigvalsFound,EVs,Glob_c,nfa,Glob_WorkForZHEGVX,  &
                       Glob_LWorkForZHEGVX,Glob_RWorkForZHEGVX,Glob_IWorkForZHEGVX,IFAIL,ErrorCode)
+#ifdef USE_CUDA
+        endif
+#endif
         ! SUBROUTINE ZHEGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
 !       VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK,
 !       LWORK, RWORK, IWORK, IFAIL, INFO )
@@ -12682,10 +12712,20 @@ AreMomDensNeeded   = .false.
 
       if (Glob_ProcID==0) then
         write(*,'(1x,a29)',advance='no') 'Solving eigenvalue problem...'
+#ifdef USE_CUDA
+        if (gpu_eig_active()) then
+          call gpu_zhegvx(1,cbs,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim, &
+                          Glob_WhichEigenvalue,Evalue,Glob_c,ErrorCode)
+          NumOfEigvalsFound=0  ! Only the selected eigenpair was requested.
+        else
+#endif
         call ZHEGVX(1,'V','I','U',cbs,Glob_H,Glob_HSLeadDim,Glob_S,Glob_HSLeadDim,  &
                     ZERO,ZERO,1,NumOfEigvecs,Glob_AbsTolForZHEGVX, &
                     NumOfEigvalsFound,Eigvals,Eigvecs,cbs,Glob_WorkForZHEGVX,Glob_LWorkForZHEGVX, &
                     Glob_RWorkForZHEGVX,Glob_IWorkForZHEGVX,IFAIL,ErrorCode)
+#ifdef USE_CUDA
+        endif
+#endif
         !SUBROUTINE ZHEGVX( ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB,
 !       VL, VU, IL, IU, ABSTOL,
 !       M, W, Z, LDZ, WORK, LWORK,

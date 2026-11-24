@@ -25,7 +25,7 @@ The main code groups overlap:
 - Fine-structure coupling codes: `RG_0S-2D`, `RG_0S-2P`, `RG_1P-1P`, `RG_2D-2D`, `RG_2P-2D`, `RG_2P-2P`. These evaluate spin-orbit and non-contact spin-spin matrix elements.
 - Real ECG codes: all `RG_*` directories.
 - Power Gaussian codes: `PG_0S` ($L=0$, even parity) and `PG_1P` ($L=1$, odd parity). These use real ECGs premultiplied by an even power (up to 250) of $r_1$, the distance between particles 1 and 2. They are intended for systems where particles 1 and 2 are heavy and carry charges of the same sign, such as diatomic molecules.
-- Complex ECG codes: `CG_0S` (complex $L=0$ basis). It mirrors `RG_0S`, but has no CUDA backend and no semi-relativistic kinetic energy.
+- Complex ECG codes: `CG_0S` (complex $L=0$ basis). It mirrors `RG_0S` (including its CUDA backend), but has no semi-relativistic kinetic energy.
 
 `RG_0S` is the most complete reference implementation. Other codes intentionally share much of its source layout and Makefile structure.
 
@@ -76,7 +76,7 @@ Full details (machines, toolchains, precision and linear-algebra support, OpenMP
 - Run it from the repository root. Only `nparticles` (2 through 19) is required. Defaults: `machine=linux-generic`, `toolchain=systemdefault`, `config=debug,release`, `precision=8`, `linalg=netlib`, `openmp=no`, `gpu=no`, and every code `build.bash` knows. Every argument except `machine`, `gpu`, and `cuda_arch` accepts a comma-separated list.
 - Binaries go to `bin/[<machine>/]<toolchain>/<config>/<CODE>_N<nparticles>_P<precision>_<linalg>[_omp][_gpu]`. The `<machine>/` segment appears only for `puma`, `ocelote`, and `elgato`; the `<linalg>` suffix is always present.
 - `build.bash` does not know `PG_1P` yet (it rejects `code=PG_1P`); build that code with its Makefile.
-- Skipped or rejected combinations: `precision=10`/`16` build only `linalg=netlib`; `openmp=yes` applies only to `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`; `gpu=yes` requires an `nvhpc-*` toolchain, `precision=8`, and one of `PG_0S`, `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`.
+- Skipped or rejected combinations: `precision=10`/`16` build only `linalg=netlib`; `openmp=yes` applies only to `RG_0S`, `RG_1P`, `RG_2D`, and `RG_2P`; `gpu=yes` requires an `nvhpc-*` toolchain, `precision=8`, and one of `CG_0S`, `PG_0S`, `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`.
 - Machine profiles are hardcoded in both `build.bash` and the per-code Makefiles (adding one means editing both); toolchain names and module loading live only in `build.bash`.
 
 To build a single code directly, use its Makefile:
@@ -95,7 +95,7 @@ make clean   # also: cleaner, cleanest, cleanrelease, cleandebug
 - Supported precisions are 8/10/16 with gfortran, 8/16 with ifort or ifx, and 8 with nvfortran. Compile support is not run support: gfortran with `PREC=16` currently runs with a single MPI process only.
 - `LINALG=netlib` compiles the bundled `src/BLAS.f` and `src/LAPACK.f`, the single copies used by both the main code and `src/qrupdate/`; add any new reference routine to these files only. Optimized libraries require `PREC=8`. In the off-diagonal codes `LINALG` is accepted but is a no-op because they link no BLAS/LAPACK.
 - `OPENMP=yes` is supported by the four real-ECG energy codes only (the `PG_*` Makefiles accept it, but OpenMP builds of the PG codes are not supported). The `!$OMP` directives live in those codes' `src/BLAS.f` and are gated by an `OMP_MIN_WORK` size threshold.
-- `USE_CUDA=yes` compiles the CUDA Fortran backend `src/gpu_backend.f90` in `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, and `PG_0S`; it requires `COMPILER=nvfortran` and `PREC=8`. The binary still computes on the CPU unless `ECG_GPU=1` or `ECG_GPU_EIG=1` is set at runtime, and it needs a visible CUDA device either way.
+- `USE_CUDA=yes` compiles the CUDA Fortran backend `src/gpu_backend.f90` in `RG_0S`, `RG_1P`, `RG_2D`, `RG_2P`, `PG_0S`, and `CG_0S`; it requires `COMPILER=nvfortran` and `PREC=8`. The binary still computes on the CPU unless `ECG_GPU=1` or `ECG_GPU_EIG=1` is set at runtime, and it needs a visible CUDA device either way.
 
 The number of particles is a compile-time parameter, not a runtime option. `build.bash` temporarily edits `Glob_AllowedNumOfParticles` and `MPI_DPREC` in the selected `src/wp_def_<PREC>.f90`, performs the build, and restores the original file from `wp_def_temporary.f90`; a direct Makefile build uses the values already in that source file. A binary built for one particle count rejects inputs (or, for the off-diagonal codes, wave-function files) with a different `PARTICLES` value; every code requires an exact match. Avoid concurrent builds of the same code directory (they share the backup file and build trees), and after an interrupted build check that `src/wp_def_<PREC>.f90` was restored.
 
@@ -147,7 +147,7 @@ The `run-sample-case` skill automates this for the energy codes (see Agent Skill
 
 There is no separate architecture document: this section and the comments in the sources are the reference. **Read the header comments of the routines you touch before editing `globvars.f90`, `matelem.f90`, `matform.f90`, `linalg.f90`, `qrlinalg.f90`, `workproc.f90`, `main.f90`, or `gpu_backend.f90`.** In brief:
 
-- Module order in the seven energy codes: `wp_def_<PREC> -> globvars -> misc, linalg, spin -> matelem -> matform -> qrlinalg -> workproc -> main` (`qrlinalg` needs only `wp_def`; `src/qrupdate/` is compiled and linked but unused). CUDA builds add `gpu_backend` after `matelem` (`CG_0S` has none). The off-diagonal codes carry only `wp_def_<PREC>`, `globvars`, `matelem`, `workproc`, `main`, and `spin` where spin coupling is needed.
+- Module order in the seven energy codes: `wp_def_<PREC> -> globvars -> misc, linalg, spin -> matelem -> matform -> qrlinalg -> workproc -> main` (`qrlinalg` needs only `wp_def`; `src/qrupdate/` is compiled and linked but unused). CUDA builds add `gpu_backend` after `matelem`. The off-diagonal codes carry only `wp_def_<PREC>`, `globvars`, `matelem`, `workproc`, `main`, and `spin` where spin coupling is needed.
 - `main.f90` executes a sequence of BBOP (Basis Building and Optimization Program) steps read from the input: `BASIS_ENL`, `OPT_CYCLE`, `FULL_OPT1`, `ELIM_LCFN`, `ELIM_LND1`, `SEPR_LND1`, `SEPR_FLCF`, `EXPC_VALS`, `DENSITIES`, `MOMT_DENS`, `SAVE_FILE`, `SAVE_HSWF`. The PG codes lack `MOMT_DENS` and add `SAVE_HS_R` and `OVERLAP_D`. Adding a calculation mode means adding a `case` in `main.f90` and a routine in `workproc.f90`, which holds the bulk of each program (I/O, basis enlargement, optimization, the eigensolvers `G`, `I`, and `Q`, expectation values, densities).
 
 Invariants that are easy to break:
