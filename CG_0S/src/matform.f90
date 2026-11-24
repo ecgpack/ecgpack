@@ -2,6 +2,9 @@ module matform
 !Module matform contains procedures that form Hamiltonian
 !and overlap matrices and related routines
   use matelem
+#ifdef USE_CUDA
+  use gpu_backend, only: gpu_active, gpu_build_HS, gpu_build_HS_deriv
+#endif
   implicit none
 
 contains
@@ -183,6 +186,12 @@ contains
     np=Glob_np
     npt=Glob_npt
     nb=Glob_HSBuffLen
+#ifdef USE_CUDA
+    if (gpu_active()) then
+      call gpu_build_HS(Nmin,Nmax,StoreHS)
+      return
+    endif
+#endif
 
     allocate(Lh(nn,nn,Nmax),Ch(nn,nn,Nmax))
     call PrecomputeMatrices_L_C(npt,Nmax,Glob_NonlinParam(1:npt,1:Nmax),Lh,Ch)
@@ -203,7 +212,11 @@ contains
         do j=1,Glob_NumYHYTerms
           if (mod(q+j,Glob_NumOfProcs)==Glob_ProcID) then
             call MatrixElementsHS_CG_0S(Lh(1,1,k),Lh(1,1,l),Ch(1,1,k),Ch(1,1,l), &
+#ifdef USE_CUDA
+                                        Glob_YHYMatr(1,1,j), &
+#else
                                         Glob_YHYMatr(1:n,1:n,j), &
+#endif
                                         Hkl,Skl,Dk,Dl,.false.,.false.)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl
@@ -302,6 +315,12 @@ contains
     npt=Glob_npt
     npt2=npt*2
     nb=Glob_HSBuffLen
+#ifdef USE_CUDA
+    if (gpu_active()) then
+      call gpu_build_HS_deriv(Nmin,Nmax,StoreHSD)
+      return
+    endif
+#endif
 
     allocate(Lh(nn,nn,Nmax),Ch(nn,nn,Nmax))
     call PrecomputeMatrices_L_C(npt,Nmax,Glob_NonlinParam(1:npt,1:Nmax),Lh,Ch)
@@ -332,7 +351,11 @@ contains
         do j=1,Glob_NumYHYTerms
           if (mod(q+j,Glob_NumOfProcs)==Glob_ProcID) then
             call MatrixElementsHS_CG_0S(Lh(1,1,k),Lh(1,1,l),Ch(1,1,k),Ch(1,1,l), &
+#ifdef USE_CUDA
+                                        Glob_YHYMatr(1,1,j), &
+#else
                                         Glob_YHYMatr(1:n,1:n,j), &
+#endif
                                         Hkl,Skl,Dk,Dl,.true.,grad_l)
             Hsum=Hsum+Glob_YHYCoeff(j)*Hkl
             Ssum=Ssum+Glob_YHYCoeff(j)*Skl

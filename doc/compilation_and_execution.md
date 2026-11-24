@@ -160,6 +160,12 @@ device heap allocations. `ECG_GPU_HEAP` sets that heap in bytes (default 1 GiB;
 CUDA's own default of 8 MB is far too small). `ECG_GPU_EIG=1` (cuSOLVER) is
 independent of this.
 
+`CG_0S` accepts `gpu=yes` too, with the same switches. Its backend mirrors the
+`RG_0S` one with complex arithmetic: the matrix elements and their gradients
+are complex, so the kernels accumulate real and imaginary parts separately, and
+`ECG_GPU_EIG=1` solves the complex Hermitian method-G problem with cuSOLVER's
+`Zhegvdx` instead of `Dsygvdx`.
+
 `CUDA_ARCH` is the target GPU's compute capability in `sm_XX` form: compute
 capability 8.0 becomes `sm_80`, passed to nvfortran as `-gpu=cc80`. Find the
 GPU model with `nvidia-smi` on a compute node, then look up its capability in
